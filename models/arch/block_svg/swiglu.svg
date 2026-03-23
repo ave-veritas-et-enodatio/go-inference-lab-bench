@@ -1,0 +1,7 @@
+<!-- bbox: 440x50 -->
+<!-- color: #e65100 (orange) -->
+<g>
+  <rect width="440" height="50" rx="6" fill="url(#ffnGrad)" stroke="#e65100" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="220" y="19" text-anchor="middle" font-weight="700" font-size="13" fill="#bf360c">SwiGLU FFN</text>
+  <text x="220" y="35" text-anchor="middle" font-size="10" fill="#777">silu(gate * x) * up * x -> down</text>
+</g>

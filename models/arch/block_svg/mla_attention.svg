@@ -1,0 +1,49 @@
+<!-- bbox: 660x250 -->
+<!-- color: #1565c0 (blue) -->
+<g>
+  <rect width="660" height="250" rx="6" fill="url(#attnGrad)" stroke="#1565c0" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="330" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#0d47a1">Multi-head Latent Attention (MLA)</text>
+
+  <g transform="translate(15, 35)">
+    <rect width="150" height="56" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="75" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">Q Low-Rank</text>
+    <text x="75" y="31" text-anchor="middle" font-size="9" fill="#777">q_a -> norm -> q_b</text>
+    <text x="75" y="43" text-anchor="middle" font-size="9" fill="#777">split: nope + pe</text>
+  </g>
+  <g transform="translate(180, 35)">
+    <rect width="150" height="56" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="75" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">KV Compression</text>
+    <text x="75" y="31" text-anchor="middle" font-size="9" fill="#777">kv_a_mqa -> norm</text>
+    <text x="75" y="43" text-anchor="middle" font-size="9" fill="#777">split: compressed + pe</text>
+  </g>
+  <g transform="translate(345, 35)">
+    <rect width="150" height="56" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="75" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">Q Absorption</text>
+    <text x="75" y="31" text-anchor="middle" font-size="9" fill="#777">q_nope @ k_b.T</text>
+    <text x="75" y="43" text-anchor="middle" font-size="9" fill="#777">+ RoPE on pe dims</text>
+  </g>
+
+  <g transform="translate(15, 105)">
+    <rect width="300" height="44" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="150" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">MQA Attention</text>
+    <text x="150" y="31" text-anchor="middle" font-size="9" fill="#777">1 KV head, n_heads Q heads (GQA broadcast)</text>
+  </g>
+  <g transform="translate(335, 105)">
+    <rect width="160" height="44" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="80" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">V Decompress</text>
+    <text x="80" y="31" text-anchor="middle" font-size="9" fill="#777">v_b per-head expansion</text>
+  </g>
+
+  <g transform="translate(15, 163)">
+    <rect width="260" height="36" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="130" y="15" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">Output Projection</text>
+    <text x="130" y="28" text-anchor="middle" font-size="9" fill="#777">attn_output.weight</text>
+  </g>
+
+  <g transform="translate(510, 35)">
+    <rect width="135" height="56" rx="4" fill="#e3f2fd" stroke="#90caf9" stroke-width="0.8" stroke-dasharray="3,2"/>
+    <text x="67" y="18" text-anchor="middle" font-size="10" font-weight="600" fill="#1976d2">K Cache Only</text>
+    <text x="67" y="32" text-anchor="middle" font-size="9" fill="#666">compressed + rope</text>
+    <text x="67" y="44" text-anchor="middle" font-size="9" fill="#666">V derived from K</text>
+  </g>
+</g>

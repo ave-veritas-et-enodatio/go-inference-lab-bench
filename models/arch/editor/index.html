@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Arch Def Editor</title>
+  <link rel="stylesheet" href="/static/editor.css">
+</head>
+<body>
+  <div id="toolbar">
+    <div class="toolbar-left">
+      <label class="toolbar-label">Built-in:</label>
+      <select id="def-select"><option value="">— select —</option></select>
+      <button id="btn-load-file">Open File…</button>
+      <input type="file" id="file-input" accept=".toml" style="display:none">
+      <span id="filename-label" class="filename-label"></span>
+    </div>
+    <div class="toolbar-center">
+      <button class="tab-btn active" id="tab-visual" data-tab="visual">Visual</button>
+      <button class="tab-btn" id="tab-toml" data-tab="toml">TOML</button>
+    </div>
+    <div class="toolbar-right">
+      <button id="btn-undo" disabled title="Undo (Ctrl+Z)">Undo</button>
+      <button id="btn-redo" disabled title="Redo (Ctrl+Y)">Redo</button>
+      <button id="btn-save" disabled>Save TOML…</button>
+      <span id="status-msg" class="status-msg"></span>
+    </div>
+  </div>
+
+  <div id="main-area">
+    <div id="svg-panel">
+      <div id="svg-container"></div>
+      <div id="empty-state">
+        <p>Open a TOML architecture definition to begin.</p>
+      </div>
+    </div>
+    <div id="inspector-panel">
+      <div id="inspector-header">Inspector</div>
+      <div id="inspector-body">
+        <p class="inspector-hint">Click an element in the diagram to inspect and edit it.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="toml-area" style="display:none">
+    <textarea id="toml-editor" spellcheck="false"></textarea>
+    <div id="toml-status"></div>
+  </div>
+
+  <script src="/static/editor.js"></script>
+</body>
+</html>

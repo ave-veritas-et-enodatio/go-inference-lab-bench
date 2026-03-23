@@ -1,0 +1,141 @@
+# Qwen3.5 MoE (Mixture of Experts) architecture definition.
+#
+# Same hybrid structure as dense Qwen3.5: every Nth layer (controlled by
+# full_attn_interval) is full softmax attention, the rest are delta-net SSM.
+# The ONLY difference from dense is the FFN: instead of a single SwiGLU per
+# layer, each layer uses routed experts (top-k from n_expert) plus a
+# sigmoid-gated shared expert.
+#
+# Known model sizes (by n_layers):
+#   40 layers → 35B-A3B    (fits 36GB at Q4_K_M)
+#   48 layers → 122B-A10B
+#   60 layers → 397B-A17B
+#
+# Tied embeddings: LM head reuses token_embd.weight if no output.weight present.
+
+[architecture]
+name = "qwen35moe"
+tied_embeddings = true
+
+[params]
+n_layers           = "qwen35moe.block_count"
+n_heads            = "qwen35moe.attention.head_count"
+n_kv_heads         = "qwen35moe.attention.head_count_kv"
+n_embd             = "qwen35moe.embedding_length"
+n_ff               = "qwen35moe.feed_forward_length?"
+n_ff_exp           = "qwen35moe.expert_feed_forward_length?"
+n_ff_shexp         = "qwen35moe.expert_shared_feed_forward_length?"
+rms_eps            = "qwen35moe.attention.layer_norm_rms_epsilon"
+head_dim           = "qwen35moe.attention.key_length"
+ssm_d_conv         = "qwen35moe.ssm.conv_kernel"
+ssm_d_inner        = "qwen35moe.ssm.inner_size"
+ssm_d_state        = "qwen35moe.ssm.state_size"
+ssm_dt_rank        = "qwen35moe.ssm.time_step_rank"
+ssm_n_group        = "qwen35moe.ssm.group_count"
+full_attn_interval = "qwen35moe.full_attention_interval"
+rope_n_rot         = "qwen35moe.rope.dimension_count"
+rope_freq_base     = "qwen35moe.rope.freq_base"
+rope_sections      = "qwen35moe.rope.dimension_sections"
+rope_mode          = "neox"
+n_expert           = "qwen35moe.expert_count"
+n_expert_used      = "qwen35moe.expert_used_count"
+expert_weights_scale = "qwen35moe.expert_weights_scale?"
+
+[params.derived]
+n_vocab       = "token_embd.ne[1]"
+head_v_dim    = "ssm_d_inner / ssm_dt_rank"
+conv_channels = "ssm_d_inner + 2 * ssm_n_group * ssm_d_state"
+
+[params.defaults]
+n_kv_heads = "n_heads"    # GGUF convention: 0 means same as n_heads (no GQA)
+
+[weights.global]
+token_embd  = "token_embd.weight"
+output_norm = "output_norm.weight"
+output      = "output.weight"
+
+[layers]
+count  = "n_layers"
+prefix = "blk.@{layer_idx}."
+
+[layers.routing]
+# @{layer_idx} = layer index (0-based), a builtin. ${name} dereferences a resolved param.
+rule     = "(@{layer_idx} + 1) % ${full_attn_interval} != 0"
+if_true  = "recurrent_ssm"
+if_false = "full_attention"
+
+[layers.common_weights]
+attn_norm      = "attn_norm.weight"
+ffn_norm       = "post_attention_norm.weight"
+
+# --- Full attention block (identical to dense qwen35) ---
+
+[blocks.full_attention]
+builder = "full_attention_gated"
+
+  [blocks.full_attention.weights]
+  attn_q      = "attn_q.weight"
+  attn_k      = "attn_k.weight"
+  attn_v      = "attn_v.weight"
+  attn_output = "attn_output.weight"
+  attn_q_norm = "attn_q_norm.weight"
+  attn_k_norm = "attn_k_norm.weight"
+
+  [blocks.full_attention.config]
+  q_has_gate    = true
+  qk_norm       = "rms"
+  rope          = "multi"
+  output_gate   = "sigmoid"
+
+  [blocks.full_attention.cache]
+  k = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+  v = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+
+# --- Delta-net SSM block (identical to dense qwen35) ---
+
+[blocks.recurrent_ssm]
+builder = "gated_delta_net"
+
+  [blocks.recurrent_ssm.weights]
+  attn_qkv    = "attn_qkv.weight"
+  attn_gate   = "attn_gate.weight"
+  ssm_a       = "ssm_a"
+  ssm_alpha   = "ssm_alpha.weight"
+  ssm_beta    = "ssm_beta.weight"
+  ssm_conv1d  = "ssm_conv1d.weight"
+  ssm_dt_bias = "ssm_dt.bias"
+  ssm_norm    = "ssm_norm.weight"
+  ssm_out     = "ssm_out.weight"
+
+  [blocks.recurrent_ssm.config]
+  conv_activation = "silu"
+  qk_norm         = "l2"
+  gate_norm        = "rms"
+  gate_activation  = "silu"
+
+  [blocks.recurrent_ssm.cache]
+  conv_state = { dims = ["ssm_d_conv - 1", "conv_channels"], dtype = "f32" }
+  ssm_state  = { dims = ["head_v_dim", "head_v_dim", "ssm_dt_rank"], dtype = "f32" }
+
+# --- MoE FFN (replaces dense SwiGLU) ---
+
+[ffn]
+builder = "moe_with_shared"
+
+  [ffn.weights]
+  # Router
+  gate_inp       = "ffn_gate_inp.weight"
+  # Routed experts (3D: stacked by expert)
+  gate_exps      = "ffn_gate_exps.weight"
+  up_exps        = "ffn_up_exps.weight"
+  down_exps      = "ffn_down_exps.weight"
+  # Shared expert
+  gate_inp_shexp = "ffn_gate_inp_shexp.weight"
+  gate_shexp     = "ffn_gate_shexp.weight"
+  up_shexp       = "ffn_up_shexp.weight"
+  down_shexp     = "ffn_down_shexp.weight"
+
+[tokens]
+think_open  = "<think>"
+think_close = "</think>"
+no_think    = ""

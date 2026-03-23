@@ -1,0 +1,48 @@
+<!-- bbox: 660x250 -->
+<!-- color: #1565c0 (blue) -->
+<g>
+  <rect width="660" height="250" rx="6" fill="url(#attnGrad)" stroke="#1565c0" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="330" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#0d47a1">Full Attention (Gated)</text>
+
+  <g transform="translate(15, 35)">
+    <rect width="190" height="56" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="95" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">Q + Gate Projection</text>
+    <text x="95" y="31" text-anchor="middle" font-size="9" fill="#777">attn_q.weight -> split Q, gate</text>
+    <text x="95" y="43" text-anchor="middle" font-size="9" fill="#777">RMS norm Q (attn_q_norm)</text>
+  </g>
+  <g transform="translate(225, 35)">
+    <rect width="190" height="56" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="95" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">K / V Projections</text>
+    <text x="95" y="31" text-anchor="middle" font-size="9" fill="#777">attn_k.weight / attn_v.weight</text>
+    <text x="95" y="43" text-anchor="middle" font-size="9" fill="#777">RMS norm K (attn_k_norm)</text>
+  </g>
+  <g transform="translate(435, 35)">
+    <rect width="210" height="56" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="105" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">MRoPE</text>
+    <text x="105" y="31" text-anchor="middle" font-size="9" fill="#777">sections=[11,11,10,0]</text>
+    <text x="105" y="43" text-anchor="middle" font-size="9" fill="#777">mode=neox / freq_base=10M</text>
+  </g>
+
+  <g transform="translate(15, 105)">
+    <rect width="300" height="44" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="150" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">Scaled Dot-Product Attention</text>
+    <text x="150" y="31" text-anchor="middle" font-size="9" fill="#777">GQA: 16 Q-heads / 4 KV-heads / head_dim=256</text>
+  </g>
+  <g transform="translate(335, 105)">
+    <rect width="160" height="44" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="80" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">Sigmoid Gate</text>
+    <text x="80" y="31" text-anchor="middle" font-size="9" fill="#777">sig(gate) * attn_out</text>
+  </g>
+
+  <g transform="translate(15, 163)">
+    <rect width="260" height="36" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
+    <text x="130" y="15" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">Output Projection</text>
+    <text x="130" y="28" text-anchor="middle" font-size="9" fill="#777">attn_output.weight</text>
+  </g>
+
+  <g transform="translate(520, 105)">
+    <rect width="125" height="44" rx="4" fill="#e3f2fd" stroke="#90caf9" stroke-width="0.8" stroke-dasharray="3,2"/>
+    <text x="62" y="17" text-anchor="middle" font-size="10" font-weight="600" fill="#1976d2">KV Cache</text>
+    <text x="62" y="31" text-anchor="middle" font-size="9" fill="#666">k / v [f32]</text>
+  </g>
+</g>

@@ -1,0 +1,6 @@
+{
+  "permissions": {
+    "_comment_00": "these are masked in .gitignore, but need toclose find/grep loophole",
+    "deny": ["Read(./.wrangler/**)", "Read(./.dev.vars)"]
+  }
+}

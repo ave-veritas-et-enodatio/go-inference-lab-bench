@@ -1,0 +1,3 @@
+[submodule "src/third_party/ggml"]
+	path = src/third_party/ggml
+	url = https://github.com/ggml-org/ggml.git

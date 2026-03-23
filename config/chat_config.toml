@@ -1,0 +1,4 @@
+base_url      = "auto"       # "auto" reads port from api_config.toml, or set explicit URL
+model         = "default"    # "default" uses server default model
+token         = "not-needed"
+system_prompt = []

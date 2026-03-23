@@ -1,0 +1,88 @@
+# LLaDA-MoE architecture definition.
+#
+# NYI: the model will load but inference produces garbage
+#      because currently Generate() only supports autoregression
+#      this model requires text diffusion generation.
+#
+# Diffusion-based decoder with bidirectional (non-causal) attention.
+# Standard multi-head attention with QK-norm, standard RoPE, MoE FFN.
+# No shared expert, no gated attention output.
+#
+#
+# Known model sizes:
+#   16 layers → 7B total / 1B active (64 experts, top-8)
+
+[architecture]
+name = "llada-moe"
+non_causal = true
+
+[params]
+n_layers       = "llada-moe.block_count"
+n_heads        = "llada-moe.attention.head_count"
+n_kv_heads     = "llada-moe.attention.head_count_kv"
+n_embd         = "llada-moe.embedding_length"
+n_ff           = "llada-moe.expert_feed_forward_length"
+rms_eps        = "llada-moe.attention.layer_norm_rms_epsilon"
+rope_freq_base = "llada-moe.rope.freq_base"
+n_expert       = "llada-moe.expert_count"
+n_expert_used  = "llada-moe.expert_used_count"
+
+[params.derived]
+n_vocab  = "token_embd.ne[1]"
+head_dim = "n_embd / n_heads"
+rope_n_rot = "head_dim"
+
+[params.defaults]
+n_kv_heads = "n_heads"
+
+[weights.global]
+token_embd  = "token_embd.weight"
+output_norm = "output_norm.weight"
+output      = "output.weight"
+
+[layers]
+count  = "n_layers"
+prefix = "blk.@{layer_idx}."
+
+[layers.routing]
+# All layers use the same block type
+rule     = "1 == 1"
+if_true  = "attention"
+if_false = "attention"
+
+[layers.common_weights]
+attn_norm = "attn_norm.weight"
+ffn_norm  = "ffn_norm.weight"
+
+[blocks.attention]
+builder = "attention"
+
+  [blocks.attention.weights]
+  attn_q      = "attn_q.weight"
+  attn_k      = "attn_k.weight"
+  attn_v      = "attn_v.weight"
+  attn_output = "attn_output.weight"
+  attn_q_norm = "attn_q_norm.weight"
+  attn_k_norm = "attn_k_norm.weight"
+
+  [blocks.attention.config]
+  rope = "standard"
+
+  [blocks.attention.cache]
+  k = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+  v = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+
+[ffn]
+builder = "moe_with_shared"
+
+  [ffn.weights]
+  # Router
+  gate_inp  = "ffn_gate_inp.weight"
+  # Routed experts (3D: stacked by expert)
+  gate_exps = "ffn_gate_exps.weight"
+  up_exps   = "ffn_up_exps.weight"
+  down_exps = "ffn_down_exps.weight"
+  # No shared expert in LLaDA-MoE
+
+# [tokens]
+# LLaDA-MoE is not a thinking model — no think tokens defined

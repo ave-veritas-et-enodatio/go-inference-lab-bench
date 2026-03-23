@@ -1,0 +1,80 @@
+# Llama architecture definition.
+#
+# Standard decoder-only transformer. All layers identical — no hybrid routing.
+# Standard multi-head attention with GQA, standard RoPE, SwiGLU FFN.
+# No gated attention output (unlike Qwen3.5).
+#
+# Known model sizes (by n_layers):
+#   16 layers → 1B
+#   28 layers → 3B
+#   32 layers → 7B/8B
+#   40 layers → 13B
+#   80 layers → 70B
+
+[architecture]
+name = "llama"
+tied_embeddings = true
+
+[params]
+n_layers       = "llama.block_count"
+n_heads        = "llama.attention.head_count"
+n_kv_heads     = "llama.attention.head_count_kv"
+n_embd         = "llama.embedding_length"
+n_ff           = "llama.feed_forward_length"
+rms_eps        = "llama.attention.layer_norm_rms_epsilon"
+head_dim       = "llama.attention.key_length"
+rope_n_rot     = "llama.rope.dimension_count"
+rope_freq_base = "llama.rope.freq_base"
+rope_mode      = "standard"
+
+[params.derived]
+n_vocab = "token_embd.ne[1]"
+
+[params.defaults]
+n_kv_heads = "n_heads"
+
+[weights.global]
+token_embd  = "token_embd.weight"
+output_norm = "output_norm.weight"
+output      = "output.weight"
+
+[layers]
+count  = "n_layers"
+prefix = "blk.@{layer_idx}."
+
+[layers.routing]
+# All layers use the same block type
+rule     = "1 == 1"
+if_true  = "attention"
+if_false = "attention"
+
+[layers.common_weights]
+attn_norm = "attn_norm.weight"
+ffn_norm  = "ffn_norm.weight"
+
+[blocks.attention]
+builder = "attention"
+
+  [blocks.attention.weights]
+  attn_q      = "attn_q.weight"
+  attn_k      = "attn_k.weight"
+  attn_v      = "attn_v.weight"
+  attn_output = "attn_output.weight"
+
+  [blocks.attention.config]
+  rope = "standard"
+
+  [blocks.attention.cache]
+  k = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+  v = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+
+[ffn]
+builder = "swiglu"
+
+  [ffn.weights]
+  gate = "ffn_gate.weight"
+  up   = "ffn_up.weight"
+  down = "ffn_down.weight"
+
+# [tokens]
+# Llama 3.2 3B-instruct is not a thinking model — no think tokens defined
