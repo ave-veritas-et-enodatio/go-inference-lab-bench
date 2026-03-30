@@ -2,7 +2,7 @@
 
 A from-scratch Go language LLM lab bench for doing R&D related to the mechanics of inference.
 
-<image src="models/arch/deepseek2.arch.svg" width="600" height="600" alt="DeepSeek2 Architecture">
+<a href="models/arch/qwen35.arch.svg"><image src="models/arch/qwen35.arch.svg" height="600" alt="Qwen 3.5 Architecture"></a><a href="models/arch/qwen35.layers.svg"><image src="models/arch/qwen35.layers.svg" height="600" alt="Qwen 3.5 Layers"></a>
 
 Key features:
 * Does not use [llama.cpp](#third-party-acknowledgements) binding (too black of a box)

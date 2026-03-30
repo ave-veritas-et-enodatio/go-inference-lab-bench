@@ -107,6 +107,8 @@
   <text class="shdr" x="4" y="47">643 weights</text>
   </symbol>
 </defs>
+  <rect width="580" height="1193" fill="#fafafa" rx="8"/>
+
   <text class="title" x="275" y="14" text-anchor="middle">deepseek2.layers</text>
   <line x1="26" y1="30" x2="26" y2="982" stroke="#AAAAAA" stroke-width="1.5"/>
   <text class="io" x="26" y="24">IN</text>

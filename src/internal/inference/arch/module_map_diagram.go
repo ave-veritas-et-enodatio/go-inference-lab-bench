@@ -754,6 +754,9 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 
 	fmt.Fprintf(&b, "</defs>\n")
 
+  // Background
+	fmt.Fprintf(&b, "  <rect width=\"%d\" height=\"%d\" fill=\"%s\" rx=\"8\"/>\n\n", canvasW2, canvasH, pal["ui.canvas_bg"])
+
 	// Title (centered over the U)
 	titleCX := (rightColOffset + returnRailX) / 2
 	fmt.Fprintf(&b, "  <text class=\"title\" x=\"%d\" y=\"14\" text-anchor=\"middle\">%s</text>\n", titleCX, title)
