@@ -5,10 +5,13 @@ GRAPH_TARGETS  := $(patsubst models/arch/%.arch.toml,models/arch/%.arch.svg,$(wi
 
 all: build
 
-build:
+build: src/third_party/ggml/.git
 	$(MAKE) -C src all
 	@[[ -L bin/config ]] || (cd bin && ln -s ../config .)
 	@[[ -L bin/models ]] || (cd bin && ln -s ../models .)
+
+src/third_party/ggml/.git:
+	git submodule update --init
 
 serve: build
 	./bin/bench serve-api 2> bin/serve-api.log
