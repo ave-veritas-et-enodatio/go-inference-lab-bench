@@ -73,7 +73,7 @@ Known working models (from huggingface.co, links in README.md):
 ## Source Layout
 
 ```
-Makefile                        Top-level: delegates to src/, symlinks bin/
+Makefile                        Top-level: test, integration-test, equiv-test, symlinks bin/ delegates the rest to src/
 config/
   api_config.toml               API server config (models.default, auth, listen, max_seq_len)
   chat_config.toml              Chat client config (base_url=auto, model, system_prompt)
@@ -169,6 +169,10 @@ curl -X POST localhost:11116/api/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"default","messages":[{"role":"user","content":"Hi"}]}'
 ```
+
+**Validating Changes**
+* `make test && make integration-test` must pass.
+* when adding new model architectures or changing inference code `make equive-test` must pass
 
 ## Key Technical Details
 
