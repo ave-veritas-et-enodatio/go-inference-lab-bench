@@ -43,7 +43,7 @@ Known working models (from huggingface.co, links in README.md):
 * Qwen3.5-9B-abliterated.f16.gguf (dense, `qwen35` arch)
 
 - **Inference** KV cached and stateless inference. Model architectures are defined via a TOML DSL (`models/arch/*.arch.toml`) that drives GGUF loading, graph construction, and cache allocation. Block builders implement the graph-level ops in Go. The only C code is a thin, model-agnostic ggml op wrapper layer (`ggml_ops.h/.c`). Zero C++ in the project.
-- HTTP server with Bearer auth, model listing, streaming SSE + non-streaming completions
+- HTTP server with Bearer auth, model listing, streaming SSE + non-streaming completions, logprobs
 - **TOML DSL-driven model loading**: architecture definitions in `models/arch/*.arch.toml` declare params, layer routing, weight bindings, cache specs, and FFN type
 - **Block builder registry**: `full_attention`, `full_attention_gated`, `mla_attention`, `gated_delta_net`, `swiglu`, `moe_with_shared` — pluggable graph construction
 - **Qwen3.5 dense**: hybrid forward pass (attention + delta-net SSM), logit-perfect vs reference
@@ -52,9 +52,9 @@ Known working models (from huggingface.co, links in README.md):
 - **DeepSeek2/GLM-4**: MLA attention (low-rank Q/KV, Q-nope absorption), hybrid dense/MoE FFN, expert bias
 - GGUF loading entirely in Go (metadata parsing, weight loading to Metal VRAM)
 - Unsupported architectures auto-filtered at scan time
-- **Zero model-specific code**: tokenizer chat templates executed directly from GGUF `tokenizer.chat_template` Jinja2 via gonja; BOS/EOS IDs from GGUF metadata. No per-architecture tokenizer branches anywhere in the codebase.
+- **Zero model-specific code**: chat templates executed from GGUF `tokenizer.chat_template` via gonja; BOS/EOS from GGUF metadata; no per-architecture tokenizer branches. Thinking mode controlled entirely by template `enable_thinking` variable — no post-render prompt manipulation.
 - BPE tokenizer loaded from GGUF metadata (Qwen3.5/tiktoken-compatible, 248K vocab)
-- Token sampling (greedy + top-p)
+- Greedy + top-p sampling; logprob computation via stable log-softmax
 - KV cache + SSM state persistence: prefill in one pass, decode one token at a time
 - Stateless fallback via `"stateless": true`
 - Default model resolution from config, `"model": "default"` supported
@@ -66,7 +66,8 @@ Known working models (from huggingface.co, links in README.md):
 - **Inference backend**: ggml (git submodule), Metal-accelerated
 - **Model format**: GGUF (files in `models/`)
 - **Target models**: Llama 3.2 (3B), Qwen3.5 dense (4B, 9B), Qwen3.5 MoE (35B-A3B), DeepSeek2/GLM-4 (4.7B)
-- **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"enable_thinking"`, `"model":"default"`. Legacy `/v1/*` routes also supported. Diagnostic file browser at `/diag/`.
+- **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"enable_thinking"`, `"elide_thinking"`, `"logprobs"`, `"top_logprobs"`, `"model":"default"`. Legacy `/v1/*` also supported. Diagnostic browser at `/diag/`. Control endpoint at `/ctl` (graceful shutdown via `?quit` or immediate via `?quit&now`).
+- **Diagnostics**: `/diag/` serves files from `bin/diag/` — a useful location for dumping R&D diagnostic output (SVGs, data files, etc.) that can be viewed in-browser while the server is running. The directory is auto-created at startup.
 - **Config**: `api_config.toml` — server, models, inference settings (`max_seq_len`, `enable_thinking_default`, `elide_thinking_default`, `log_thinking`)
 - **Default listen**: `0.0.0.0:11116`
 
@@ -94,14 +95,14 @@ src/
     arch_editor.go              arch-editor: dispatches to archeditor
   internal/
     util/                       Project-wide utilities (LoadTOML, WriteJSON, BenchPaths, extension constants)
-    apiserver/                  HTTP handlers (OpenAI-compatible: /api/v1/*)
+    apiserver/                  HTTP handlers (OpenAI-compatible: /api/v1/*), /ctl endpoint
     chatclient/                 Interactive chat client implementation
     model/                      GGUF scanning + metadata
     archeditor/                 Arch editor web server
     inference/
       engine.go                 Generation loop (tokenize → forward → sample)
-      metrics.go                InferenceMetrics (timing, throughput)
-      sampler.go                Greedy and top-p sampling
+      metrics.go                InferenceMetrics (timing, throughput), TokenLogProb, ByteArray
+      sampler.go                Greedy and top-p sampling, ComputeTopLogProbs (stable log-softmax)
       tokenizer.go              BPE tokenizer; chat template executed from GGUF via gonja (no model-specific code)
       arch/
         arch.go                 ArchDef, TOML parser, Validate() with builder contracts
@@ -172,7 +173,7 @@ curl -X POST localhost:11116/api/v1/chat/completions \
 
 **Validating Changes**
 * `make test && make integration-test` must pass.
-* when adding new model architectures or changing inference code `make equive-test` must pass
+* When adding new model architectures or changing inference code, `make equiv-test` must also pass — it compares top-1 logprobs against `llama-server` (Homebrew) to verify inference correctness within Metal floating-point variance.
 
 ## Key Technical Details
 
@@ -184,7 +185,7 @@ Model architectures are declared in TOML files (`models/arch/*.arch.toml`). The 
 - **Weight bindings**: GGUF tensor name templates with `blk.@{layer_idx}.` prefix expansion
 - **Cache specs**: per-block-type cache tensor dimensions and dtypes
 - **FFN type**: which feed-forward builder to use. Optional `[ffn_alt]` for per-layer FFN routing (e.g., dense SwiGLU for first N layers, MoE for the rest — auto-detected from GGUF weights).
-- **Tokens**: `[tokens]` section declares think/no-think tokens per architecture.
+- **Tokens**: `[tokens]` section declares `think_open`, `think_close` per architecture.
 - **Param defaults**: `[params.defaults]` provides fallback values when GGUF params resolve to 0.
 
 Block builders (`full_attention`, `full_attention_gated`, `mla_attention`, `gated_delta_net`, `swiglu`, `moe_with_shared`) implement the ggml graph construction. Adding a new model that uses existing block types requires only a new `.arch.toml` file. A genuinely new block type requires a new builder implementation. Optional GGUF params use `?` suffix (e.g., `"arch.key?"` — silently skipped if missing).
