@@ -137,6 +137,7 @@ src/
   ggml_lib/                     C op wrappers + ggml build
   third_party/ggml/             ggml git submodule
 test_inference.sh               Test harness
+test_llama_equiv.sh             Validates inference equivalence with llama-server
 ```
 
 ## Config
@@ -184,6 +185,8 @@ Adding architectures is doable in about an hour with AI assistance, if you need 
   * try using the visual editor (it's experimental, YMMV)
   * supported architectures are auto-detected from `.arch.toml` files — no code changes needed
   * run and test
+  * run `./test_llama_equiv.sh` to verify the new architecture's inference behavior does not diverge from llama.cpp's
+    * unless that's the goal, of course. 
 
 ## Third Party Acknowledgements
 * [ggml](https://github.com/ggml-org/ggml.git) - Georgi Gerganov's C++ tensor library for machine learning

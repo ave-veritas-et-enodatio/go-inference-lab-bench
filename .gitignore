@@ -17,7 +17,7 @@ build/
 lib/
 bin/
 memory/
-
+nohup.out
 .DS_Store
 .claude/settings.local.json
 .claude/worktrees/

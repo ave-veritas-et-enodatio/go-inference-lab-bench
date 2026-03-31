@@ -1,10 +1,12 @@
 package apiserver
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -15,10 +17,12 @@ import (
 )
 
 type Server struct {
-	cfg     *Config
-	manager *model.Manager
-	engines map[string]*inference.Engine // model ID → loaded engine
-	archDir string                       // absolute path to arch definitions
+	cfg        *Config
+	manager    *model.Manager
+	engines    map[string]*inference.Engine // model ID → loaded engine
+	archDir    string                       // absolute path to arch definitions
+	httpServer *http.Server                 // for graceful shutdown
+	pending    sync.WaitGroup              // tracks in-flight inference requests
 }
 
 func NewServer(cfg *Config, manager *model.Manager) *Server {
@@ -66,6 +70,8 @@ func (s *Server) Run() error {
 	r.Get("/v1/models", s.handleListModels)
 	r.Post("/v1/chat/completions", s.handleChatCompletions)
 
+	r.Get("/ctl", s.handleCtl)
+
 	// Diagnostic file explorer: serves contents of bin/diag/
 	paths := util.ResolvePaths()
 	diagFS := http.StripPrefix("/diag/", http.FileServer(http.Dir(paths.DiagDir)))
@@ -73,9 +79,13 @@ func (s *Server) Run() error {
 	r.Get("/diag/", diagFS.ServeHTTP)
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)
+	s.httpServer = &http.Server{Addr: addr, Handler: r}
 	log.Printf("listening on %s", addr)
 	fmt.Printf("diagnostics: http://localhost:%d/diag/\n", s.cfg.Server.Port)
-	return http.ListenAndServe(addr, r)
+	if err := s.httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 // resolveDefaultModel returns the model ID based on the "default" config field.

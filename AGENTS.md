@@ -24,6 +24,9 @@ Provides local multi-model inference server, multiple ways of testing inference,
     - if it is package-specific and utilization spans multiple files it goes into `src/internal/[package]/[package]_util.go`
     - if it is specific to a single file, put the util function implementation in that file
   - Complex code must be reserved for complex needs. A 100 line algorithm for O(1) efficiency over a 64 element data set is a waste when O(n) is 5 lines and will never make a noticeable difference
+  - Separation of Concerns
+    - systems should maintain ignorance of other system internals
+    - one function or system 'pre-digesting' data for consumption by another function or system in a way only useful to the callee is a sign of violation of this principle.
 - Currently only macOS supported but ports to Linux and Windows are coming
   - Do not accummulate tech debt related to portability
   - The only platform-specific debt at this time are around the ggml binding layer
@@ -34,7 +37,7 @@ Provides local multi-model inference server, multiple ways of testing inference,
 ## Current Status
 
 
-Supported models (from huggingface.co, links in README.md):
+Known working models (from huggingface.co, links in README.md):
 * Llama-3.2-3B-Instruct-f16.gguf, llama-3.2-3b-instruct-q4_k_m.gguf (dense, `llama` arch)
 * Qwen3.5-4B_Abliterated.f16.gguf (dense, `qwen35` arch)
 * Qwen3.5-9B-abliterated.f16.gguf (dense, `qwen35` arch)

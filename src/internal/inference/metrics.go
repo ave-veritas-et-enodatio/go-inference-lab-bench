@@ -1,6 +1,38 @@
 package inference
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
+
+// TokenLogProb holds log-probability data for a single generated token.
+type TokenLogProb struct {
+	ID       int32      // token ID in vocabulary
+	Token    string     // decoded token string
+	LogProb  float64    // log-probability of the chosen token
+	Bytes    ByteArray  // UTF-8 bytes of the token string
+	TopProbs []TopLogProb // top-N alternatives (includes the chosen token)
+}
+
+// ByteArray is a []byte that JSON-marshals as an integer array [51, 52, ...]
+// instead of Go's default base64 encoding for []byte.
+type ByteArray []byte
+
+func (b ByteArray) MarshalJSON() ([]byte, error) {
+	ints := make([]int, len(b))
+	for i, v := range b {
+		ints[i] = int(v)
+	}
+	return json.Marshal(ints)
+}
+
+// TopLogProb holds one entry in the top-N log-probability list.
+type TopLogProb struct {
+	ID      int32     `json:"id"`
+	Token   string    `json:"token"`
+	LogProb float64   `json:"logprob"`
+	Bytes   ByteArray `json:"bytes"`
+}
 
 // InferenceMetrics captures timing and throughput data for a single generation request.
 type InferenceMetrics struct {
@@ -9,6 +41,7 @@ type InferenceMetrics struct {
 	PrefillDuration  time.Duration // wall-clock for prefill (all prompt tokens)
 	DecodeDuration   time.Duration // wall-clock for all decode steps
 	TotalDuration    time.Duration // wall-clock for entire generation
+	TokenLogProbs    []TokenLogProb // per-token log-probabilities (nil if not requested)
 }
 
 // TokensPerSec returns the decode throughput (output tokens per second).
