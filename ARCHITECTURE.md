@@ -63,13 +63,18 @@ Loads `api_config.toml` into `Config`.
   architectures (those without a matching `.arch.toml`).
 
 ### `internal/apiserver/`
-- `server.go` — `Server` holds the loaded `engines` map (`modelName → *inference.Engine`).
+- `server.go` — `Server` holds the loaded `engines` map (`modelName → *inference.Engine`),
+  `httpServer` for graceful shutdown, and `pending` WaitGroup for in-flight request tracking.
   No mutex on `engines` currently (single-client R&D use case). `Engine()` method looks up
   by model name; `"default"` resolves to the configured default model.
-- `completions.go` — POST `/api/v1/chat/completions`. Builds `GenerateParams` from JSON body,
-  (pointer semantics: nil = use server config).
-  SSE streaming via `onToken` callback.
+- `completions.go` — POST `/api/v1/chat/completions`. Builds `GenerateParams` from JSON body
+  (pointer semantics: nil = use server config). SSE streaming via `onToken` callback.
+  Logprobs: `logprobs: true` + `top_logprobs: N` in request; response includes
+  `choices[].logprobs.content[].top_logprobs[]` per OpenAI spec. Logs `[req] param overrides: ...`
+  when any field differs from server config.
 - `models.go` — GET `/api/v1/models`. Lists loaded engines.
+- `ctl.go` — GET `/ctl`. Control endpoint: `?quit` waits for in-flight inference then shuts down;
+  `?quit&now` shuts down immediately (100ms timeout).
 
 ### `internal/inference/engine.go`
 The main generation loop. Key types:
@@ -79,15 +84,16 @@ type GenerateParams struct {
     MaxTokens       int
     Temperature     float32
     TopP            float32
-    Stateless       bool       // bypass KV cache
-    ThinkingEnabled bool
+    Stateless       bool   // bypass KV cache
+    ThinkingEnabled bool   // passed to template as enable_thinking variable
+    LogProbs        bool   // include log-probabilities in response
+    TopLogProbs     int    // number of top log-probabilities per token
 }
 ```
 
 `Generate()` flow:
-1. `EncodeChat` → token IDs
-2. Optionally strip `think_open` suffix if `ThinkingEnabled=false`
-3. Run `generateCached` or `generateStateless`
+1. `EncodeChat` → token IDs (template handles thinking mode natively via `enable_thinking`)
+2. Run `generateCached` or `generateStateless` — each step: forward → sample → logprobs (if enabled) → onToken
 
 ### `internal/inference/arch/` — Core inference package
 
@@ -113,7 +119,7 @@ An `*.arch.toml` file maps directly onto `arch.ArchDef`. Sections:
 | `[layers.common_weights]` | `map[string]string` | Per-layer tensors shared by all block types (e.g. `attn_norm`) |
 | `[blocks.<name>]` | `BlockDef` | Block-type weights, config, cache specs — one section per block type |
 | `[ffn]` / `[ffn_alt]` | `FFNDef` | FFN builder + weights. `ffn_alt` for per-layer routing (dense vs MoE) |
-| `[tokens]` | `TokensDef` | `think_open`, `think_close`, `no_think` token strings |
+| `[tokens]` | `TokensDef` | `think_open`, `think_close` token strings |
 
 **Expression syntax (brief):** `@{layer_idx}` is the engine-provided layer index builtin;
 `${param}` dereferences a resolved param in routing rules; bare names reference params in
@@ -296,6 +302,38 @@ not GGUF tensor names. The translation layer is `ResolvedLayerWeights` in `arch/
 10. **Test with all models.** Llama is easy. Qwen3.5, Qwen3.5-MoE, and DeepSeek2/GLM-4
     are where architectural edge cases surface. Always run `ALL_MODELS=true` before
     declaring a change complete.
+
+11. **Template owns thinking mode.** `enable_thinking` is passed as a variable to the
+    gonja template. No post-render prompt manipulation (no `/no_think` injection, no
+    think-block stripping). The template's output is the correct prompt. This matches
+    llama.cpp behavior and is required for logprob equivalence testing.
+
+---
+
+## Logprobs
+
+`ComputeTopLogProbs` in `sampler.go` computes log-probabilities via stable log-softmax
+on raw logits after each `sample()` call. Works in both cached and stateless modes.
+
+```go
+type TokenLogProb struct {
+    ID       int32
+    Token    string
+    LogProb  float64
+    Bytes    ByteArray  // JSON-marshals as integer array, not base64
+    TopProbs []TopLogProb
+}
+```
+
+`ByteArray` is a custom `[]byte` type that marshals as `[51, 52]` instead of Go's
+default base64 encoding — matches the OpenAI/llama.cpp response format.
+
+### Equivalence Testing
+
+`make equiv-test` (via `test_llama_equiv.sh`) sends identical prompts to bench and
+`llama-server` (Homebrew), compares top-1 logprobs. All models match within Metal
+floating-point variance (~0.1% relative error on logprobs). Validates: tokenization,
+chat template rendering, forward pass correctness, and sampling.
 
 ---
 

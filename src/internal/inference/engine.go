@@ -70,12 +70,6 @@ func validateArchTokens(tokens arch.TokensDef, tok *Tokenizer) {
 	}
 	check("think_open", tokens.ThinkOpen)
 	check("think_close", tokens.ThinkClose)
-	check("no_think", tokens.NoThink)
-}
-
-// NoThinkInstruction returns the TOML-defined no-think instruction, or "".
-func (e *Engine) NoThinkInstruction() string {
-	return e.model.Def.Tokens.NoThink
 }
 
 // ThinkOpen returns the TOML-defined think opening tag, or "".
@@ -97,7 +91,9 @@ type GenerateParams struct {
 	Temperature     float32
 	TopP            float32
 	Stateless       bool // bypass KV cache (for testing/comparison)
-	ThinkingEnabled bool // if false, strip think_open prefix the GGUF template may append
+	ThinkingEnabled bool // passed to template as enable_thinking variable
+	LogProbs        bool // include log-probabilities in response
+	TopLogProbs     int  // number of top log-probabilities per token
 }
 
 // DefaultParams returns sensible defaults.
@@ -128,24 +124,9 @@ func (e *Engine) Generate(
 		return nil, fmt.Errorf("empty prompt after encoding")
 	}
 
-	// If thinking is disabled and the GGUF template appended think_open (e.g. "<think>\n"),
-	// strip it so the model generates without entering thinking mode.
-	if !params.ThinkingEnabled && e.model.Def.Tokens.ThinkOpen != "" {
-		suffix := e.tokenizer.encodeWithSpecials(e.model.Def.Tokens.ThinkOpen + "\n")
-		if len(suffix) > 0 && len(promptIDs) >= len(suffix) {
-			tail := promptIDs[len(promptIDs)-len(suffix):]
-			match := true
-			for i, id := range suffix {
-				if tail[i] != id {
-					match = false
-					break
-				}
-			}
-			if match {
-				promptIDs = promptIDs[:len(promptIDs)-len(suffix)]
-			}
-		}
-	}
+	// The template handles enable_thinking natively — when disabled, it emits an
+	// empty think block (e.g. "<think>\n\n</think>\n\n") which is the correct
+	// prompt. No post-render stripping needed; this matches llama.cpp behavior.
 
 	maxTokens := params.MaxTokens
 	if maxTokens <= 0 {
@@ -196,6 +177,10 @@ func (e *Engine) generateCached(
 		if nextID == stopID {
 			break
 		}
+		if params.LogProbs {
+			metrics.TokenLogProbs = append(metrics.TokenLogProbs,
+				ComputeTopLogProbs(logits, nextID, params.TopLogProbs, e.tokenizer.TokenString))
+		}
 		if !onToken(e.tokenizer.TokenString(nextID)) {
 			break
 		}
@@ -231,6 +216,10 @@ func (e *Engine) generateStateless(
 		nextID := e.sample(logits, params)
 		if nextID == stopID {
 			break
+		}
+		if params.LogProbs {
+			metrics.TokenLogProbs = append(metrics.TokenLogProbs,
+				ComputeTopLogProbs(logits, nextID, params.TopLogProbs, e.tokenizer.TokenString))
 		}
 		if !onToken(e.tokenizer.TokenString(nextID)) {
 			break

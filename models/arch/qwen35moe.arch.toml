@@ -138,4 +138,3 @@ builder = "moe_with_shared"
 [tokens]
 think_open  = "<think>"
 think_close = "</think>"
-no_think    = ""

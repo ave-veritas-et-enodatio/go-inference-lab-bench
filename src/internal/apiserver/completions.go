@@ -92,6 +92,8 @@ type chatCompletionRequest struct {
 	MaxTokens       int           `json:"max_tokens"`
 	Temperature     float64       `json:"temperature"`
 	TopP            float64       `json:"top_p"`
+	LogProbs        bool          `json:"logprobs,omitempty"`         // include log-probabilities
+	TopLogProbs     int           `json:"top_logprobs,omitempty"`     // number of top alternatives (default 1)
 	Stateless       bool          `json:"stateless,omitempty"`        // bypass KV cache (for testing)
 	EnableThinking  *bool         `json:"enable_thinking,omitempty"`  // true/false/null; null = use server default
 	ElideThinking   *bool         `json:"elide_thinking,omitempty"`  // true/false/null; null = use server default
@@ -104,10 +106,19 @@ type choiceMessage struct {
 	Content string `json:"content"`
 }
 
+type choiceLogProbs struct {
+	Content []choiceLogProbEntry `json:"content"`
+}
+
+type choiceLogProbEntry struct {
+	TopLogProbs []inference.TopLogProb `json:"top_logprobs"`
+}
+
 type choice struct {
-	Index        int           `json:"index"`
-	Message      choiceMessage `json:"message"`
-	FinishReason string        `json:"finish_reason"`
+	Index        int            `json:"index"`
+	Message      choiceMessage  `json:"message"`
+	FinishReason string         `json:"finish_reason"`
+	LogProbs     *choiceLogProbs `json:"logprobs,omitempty"`
 }
 
 type usage struct {
@@ -147,6 +158,8 @@ type streamChunk struct {
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	s.pending.Add(1)
+	defer s.pending.Done()
 	var req chatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -187,14 +200,35 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		params.TopP = float32(req.TopP)
 	}
 	params.Stateless = req.Stateless
+	params.LogProbs = req.LogProbs
+	params.TopLogProbs = req.TopLogProbs
+	if params.TopLogProbs < 1 && params.LogProbs {
+		params.TopLogProbs = 1
+	}
 
-	// Convert messages and inject /no_think if needed
 	msgs := make([]inference.ChatMessage, len(req.Messages))
 	for i, m := range req.Messages {
 		msgs[i] = inference.ChatMessage{Role: m.Role, Content: m.Content}
 	}
-	msgs = applyThinkingMode(msgs, params.ThinkingEnabled, eng.NoThinkInstruction())
+	// Thinking mode is controlled via the enable_thinking template variable
+	// passed to gonja in EncodeChat — no prompt injection needed.
 
+	// Log any request-level parameter overrides of server config defaults.
+	{
+		var overrides []string
+		if req.Stateless {
+			overrides = append(overrides, "stateless=true")
+		}
+		if req.EnableThinking != nil && *req.EnableThinking != s.cfg.Inference.EnableThinkingDefault {
+			overrides = append(overrides, fmt.Sprintf("enable_thinking=%v (server: %v)", *req.EnableThinking, s.cfg.Inference.EnableThinkingDefault))
+		}
+		if req.ElideThinking != nil && *req.ElideThinking != s.cfg.Inference.ShouldElideThink() {
+			overrides = append(overrides, fmt.Sprintf("elide_thinking=%v (server: %v)", *req.ElideThinking, s.cfg.Inference.ShouldElideThink()))
+		}
+		if len(overrides) > 0 {
+			log.Printf("[req] param overrides: %s", strings.Join(overrides, ", "))
+		}
+	}
 
 	chunkID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	created := time.Now().Unix()
@@ -308,6 +342,15 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				metrics.TokensPerSec())
 		}
 
+		var logProbs *choiceLogProbs
+		if req.LogProbs && metrics != nil && len(metrics.TokenLogProbs) > 0 {
+			entries := make([]choiceLogProbEntry, len(metrics.TokenLogProbs))
+			for i, tlp := range metrics.TokenLogProbs {
+				entries[i] = choiceLogProbEntry{TopLogProbs: tlp.TopProbs}
+			}
+			logProbs = &choiceLogProbs{Content: entries}
+		}
+
 		resp := chatCompletionResponse{
 			ID:      chunkID,
 			Object:  "chat.completion",
@@ -317,6 +360,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				Index:        0,
 				Message:      choiceMessage{Role: "assistant", Content: content},
 				FinishReason: "stop",
+				LogProbs:     logProbs,
 			}},
 			Usage: usage{
 				PromptTokens:     metrics.PromptTokens,
@@ -326,23 +370,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		util.WriteJSON(w, resp)
 	}
-}
-
-// applyThinkingMode appends the model-specific no-think instruction to the last user message
-// when thinking is disabled. The instruction is auto-detected from the model's vocabulary.
-func applyThinkingMode(msgs []inference.ChatMessage, thinking bool, noThinkInstr string) []inference.ChatMessage {
-	if thinking || noThinkInstr == "" {
-		return msgs
-	}
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" {
-			out := make([]inference.ChatMessage, len(msgs))
-			copy(out, msgs)
-			out[i].Content = out[i].Content + "\n" + noThinkInstr
-			return out
-		}
-	}
-	return msgs
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

@@ -225,25 +225,17 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 	bw.WriteString("</text>\n")
 
 	// Tokens info box (bottom-right)
-	if def.Tokens.ThinkOpen != "" || def.Tokens.NoThink != "" {
+	if def.Tokens.ThinkOpen != "" {
 		tokBoxW := 200
-		tokBoxH := 50
+		tokBoxH := 38
 		tokX := svgWidth - margin - tokBoxW
 		tokY := cursor - 20
 		fmt.Fprintf(bw, "  <rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" rx=\"5\" fill=\"%s\" stroke=\"%s\" stroke-width=\"0.8\"/>\n",
 			tokX, tokY, tokBoxW, tokBoxH, pal["ui.box_bg"], pal["ui.box_border"])
 		fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"10\" font-weight=\"600\" fill=\"%s\">Tokens</text>\n",
 			tokX+8, tokY+15, pal["ui.text_sec"])
-		lineY := tokY + 28
-		if def.Tokens.ThinkOpen != "" {
-			fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"9\" fill=\"%s\" font-family=\"monospace\">thinking: %s...%s</text>\n",
-				tokX+8, lineY, pal["ui.text_hint"], xmlEsc(def.Tokens.ThinkOpen), xmlEsc(def.Tokens.ThinkClose))
-			lineY += 13
-		}
-		if def.Tokens.NoThink != "" {
-			fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"9\" fill=\"%s\" font-family=\"monospace\">no-think: %s</text>\n",
-				tokX+8, lineY, pal["ui.text_hint"], xmlEsc(def.Tokens.NoThink))
-		}
+		fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"9\" fill=\"%s\" font-family=\"monospace\">thinking: %s...%s</text>\n",
+			tokX+8, tokY+28, pal["ui.text_hint"], xmlEsc(def.Tokens.ThinkOpen), xmlEsc(def.Tokens.ThinkClose))
 	}
 
 	bw.WriteString("</svg>\n")

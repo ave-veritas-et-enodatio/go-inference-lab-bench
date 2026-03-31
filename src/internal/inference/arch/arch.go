@@ -28,7 +28,6 @@ type ArchDef struct {
 type TokensDef struct {
 	ThinkOpen  string `toml:"think_open"`  // e.g. "<think>"
 	ThinkClose string `toml:"think_close"` // e.g. "</think>"
-	NoThink    string `toml:"no_think"`    // e.g. "/nothink" or "/no_think"
 }
 
 type ArchMeta struct {

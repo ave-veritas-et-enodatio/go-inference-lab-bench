@@ -17,8 +17,11 @@ Key features:
   * Some models may require a new block definition to be coded in go
   * This is still much less cumbersome than 'entire new source file for each architecture'
 * Inference service provided via local http server (standard OpenAI API at /api/v1)
+  * Logprobs support (`logprobs` + `top_logprobs` in request)
+  * Graceful shutdown via `/ctl?quit` (waits for in-flight inference) or `/ctl?quit&now`
 * Acontextual testing script for running repeated tests under identical starting conditions
-* simple chat client for contextual chat testing
+* Inference equivalence testing against llama-server (validates logprobs match within FP variance)
+* Simple chat client for contextual chat testing
 * Go language choice provides multiple benefits
   * Easy for humans: clean, easy-to-read syntax that builds and runs fast
   * Eash for agents: congitive load is lower than python and much lower than c++
@@ -70,7 +73,12 @@ make serve
 * if FORCE_NEW_SERVER=true it will kill any running inference server and start its own
 * see script text for other envar controls
 * Loop mode is *acontextual* each prompt is presented in isolation with no history
-  * it's intended for repeating identitcal tests, not chatting.
+  * it's intended for repeating identical tests, not chatting.
+
+To validate inference correctness against llama-server (requires Homebrew `llama.cpp`):
+```bash
+make equiv-test   # compares top-1 logprobs — all models should match within FP variance
+```
 
 For interactive chatting with persistent context:
 ```bash
@@ -97,6 +105,16 @@ curl -X POST localhost:11116/api/v1/chat/completions \
     "stream": true
   }'
 
+# With logprobs (top 3 alternatives per token)
+curl -X POST localhost:11116/api/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "default",
+    "messages": [{"role": "user", "content": "Hi"}],
+    "logprobs": true,
+    "top_logprobs": 3
+  }'
+
 # Stateless mode (no KV cache — for correctness testing / comparison)
 curl -X POST localhost:11116/api/v1/chat/completions \
   -H 'Content-Type: application/json' \
@@ -105,6 +123,10 @@ curl -X POST localhost:11116/api/v1/chat/completions \
     "messages": [{"role": "user", "content": "Hi"}],
     "stateless": true
   }'
+
+# Graceful shutdown
+curl localhost:11116/ctl?quit       # waits for in-flight inference to finish
+curl localhost:11116/ctl?quit&now   # immediate shutdown
 ```
 
 NOTE: see `test_inference.sh` - the commands above are for doc purposes, not normal workflow
@@ -137,6 +159,7 @@ src/
   ggml_lib/                     C op wrappers + ggml build
   third_party/ggml/             ggml git submodule
 test_inference.sh               Test harness
+test_llama_equiv.sh             Validates inference equivalence with llama-server
 ```
 
 ## Config
@@ -154,7 +177,7 @@ default = "first"     # "first", "last", or explicit model filename (without .gg
 
 [inference]
 max_seq_len = 8192                       # KV cache size in tokens
-enable_thinking_default = true           # inject /no_think when false
+enable_thinking_default = true           # passed to template as enable_thinking variable
 elide_thinking_default = true            # strip <think>...</think> from output
 log_thinking = false                     # log <think>...</think> content to stderr
 ```
@@ -184,6 +207,8 @@ Adding architectures is doable in about an hour with AI assistance, if you need 
   * try using the visual editor (it's experimental, YMMV)
   * supported architectures are auto-detected from `.arch.toml` files — no code changes needed
   * run and test
+  * run `./test_llama_equiv.sh` to verify the new architecture's inference behavior does not diverge from llama.cpp's
+    * unless that's the goal, of course. 
 
 ## Third Party Acknowledgements
 * [ggml](https://github.com/ggml-org/ggml.git) - Georgi Gerganov's C++ tensor library for machine learning

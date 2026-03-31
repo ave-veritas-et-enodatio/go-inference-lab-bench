@@ -1,7 +1,7 @@
 MAKE           := /usr/bin/make
 GRAPH_TARGETS  := $(patsubst models/arch/%.arch.toml,models/arch/%.arch.svg,$(wildcard models/arch/*.arch.toml))
 
-.PHONY: all build test serve chat arch-editor model-diagrams clean
+.PHONY: all build test integration-test equive-test serve chat arch-editor model-diagrams clean
 
 all: build
 
@@ -24,6 +24,14 @@ arch-editor: build
 
 test:
 	$(MAKE) -C src test
+
+PROMPT ?= explain pi in one short sentence.
+integration-test: build
+	@(ls models/*.gguf 2>&1) > /dev/null || (echo "$@: No model/.gguf files." 1>&2 && exit 1)
+	FORCE_NEW_SERVER=true ALL_MODELS=true THINK=false MAX_TOKENS=500 ./test_inference.sh "$(PROMPT)"
+
+equiv-test: build
+	./test_llama_equiv.sh
 
 models/arch/%.arch.svg: models/arch/%.arch.toml
 	@[[ -x ./bin/bench ]] || (echo "make build first." 1>&2 && exit 1)

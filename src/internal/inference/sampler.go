@@ -77,6 +77,84 @@ func TopP(logits []float32, temperature, topP float32) int32 {
 	return int32(idxs[len(idxs)-1])
 }
 
+// ComputeTopLogProbs computes log-probabilities for the top-N tokens from raw logits.
+// Always includes the chosen token (chosenID). Returns up to topN entries sorted by
+// descending probability. tokenString maps token IDs to their string representation.
+func ComputeTopLogProbs(logits []float32, chosenID int32, topN int, tokenString func(int32) string) TokenLogProb {
+	if topN < 1 {
+		topN = 1
+	}
+	n := len(logits)
+
+	// Stable log-softmax: log(exp(x_i - max) / sum(exp(x_j - max))) = (x_i - max) - log(sum(exp(x_j - max)))
+	maxL := logits[0]
+	for _, v := range logits {
+		if v > maxL {
+			maxL = v
+		}
+	}
+	var sumExp float64
+	for _, v := range logits {
+		sumExp += math.Exp(float64(v - maxL))
+	}
+	logSumExp := math.Log(sumExp)
+
+	// Find top-N by partial sort: collect (id, logprob) for the N largest logits.
+	type entry struct {
+		id      int32
+		logprob float64
+	}
+	top := make([]entry, 0, topN+1)
+	for i := range n {
+		lp := float64(logits[i]-maxL) - logSumExp
+		if len(top) < topN {
+			top = append(top, entry{int32(i), lp})
+			// bubble up
+			for j := len(top) - 1; j > 0 && top[j].logprob > top[j-1].logprob; j-- {
+				top[j], top[j-1] = top[j-1], top[j]
+			}
+		} else if lp > top[len(top)-1].logprob {
+			top[len(top)-1] = entry{int32(i), lp}
+			for j := len(top) - 1; j > 0 && top[j].logprob > top[j-1].logprob; j-- {
+				top[j], top[j-1] = top[j-1], top[j]
+			}
+		}
+	}
+
+	// Ensure chosen token is in the list
+	chosenLP := float64(logits[chosenID]-maxL) - logSumExp
+	found := false
+	for _, e := range top {
+		if e.id == chosenID {
+			found = true
+			break
+		}
+	}
+	if !found && len(top) > 0 {
+		top[len(top)-1] = entry{chosenID, chosenLP}
+		sort.Slice(top, func(i, j int) bool { return top[i].logprob > top[j].logprob })
+	}
+
+	// Build result
+	chosenStr := tokenString(chosenID)
+	result := TokenLogProb{
+		ID:      chosenID,
+		Token:   chosenStr,
+		LogProb: chosenLP,
+		Bytes:   ByteArray(chosenStr),
+	}
+	for _, e := range top {
+		s := tokenString(e.id)
+		result.TopProbs = append(result.TopProbs, TopLogProb{
+			ID:      e.id,
+			Token:   s,
+			LogProb: e.logprob,
+			Bytes:   ByteArray(s),
+		})
+	}
+	return result
+}
+
 // Simple LCG PRNG (not crypto-safe; fine for sampling).
 var lcgState uint64 = 12345678901234567
 

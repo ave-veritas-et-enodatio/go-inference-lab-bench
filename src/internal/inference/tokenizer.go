@@ -35,10 +35,11 @@ type Tokenizer struct {
 const preTokenRegex = `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`
 
 // specialTokenRe matches special token patterns emitted by chat templates:
-//   - <|...|>  — Qwen / Llama style
-//   - <word>   — GLM4 <sop> style
-//   - [WORD]   — GLM4 [gMASK] style
-var specialTokenRe = regexp.MustCompile(`<\|[^|>\n]*\|>|<[a-z][a-zA-Z0-9_]*>|\[[a-zA-Z][a-zA-Z0-9_]*\]`)
+//   - <|...|>   — Qwen / Llama style
+//   - <word>    — GLM4 <sop> style
+//   - </word>   — closing tags (e.g. </think>)
+//   - [WORD]    — GLM4 [gMASK] style
+var specialTokenRe = regexp.MustCompile(`<\|[^|>\n]*\|>|</[a-z][a-zA-Z0-9_]*>|<[a-z][a-zA-Z0-9_]*>|\[[a-zA-Z][a-zA-Z0-9_]*\]`)
 
 // NewTokenizerFromGGUF loads vocab, merge rules, BOS/EOS IDs, and the chat
 // template Jinja2 string from a parsed GGUF file.

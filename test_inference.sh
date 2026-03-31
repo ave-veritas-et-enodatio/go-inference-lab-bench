@@ -12,6 +12,14 @@ usage() {
 
 LOOP_MODE=false
 ALL_MODELS=${ALL_MODELS:-false}
+USE_LLAMA=${USE_LLAMA:-false}
+
+TOP_LOGPROBS=${TOP_LOGPROBS:-0}
+if [[ "${TOP_LOGPROBS}" -gt 0 ]]; then
+  LOGPROBS=${LOGPROBS:-true}
+else
+  LOGPROBS=${LOGPROBS:-false}
+fi
 
 if [[ "${1}" == "--loop" ]]; then
   LOOP_MODE=true
@@ -30,17 +38,24 @@ else
   MSG="${*}"
 fi
 
-# port 11116 is the default server port.
-# if you edit api_config.toml either set in environment or edit this script.
-PORT=${PORT:-11116}
-API_BASE_URL=${API_BASE_URL:-"http://localhost:${PORT}/api/v1"}
+PORT=${PORT:-auto}
+if [[ ${PORT} == "auto" ]]; then
+  # parse the port out of server config
+  PORT=$(awk '/^[ \t]*port[ \t]*=/ { gsub("=", " "); print $2; exit(0); }' config/api_config.toml)
+  # echo PORT=${PORT} && exit 0
+fi
+SERVER_BASE_URL=${SERVER_BASE_URL:-"http://localhost:${PORT}"}
+CTL_BASE_URL=${CTL_BASE_URL:-"${SERVER_BASE_URL}/ctl"}
+API_BASE_URL=${API_BASE_URL:-"${SERVER_BASE_URL}/api/v1"}
 STATELESS=${STATELESS:-false}
-THINK=${THINK:-null}
+THINK=${THINK:-false}
 ELIDE_THINK=${ELIDE_THINK:-null}
 MAX_TOKENS=${MAX_TOKENS:-4096}
 TEMPERATURE=${TEMPERATURE:-0}
 MODEL=${MODEL:-default}
 STREAM=${STREAM:-false}
+
+(! [[ "${USE_LLAMA}" == "true" && "${MODEL}" == "default" && "${ALL_MODELS}" != "true" ]]) || { echo "ALL_MODELS must be true or a MODEL must be specified." 1>&2; exit 1; }
 
 PYTHON=$(which python3 2> /dev/null) || \
   PYTHON=$(which python 2>/dev/null) || \
@@ -61,49 +76,6 @@ print("\n".join(models))
 
 MODEL_LIST=
 
-function show_models() {
-  local model
-  local models
-  local i
-  models=$(curl -sf "${API_BASE_URL}/models") || return 1
-  models=$(parse_models <<< "${models}")
-  MODEL_LIST="${models} default"
-  echo "models"
-  echo "======"
-  i=1
-  for model in ${MODEL_LIST}; do
-    [[ ${model} == ${MODEL} ]] && echo "${i}) ${model}*" || echo "${i}) ${model}"
-    i=$((i + 1))
-  done
-  echo ""
-}
-
-# By default, assume a server is already running.
-# Set FORCE_NEW_SERVER=true to start a fresh one (kills any existing bench process).
-if [[ "${FORCE_NEW_SERVER:-false}" == "true" ]]; then
-  [[ -x "./bin/bench" ]] || { echo "./bin/bench binary missing. 'make all' first." 1>&2; exit 1; }
-
-  pkill -f './bin/bench' 2>/dev/null || true
-  sleep 1
-  ./bin/bench serve-api 2> ./bin/test_inference.log &
-  SERVER_PID=$!
-
-  function kill_server() {
-    kill ${SERVER_PID} 2>/dev/null
-    wait ${SERVER_PID} 2>/dev/null
-  }
-
-  trap kill_server EXIT
-
-  # Wait for server to be ready (up to 30s)
-  for _i in $(seq 1 60); do
-    if show_models > /dev/null 2>&1; then
-      break
-    fi
-    sleep 0.5
-  done
-fi
-
 
 function parse_response() {
   # maybe fall back to a more brittle awk-based extractor ?
@@ -111,36 +83,65 @@ function parse_response() {
 
 # when streaming is true the response is a sequence of disjointed dictionaries (not comma separated)
 # needs handling implemented in the python snippet.
-  "${PYTHON}" -c '
-import sys,json
+  MODEL=${MODEL} "${PYTHON}" -c '
+import os,sys,json
 resp = json.load(sys.stdin)
-resp = resp["choices"][0]["message"]["content"]
-print(resp)
+if "choices" in resp:
+  resp = resp["choices"][0]
+  resp_text = resp["message"]["content"]
+  print(resp_text)
+  if "logprobs" in resp:
+    logprobs = json.dumps(resp["logprobs"]["content"][0]["top_logprobs"], sort_keys=True)
+    model = os.getenv("MODEL")
+    print(f"{model}|{logprobs}|{resp_text}")
+else:
+  print(resp)
 ' 2> /dev/null
 }
 
 function query_one() {
   local msg="${1}"
+  local ext_params
+
+  if ${USE_LLAMA}; then
+    ext_params=$(printf '
+      "chat_template_kwargs": { "enable_thinking": %s },
+    ' \
+    "${THINK}")
+  else
+    ext_params=$(printf '
+      "enable_thinking": %s,
+      "stateless": %s,
+      "elide_thinking": %s,
+    ' \
+    "${THINK}" \
+    "${STATELESS}" \
+    "${ELIDE_THINK}" \
+    )
+  fi
+
   local payload=$(printf '{
-      "model": "%s",
+      %s
       "messages": [{"role":"user","content":"%s"}],
+      "model": "%s",
       "max_tokens": %s,
       "temperature": %s,
-      "stateless": %s,
-      "enable_thinking": %s,
-      "elide_thinking": %s,
+      "logprobs": %s,
+      "top_logprobs": %s,
       "stream": %s
     }' \
-    "${MODEL}" \
+    "${ext_params}" \
     "${msg}" \
+    "${MODEL}" \
     "${MAX_TOKENS}" \
     "${TEMPERATURE}" \
-    "${STATELESS}" \
-    "${THINK}" \
-    "${ELIDE_THINK}" \
-    "${STREAM}")
-  ${DEBUG_POST:-false} && echo "[DBG] POST payload: ${payload}" || true
-  local resp=$(curl -s -X POST "${API_BASE_URL}/chat/completions" \
+    "${LOGPROBS}" \
+    "${TOP_LOGPROBS}" \
+    "${STREAM}" \
+    )
+  local completions_url=${COMPLETIONS_URL:-"${API_BASE_URL}/chat/completions"}
+  ${DEBUG_POST:-false} && echo "[DBG] ${completions_url} POST payload: ${payload}" || true
+  local resp=$(curl -s -X POST "${completions_url}" \
     -H 'Content-Type: application/json' \
     -d "${payload}")
   echo "${resp}" | parse_response || echo "${resp}"
@@ -149,8 +150,7 @@ function query_one() {
 function query() {
   local model
   if ${ALL_MODELS}; then
-    for model in ${MODEL_LIST}; do
-      [[ ${model} != default ]] || continue
+    for model in ${MODEL_LIST%default}; do
       echo "${model} <-- \"${*}\""
       MODEL=${model} query_one "${@}"
     done
@@ -256,6 +256,100 @@ function loop_mode() {
     query "${line}"
   done
 }
+
+function show_models() {
+  local model
+  local models
+  local i
+  models=$(curl -sf "${API_BASE_URL}/models") || return 1
+  models=$(parse_models <<< "${models}")
+  MODEL_LIST="${models} default"
+
+  # if using llama (which publishes models besides our ggufs
+  # or trying to pull logits for comparison, ensure consistent model order
+  ! (${LOGPROBS} || ${USE_LLAMA}) || {
+    MODEL_LIST=$(cd models; ls *.gguf | sort)
+    MODEL_LIST=${MODEL_LIST//\.gguf/}
+  }
+  echo "models"
+  echo "======"
+  i=1
+  for model in ${MODEL_LIST}; do
+    [[ ${model} == ${MODEL} ]] && echo "${i}) ${model}*" || echo "${i}) ${model}"
+    i=$((i + 1))
+  done
+  echo ""
+}
+
+function quit_servers() {
+  if [[ -n "${SERVER_PID}" ]]; then
+    curl -s "${CTL_BASE_URL}?quit&now" > /dev/null || {
+      ps aux | grep "bin/bench" | awk '!/grep/ { print $2; }' | xargs kill  sleep 1
+    }
+  fi
+
+  if [[ -n "${LLAMA_PID}" ]]; then
+    # blunt instrument
+    ps aux | grep "llama-server" | awk '!/grep/ { print $2; }' | xargs kill
+  fi
+}
+
+function wait_for_starting_server() {
+  # Wait for server to be ready (up to 30s)
+  for _i in $(seq 1 60); do
+    if show_models > /dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "failed getting models from ${API_BASE_URL}" 1>&2
+  return 1
+}
+
+function run_api_server() {
+  ./bin/bench serve-api 2>&1
+}
+
+function start_new_api_server() {
+  [[ -x "./bin/bench" ]] || { echo "./bin/bench binary missing. 'make all' first." 1>&2; exit 1; }
+
+  ps aux | grep "bin/bench" | awk '!/grep/ { print $2; }' | xargs kill
+  sleep 1
+  run_api_server >> ./bin/test_inference.log &
+  SERVER_PID=$!
+
+  wait_for_starting_server
+}
+
+LLAMA_PORT=${LLAMA_PORT:-8080}
+LLAMA_BASE_URL="http://localhost:${LLAMA_PORT}"
+
+function run_llama_server() {
+  llama-server --models-dir "$(pwd)/models" --port ${LLAMA_PORT} --ctx-size 8192 2>&1
+}
+
+function start_llama_server() {
+  (which llama-server 1>&2) > /dev/null || { echo "llama-server not installed." 1>&2; exit 1; }
+
+  ps aux | grep llama-server | awk '!/grep/ { print $2; }' | xargs kill
+  sleep 1
+  run_llama_server >> bin/llama-server.log &
+  LLAMA_PID=$!
+
+  API_BASE_URL=${LLAMA_BASE_URL}/v1
+  SERVER_BASE_URL=${LLAMA_BASE_URL}
+  PORT=${LLAMA_PORT}
+
+  wait_for_starting_server
+}
+
+trap quit_servers EXIT
+
+if [[ "${USE_LLAMA}" == "true" ]]; then
+  start_llama_server
+elif [[ "${FORCE_NEW_SERVER:-false}" == "true" ]]; then
+  start_new_api_server
+fi
 
 show_models || { echo "inference server not running. 'make serve' or use envar param FORCE_NEW_SERVER=true" 1>&2; exit 1; }
 

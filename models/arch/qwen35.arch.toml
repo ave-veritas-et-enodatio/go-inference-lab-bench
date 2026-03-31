@@ -122,4 +122,3 @@ builder = "swiglu"
 [tokens]
 think_open  = "<think>"
 think_close = "</think>"
-no_think    = "/no_think"
