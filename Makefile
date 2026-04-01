@@ -1,7 +1,7 @@
 MAKE           := /usr/bin/make
 GRAPH_TARGETS  := $(patsubst models/arch/%.arch.toml,models/arch/%.arch.svg,$(wildcard models/arch/*.arch.toml))
 
-.PHONY: all build test integration-test equive-test serve chat arch-editor model-diagrams clean
+.PHONY: all build test integration-test equiv-test update-dependencies serve chat arch-editor model-diagrams clean
 
 all: build
 
@@ -22,9 +22,6 @@ chat: build
 arch-editor: build
 	./bin/bench arch-editor
 
-test:
-	$(MAKE) -C src test
-
 PROMPT ?= explain pi in one short sentence.
 integration-test: build
 	@(ls models/*.gguf 2>&1) > /dev/null || (echo "$@: No model/.gguf files." 1>&2 && exit 1)
@@ -39,5 +36,12 @@ models/arch/%.arch.svg: models/arch/%.arch.toml
 
 arch-diagrams: $(GRAPH_TARGETS)
 
+
+update-dependencies:
+	$(MAKE) -C src $@
+
+test:
+	$(MAKE) -C src $@
+
 clean:
-	$(MAKE) -C src clean
+	$(MAKE) -C src $@

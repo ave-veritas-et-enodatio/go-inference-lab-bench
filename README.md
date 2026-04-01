@@ -211,7 +211,20 @@ Adding architectures is doable in about an hour with AI assistance, if you need 
     * unless that's the goal, of course. 
 
 ## Third Party Acknowledgements
-* [ggml](https://github.com/ggml-org/ggml.git) - Georgi Gerganov's C++ tensor library for machine learning
-  * Used via thin binding layer
+* [ggml](https://github.com/ggml-org/ggml.git) - [Georgi Gerganov](https://github.com/ggerganov)'s C++ tensor library for machine learning
+  * Used in inference engine via thin binding layer
 * [llama.cpp](https://github.com/ggml-org/llama.cpp) - Georgi Gerganov's C++ inference engine
   * Reference for block implementations
+* [gguf-parser-go](github.com/gpustack/gguf-parser-go) - [Frank Mai](https://github.com/thxCode)'s Pure Go GGUF file parser
+* [gonja](https://github.com/NikolaLohinski/gonja) - [Nikola Lohinski](https://github.com/NikolaLohinski) and [Axel H](https://github.com/noirbizarre)'s Jinja2 template processor in pure Go
+  * Used to handle rendering prompt templates from GGUF files
+* [BurntSushi/toml](github.com/BurntSushi/toml) - [Andrew Gallant](https://github.com/BurntSushi)'s TOML parser
+  * Model architecture DSL and config files
+* [regexp2](github.com/dlclark/regexp2) - [Doug Clark](https://github.com/dlclark)'s regular expression engine 
+* [go-chi](github.com/go-chi/chi) - HTTP services router
+  * Used by server implementation of OpenAI API
+* [go-sqlite3](https://github.com/mattn/go-sqlite3) - [Matt N.](https://github.com/mattn)'s  sqlite3 driver
+  * Used in the simple chat client for accumulating history
+* [langchaingo](github.com/tmc/langchaingo) - [Travis Cline](https://github.com/tmc)'s OpenAI API client interaction library
+  * Used in the simple chat client
+* [cobra](github.com/spf13/cobra) - [Steve Francia](https://github.com/spf13)'s CLI parameter handler

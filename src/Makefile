@@ -13,6 +13,11 @@ bench: ggml_lib
 	@mkdir -p $(BINDIR)
 	go build -o $(BINDIR)/ ./bench
 
+update-dependencies:
+	go mod tidy
+	go get -u ./...
+	go mod tidy
+
 test: ggml_lib
 	go test ./... --count=1
 
