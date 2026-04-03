@@ -75,7 +75,7 @@ make serve
 * Loop mode is *acontextual* each prompt is presented in isolation with no history
   * it's intended for repeating identical tests, not chatting.
 
-To validate inference correctness against llama-server (requires Homebrew `llama.cpp`):
+To validate inference correctness against llama-server (requires `llama.cpp` from homebrew, apt, or winget):
 ```bash
 make equiv-test   # compares top-1 logprobs — all models should match within FP variance
 ```
