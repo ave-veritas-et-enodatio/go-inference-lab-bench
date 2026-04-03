@@ -1,6 +1,6 @@
 # Go Inference Lab Bench
 
-A from-scratch Go language LLM lab bench for doing R&D related to the mechanics of inference.
+A [from-scratch Go language LLM lab bench](https://bennherrera.dev/writing/go-inference-lab-bench/) for doing R&D related to the mechanics of inference.
 
 <a href="models/arch/qwen35.arch.svg"><image src="models/arch/qwen35.arch.svg" height="600" alt="Qwen 3.5 Architecture"></a><a href="models/arch/qwen35.layers.svg"><image src="models/arch/qwen35.layers.svg" height="600" alt="Qwen 3.5 Layers"></a>
 
