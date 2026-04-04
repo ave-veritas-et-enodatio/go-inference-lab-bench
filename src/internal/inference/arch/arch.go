@@ -34,6 +34,7 @@ type ArchMeta struct {
 	Name            string `toml:"name"`
 	TiedEmbeddings  bool   `toml:"tied_embeddings"`
 	NonCausal       bool   `toml:"non_causal"`       // bidirectional attention (no causal mask)
+	EmbedScale      bool   `toml:"embed_scale"`      // multiply embeddings by sqrt(n_embd)
 }
 
 // ParamsDef holds GGUF key mappings and derived expressions.
@@ -95,10 +96,11 @@ type LayersDef struct {
 	CommonWeights map[string]string       `toml:"common_weights"`
 }
 
-// RoutingDef defines binary per-layer block routing: rule evaluates to true/false.
-// TODO: revisit routing formula architecture if more than 2 types of attention block ever need to be supported.`
+// RoutingDef defines binary per-layer block routing.
+// Either Rule (expression) or Pattern (array param indexed by layer) must be set, not both.
 type RoutingDef struct {
 	Rule    string `toml:"rule"`
+	Pattern string `toml:"pattern"`  // array param name — nonzero → if_true, zero → if_false
 	IfTrue  string `toml:"if_true"`
 	IfFalse string `toml:"if_false"`
 }
@@ -111,8 +113,9 @@ type BlockDef struct {
 }
 
 type CacheDef struct {
-	Dims  []string `toml:"dims"`
-	Dtype string   `toml:"dtype"`
+	Dims   []string `toml:"dims"`
+	Dtype  string   `toml:"dtype"`
+	Shared string   `toml:"shared"` // shared group name — layers with same value share one cache tensor
 }
 
 type FFNDef struct {
@@ -191,8 +194,11 @@ func Validate(def *ArchDef) []ValidationError {
 		add("layers.prefix", "must contain @{layer_idx}")
 	}
 	r := def.Layers.Routing
-	if r.Rule == "" {
-		add("layers.routing.rule", "required")
+	if r.Rule == "" && r.Pattern == "" {
+		add("layers.routing", "either rule or pattern is required")
+	}
+	if r.Rule != "" && r.Pattern != "" {
+		add("layers.routing", "rule and pattern are mutually exclusive")
 	}
 	if r.IfTrue == "" {
 		add("layers.routing.if_true", "required")
@@ -282,6 +288,11 @@ func Validate(def *ArchDef) []ValidationError {
 		}
 		for _, exprErr := range ValidateRoutingExpr(r.Rule, declaredParams) {
 			add("layers.routing.rule", exprErr)
+		}
+	}
+	if r.Pattern != "" {
+		if !declaredParams[r.Pattern] {
+			add("layers.routing.pattern", fmt.Sprintf("references undeclared param %q", r.Pattern))
 		}
 	}
 

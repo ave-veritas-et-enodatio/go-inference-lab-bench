@@ -270,7 +270,7 @@
     <text x="100" y="20" text-anchor="middle" font-weight="600" fill="#333333">Logits [n_vocab]</text>
   </g>
   <text x="30" y="1678" font-size="11" fill="#666666"><tspan font-weight="600">Routing rule:</tspan> <tspan font-family="monospace" fill="#333333">(@{layer_idx} + 1) % ${full_attn_interval} != 0</tspan> -> true: recurrent_ssm / false: full_attention</text>
-  <rect x="730" y="1658" width="200" height="50" rx="5" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8"/>
+  <rect x="730" y="1658" width="200" height="38" rx="5" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8"/>
   <text x="738" y="1673" font-size="10" font-weight="600" fill="#666666">Tokens</text>
   <text x="738" y="1686" font-size="9" fill="#999999" font-family="monospace">thinking: &lt;think&gt;...&lt;/think&gt;</text>
 </svg>

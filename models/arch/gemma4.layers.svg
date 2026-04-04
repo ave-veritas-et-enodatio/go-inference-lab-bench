@@ -1,0 +1,266 @@
+<svg viewBox="0 0 580 1193" xmlns="http://www.w3.org/2000/svg">
+<style>
+  text { font-family: 'Courier New', monospace; }
+  .title { font-size: 11px; font-weight: bold; fill: #111111; }
+  .hdr   { font-size: 9px; font-weight: bold; fill: #333333; text-anchor: middle; dominant-baseline: middle; }
+  .lbl   { font-size: 9px; fill: #888888; text-anchor: end; dominant-baseline: middle; }
+  .tlbl  { font-size: 7px; fill: #000000; text-anchor: middle; dominant-baseline: middle; }
+  .io    { font-size: 8px; font-weight: bold; fill: #888888; text-anchor: middle; dominant-baseline: middle; }
+  .gtxt  { font-size: 9px; text-anchor: middle; dominant-baseline: middle; }
+  .ltxt  { font-size: 8px; fill: #555555; dominant-baseline: middle; }
+  .shdr  { font-size: 8px; font-weight: bold; fill: #333333; dominant-baseline: middle; }
+</style>
+<defs>
+  <linearGradient id="zm_full_attention" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%%" stop-color="#e3f2fd"/><stop offset="100%%" stop-color="#bbdefb"/>
+  </linearGradient>
+  <linearGradient id="zm_recurrent" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%%" stop-color="#e8f5e9"/><stop offset="100%%" stop-color="#c8e6c9"/>
+  </linearGradient>
+  <linearGradient id="zm_ffn" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%%" stop-color="#fff3e0"/><stop offset="100%%" stop-color="#ffe0b2"/>
+  </linearGradient>
+  <linearGradient id="zm_global" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%%" stop-color="#fce4ec"/><stop offset="100%%" stop-color="#f8bbd0"/>
+  </linearGradient>
+  <symbol id="blk-full_attention" overflow="visible">
+  <rect x="0" y="0" width="110" height="40" fill="url(#zm_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="2"/>
+  <rect x="2" y="3" width="16" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="10" y="20" transform="rotate(-90,10,20)">norm</text>
+  <line x1="20" y1="0" x2="20" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="22" y="2" width="54" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="49" y="7">Q</text>
+  <rect x="22" y="15" width="54" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="49" y="20">K</text>
+  <rect x="22" y="28" width="54" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="49" y="33">V</text>
+  <line x1="77" y1="0" x2="77" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="79" y="3" width="26" height="34" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="92" y="20">out</text>
+  <line x1="113" y1="20" x2="113" y2="44" stroke="#1976D2" stroke-width="0.8"/>
+  <path d="M 113,44 L -10,44" fill="none" stroke="#1976D2" stroke-width="1.0" stroke-dasharray="2,3"/>
+  <polyline points="-6,42 -10,44 -6,46" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  </symbol>
+  <symbol id="blk-swa_attention" overflow="visible">
+  <rect x="0" y="0" width="110" height="40" fill="url(#zm_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="2"/>
+  <rect x="2" y="3" width="16" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="10" y="20" transform="rotate(-90,10,20)">norm</text>
+  <line x1="20" y1="0" x2="20" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="22" y="2" width="54" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="49" y="7">Q</text>
+  <rect x="22" y="15" width="54" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="49" y="20">K</text>
+  <rect x="22" y="28" width="54" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="49" y="33">V</text>
+  <line x1="77" y1="0" x2="77" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="79" y="3" width="26" height="34" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="92" y="20">out</text>
+  <line x1="113" y1="20" x2="113" y2="44" stroke="#1976D2" stroke-width="0.8"/>
+  <path d="M 113,44 L -10,44" fill="none" stroke="#1976D2" stroke-width="1.0" stroke-dasharray="2,3"/>
+  <polyline points="-6,42 -10,44 -6,46" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  </symbol>
+  <symbol id="ffn-dense" overflow="visible">
+  <rect x="0" y="0" width="98" height="40" fill="url(#zm_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="2"/>
+  <rect x="2" y="3" width="12" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="8" y="20" transform="rotate(-90,8,20)">norm</text>
+  <line x1="15" y1="0" x2="15" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="17" y="8" width="52" height="10" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="43" y="13">G</text>
+  <rect x="17" y="21" width="52" height="10" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="43" y="26">U</text>
+  <rect x="72" y="3" width="22" height="34" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="83" y="20">D</text>
+  <line x1="70" y1="0" x2="70" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <line x1="98" y1="20" x2="108" y2="20" stroke="#AAAAAA" stroke-width="0.8"/>
+  <circle cx="108" cy="20" r="2" fill="#888888"/>
+  <path d="M 108,20 L 108,52 L -126,52" fill="none" stroke="#EF6C00" stroke-width="1.0" stroke-dasharray="2,3"/>
+  <polyline points="-122,50 -126,52 -122,54" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  </symbol>
+  <symbol id="row-chrome" overflow="visible">
+  <circle cx="26" cy="0" r="2.5" fill="#888888"/>
+  <line x1="26" y1="0" x2="36" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
+  <line x1="146" y1="0" x2="152" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
+  <polygon points="148,-2 152,0 148,2" fill="#AAAAAA"/>
+  </symbol>
+  <symbol id="global-row" overflow="visible">
+  <line x1="26" y1="0" x2="36" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
+  <polyline points="32,-2 36,0 32,2" fill="none" stroke="#AAAAAA" stroke-width="0.8"/>
+  <rect x="36" y="-20" width="214" height="40" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
+  <rect x="38" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="55" y="0">out</text>
+  <rect x="73" y="-17" width="34" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="90" y="0">norm</text>
+  <rect x="108" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="125" y="0">proj</text>
+  <rect x="143" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="160" y="0">norm</text>
+  <rect x="178" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="195" y="0">embd</text>
+  <rect x="213" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="230" y="0">embd</text>
+  <line x1="143" y1="-20" x2="143" y2="-36" stroke="#AAAAAA" stroke-width="0.8"/>
+  <polyline points="140,-30 143,-36 146,-30" fill="none" stroke="#AAAAAA" stroke-width="1"/>
+  <text class="io" x="143" y="-42">OUT</text>
+  </symbol>
+  <symbol id="legend" overflow="visible">
+  <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Legend</text>
+  <rect width="178" height="144" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <rect x="4" y="10" width="10" height="10" fill="url(#zm_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="18" y="15">full attention</text>
+  <rect x="4" y="26" width="10" height="10" fill="url(#zm_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="18" y="31">swa attention</text>
+  <rect x="4" y="42" width="10" height="10" fill="url(#zm_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="18" y="47">FFN (dense)</text>
+  <rect x="4" y="58" width="10" height="10" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="18" y="63">global</text>
+  <rect x="4" y="74" width="10" height="10" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="18" y="79">RMS norm</text>
+  </symbol>
+  <symbol id="summary" overflow="visible">
+  <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Summary</text>
+  <rect width="178" height="75" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <text class="shdr" x="4" y="11">65 modules</text>
+  <text class="shdr" x="4" y="29">574 tensors</text>
+  <text class="shdr" x="4" y="47">574 weights</text>
+  </symbol>
+</defs>
+  <rect width="580" height="1193" fill="#fafafa" rx="8"/>
+
+  <text class="title" x="275" y="14" text-anchor="middle">gemma4.layers</text>
+  <line x1="26" y1="30" x2="26" y2="982" stroke="#AAAAAA" stroke-width="1.5"/>
+  <text class="io" x="26" y="24">IN</text>
+  <path d="M 26,982 L 26,1007 L 316,1007" fill="none" stroke="#AAAAAA" stroke-width="1.5"/>
+  <line x1="316" y1="1007" x2="316" y2="982" stroke="#AAAAAA" stroke-width="1.5"/>
+  <line x1="316" y1="982" x2="316" y2="98" stroke="#AAAAAA" stroke-width="1.5"/>
+  <use href="#row-chrome" transform="translate(0,40)"/>
+  <text class="lbl" x="21" y="40">0</text>
+  <use href="#blk-swa_attention" transform="translate(36,20)"/>
+  <use href="#ffn-dense" transform="translate(152,20)"/>
+  <use href="#row-chrome" transform="translate(0,98)"/>
+  <text class="lbl" x="21" y="98">1</text>
+  <use href="#blk-full_attention" transform="translate(36,78)"/>
+  <use href="#ffn-dense" transform="translate(152,78)"/>
+  <use href="#row-chrome" transform="translate(0,156)"/>
+  <text class="lbl" x="21" y="156">2</text>
+  <use href="#blk-full_attention" transform="translate(36,136)"/>
+  <use href="#ffn-dense" transform="translate(152,136)"/>
+  <use href="#row-chrome" transform="translate(0,214)"/>
+  <text class="lbl" x="21" y="214">3</text>
+  <use href="#blk-full_attention" transform="translate(36,194)"/>
+  <use href="#ffn-dense" transform="translate(152,194)"/>
+  <use href="#row-chrome" transform="translate(0,272)"/>
+  <text class="lbl" x="21" y="272">4</text>
+  <use href="#blk-swa_attention" transform="translate(36,252)"/>
+  <use href="#ffn-dense" transform="translate(152,252)"/>
+  <use href="#row-chrome" transform="translate(0,330)"/>
+  <text class="lbl" x="21" y="330">5</text>
+  <use href="#blk-full_attention" transform="translate(36,310)"/>
+  <use href="#ffn-dense" transform="translate(152,310)"/>
+  <use href="#row-chrome" transform="translate(0,388)"/>
+  <text class="lbl" x="21" y="388">6</text>
+  <use href="#blk-full_attention" transform="translate(36,368)"/>
+  <use href="#ffn-dense" transform="translate(152,368)"/>
+  <use href="#row-chrome" transform="translate(0,446)"/>
+  <text class="lbl" x="21" y="446">7</text>
+  <use href="#blk-full_attention" transform="translate(36,426)"/>
+  <use href="#ffn-dense" transform="translate(152,426)"/>
+  <use href="#row-chrome" transform="translate(0,504)"/>
+  <text class="lbl" x="21" y="504">8</text>
+  <use href="#blk-swa_attention" transform="translate(36,484)"/>
+  <use href="#ffn-dense" transform="translate(152,484)"/>
+  <use href="#row-chrome" transform="translate(0,562)"/>
+  <text class="lbl" x="21" y="562">9</text>
+  <use href="#blk-full_attention" transform="translate(36,542)"/>
+  <use href="#ffn-dense" transform="translate(152,542)"/>
+  <use href="#row-chrome" transform="translate(0,620)"/>
+  <text class="lbl" x="21" y="620">10</text>
+  <use href="#blk-full_attention" transform="translate(36,600)"/>
+  <use href="#ffn-dense" transform="translate(152,600)"/>
+  <use href="#row-chrome" transform="translate(0,678)"/>
+  <text class="lbl" x="21" y="678">11</text>
+  <use href="#blk-full_attention" transform="translate(36,658)"/>
+  <use href="#ffn-dense" transform="translate(152,658)"/>
+  <use href="#row-chrome" transform="translate(0,736)"/>
+  <text class="lbl" x="21" y="736">12</text>
+  <use href="#blk-swa_attention" transform="translate(36,716)"/>
+  <use href="#ffn-dense" transform="translate(152,716)"/>
+  <use href="#row-chrome" transform="translate(0,794)"/>
+  <text class="lbl" x="21" y="794">13</text>
+  <use href="#blk-full_attention" transform="translate(36,774)"/>
+  <use href="#ffn-dense" transform="translate(152,774)"/>
+  <use href="#row-chrome" transform="translate(0,852)"/>
+  <text class="lbl" x="21" y="852">14</text>
+  <use href="#blk-full_attention" transform="translate(36,832)"/>
+  <use href="#ffn-dense" transform="translate(152,832)"/>
+  <use href="#row-chrome" transform="translate(0,910)"/>
+  <text class="lbl" x="21" y="910">15</text>
+  <use href="#blk-full_attention" transform="translate(36,890)"/>
+  <use href="#ffn-dense" transform="translate(152,890)"/>
+  <use href="#row-chrome" transform="translate(0,968)"/>
+  <text class="lbl" x="21" y="968">16</text>
+  <use href="#blk-swa_attention" transform="translate(36,948)"/>
+  <use href="#ffn-dense" transform="translate(152,948)"/>
+  <use href="#row-chrome" transform="translate(290,968)"/>
+  <text class="lbl" x="311" y="968">17</text>
+  <use href="#blk-full_attention" transform="translate(326,948)"/>
+  <use href="#ffn-dense" transform="translate(442,948)"/>
+  <use href="#row-chrome" transform="translate(290,910)"/>
+  <text class="lbl" x="311" y="910">18</text>
+  <use href="#blk-full_attention" transform="translate(326,890)"/>
+  <use href="#ffn-dense" transform="translate(442,890)"/>
+  <use href="#row-chrome" transform="translate(290,852)"/>
+  <text class="lbl" x="311" y="852">19</text>
+  <use href="#blk-full_attention" transform="translate(326,832)"/>
+  <use href="#ffn-dense" transform="translate(442,832)"/>
+  <use href="#row-chrome" transform="translate(290,794)"/>
+  <text class="lbl" x="311" y="794">20</text>
+  <use href="#blk-swa_attention" transform="translate(326,774)"/>
+  <use href="#ffn-dense" transform="translate(442,774)"/>
+  <use href="#row-chrome" transform="translate(290,736)"/>
+  <text class="lbl" x="311" y="736">21</text>
+  <use href="#blk-full_attention" transform="translate(326,716)"/>
+  <use href="#ffn-dense" transform="translate(442,716)"/>
+  <use href="#row-chrome" transform="translate(290,678)"/>
+  <text class="lbl" x="311" y="678">22</text>
+  <use href="#blk-full_attention" transform="translate(326,658)"/>
+  <use href="#ffn-dense" transform="translate(442,658)"/>
+  <use href="#row-chrome" transform="translate(290,620)"/>
+  <text class="lbl" x="311" y="620">23</text>
+  <use href="#blk-full_attention" transform="translate(326,600)"/>
+  <use href="#ffn-dense" transform="translate(442,600)"/>
+  <use href="#row-chrome" transform="translate(290,562)"/>
+  <text class="lbl" x="311" y="562">24</text>
+  <use href="#blk-swa_attention" transform="translate(326,542)"/>
+  <use href="#ffn-dense" transform="translate(442,542)"/>
+  <use href="#row-chrome" transform="translate(290,504)"/>
+  <text class="lbl" x="311" y="504">25</text>
+  <use href="#blk-full_attention" transform="translate(326,484)"/>
+  <use href="#ffn-dense" transform="translate(442,484)"/>
+  <use href="#row-chrome" transform="translate(290,446)"/>
+  <text class="lbl" x="311" y="446">26</text>
+  <use href="#blk-full_attention" transform="translate(326,426)"/>
+  <use href="#ffn-dense" transform="translate(442,426)"/>
+  <use href="#row-chrome" transform="translate(290,388)"/>
+  <text class="lbl" x="311" y="388">27</text>
+  <use href="#blk-full_attention" transform="translate(326,368)"/>
+  <use href="#ffn-dense" transform="translate(442,368)"/>
+  <use href="#row-chrome" transform="translate(290,330)"/>
+  <text class="lbl" x="311" y="330">28</text>
+  <use href="#blk-swa_attention" transform="translate(326,310)"/>
+  <use href="#ffn-dense" transform="translate(442,310)"/>
+  <use href="#row-chrome" transform="translate(290,272)"/>
+  <text class="lbl" x="311" y="272">29</text>
+  <use href="#blk-full_attention" transform="translate(326,252)"/>
+  <use href="#ffn-dense" transform="translate(442,252)"/>
+  <use href="#row-chrome" transform="translate(290,214)"/>
+  <text class="lbl" x="311" y="214">30</text>
+  <use href="#blk-full_attention" transform="translate(326,194)"/>
+  <use href="#ffn-dense" transform="translate(442,194)"/>
+  <use href="#row-chrome" transform="translate(290,156)"/>
+  <text class="lbl" x="311" y="156">31</text>
+  <use href="#blk-full_attention" transform="translate(326,136)"/>
+  <use href="#ffn-dense" transform="translate(442,136)"/>
+  <use href="#global-row" transform="translate(290,98)"/>
+  <use href="#legend" transform="translate(22,1037)"/>
+  <use href="#summary" transform="translate(312,1037)"/>
+</svg>

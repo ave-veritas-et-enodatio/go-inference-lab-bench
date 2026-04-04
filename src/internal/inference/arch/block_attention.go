@@ -68,7 +68,7 @@ func (b *FullAttentionGatedBuilder) BuildStateless(
 	v = ggml.Permute(ctx, v, 0, 2, 1, 3)
 
 	// Scaled dot-product attention with GQA
-	cur = scaledDotProductAttention(ctx, q, k, v, inputs.InpMask, headDim, nHeads, nTokens)
+	cur = scaledDotProductAttention(ctx, q, k, v, inputs.InpMask, attentionScale(headDim), nHeads, nTokens)
 
 	// Gate + output projection
 	cur = ggml.Mul(ctx, cur, ggml.Sigmoid(ctx, gate))
@@ -113,7 +113,7 @@ func (b *FullAttentionGatedBuilder) BuildCached(
 
 	q = ggml.Permute(ctx, q, 0, 2, 1, 3)
 
-	cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, inputs.InpMask, headDim, nHeads, nNew)
+	cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, inputs.InpMask, attentionScale(headDim), nHeads, nNew)
 	cur = ggml.Mul(ctx, cur, ggml.Sigmoid(ctx, gate))
 	cur = ggml.MulMat(ctx, weights["attn_output"], cur)
 	return cur

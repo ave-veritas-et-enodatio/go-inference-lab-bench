@@ -43,6 +43,22 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 		Layers:    make([]LayerCache, nLayers),
 	}
 
+	// Track shared cache groups: "groupName:cacheName" → tensor
+	sharedTensors := make(map[string]ggml.Tensor)
+
+	// n_kv_shared_layers: layers past (nLayers - nKVShared) reuse the last KV
+	// layer's cache for their block type. General-purpose mechanism driven by GGUF param.
+	nKVShared, _ := m.Params.Ints["n_kv_shared_layers"]
+	nKVFromStart := nLayers
+	if nKVShared > 0 {
+		nKVFromStart = nLayers - nKVShared
+		// Find last KV layer index per block type and pre-register their cache
+		// tensors as shared groups. Processed after KV layer allocation below.
+	}
+
+	// lastKVByBlock tracks the last KV layer index per block type for param-driven sharing.
+	lastKVByBlock := make(map[string]int)
+
 	for i := range nLayers {
 		blockName := m.LayerBlockNames[i]
 		block := m.Def.Blocks[blockName]
@@ -50,7 +66,32 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 			Tensors:   make(map[string]ggml.Tensor, len(block.Cache)),
 			MaxSeqLen: maxSeqLen,
 		}
+
+		// Param-driven sharing: non-KV layers reuse last KV layer's cache for same block type
+		isParamShared := nKVShared > 0 && i >= nKVFromStart
+		if isParamShared {
+			if parentIdx, ok := lastKVByBlock[blockName]; ok {
+				parent := gc.Layers[parentIdx]
+				for cacheName := range block.Cache {
+					lc.Tensors[cacheName] = parent.Tensors[cacheName]
+				}
+				lc.SharedGroup = blockName
+				gc.Layers[i] = lc
+				continue
+			}
+		}
+
 		for cacheName, spec := range block.Cache {
+			// TOML-declared shared cache: reuse tensor from first layer in the group
+			if spec.Shared != "" {
+				lc.SharedGroup = spec.Shared
+				sharedKey := spec.Shared + ":" + cacheName
+				if existing, ok := sharedTensors[sharedKey]; ok {
+					lc.Tensors[cacheName] = existing
+					continue
+				}
+			}
+
 			dims, err := resolveCacheDims(spec.Dims, m.Params, maxSeqLen)
 			if err != nil {
 				cacheCtx.Free()
@@ -72,6 +113,14 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 				return nil, fmt.Errorf("layer %d cache %q: unsupported %d dims", i, cacheName, len(dims))
 			}
 			lc.Tensors[cacheName] = t
+
+			if spec.Shared != "" {
+				sharedTensors[spec.Shared+":"+cacheName] = t
+			}
+		}
+
+		if !isParamShared {
+			lastKVByBlock[blockName] = i
 		}
 		gc.Layers[i] = lc
 	}

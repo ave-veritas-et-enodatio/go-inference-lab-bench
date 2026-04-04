@@ -1,0 +1,125 @@
+# Gemma 4 architecture definition (ISWA — Interleaved Sliding Window Attention).
+#
+# Dense transformer with two attention types: full attention (512-dim heads, proportional RoPE)
+# and sliding-window attention (256-dim heads, standard RoPE). Layers are assigned by a bool
+# array from GGUF metadata. The last N layers share KV cache with earlier layers (driven by
+# n_kv_shared_layers param, handled at cache allocation time — no TOML-level cache sharing).
+#
+# Novel features: GeGLU FFN, post-attention/post-FFN norms, per-layer embeddings with GELU
+# gating, embedding scaling, logit softcapping, V-norm (raw RMS), layer output scaling,
+# RoPE frequency factors for full attention layers.
+#
+# Known model sizes:
+#   35 layers → E2B
+#   42 layers → E4B
+
+[architecture]
+name = "gemma4"
+tied_embeddings = true
+embed_scale = true
+
+[params]
+n_layers          = "gemma4.block_count"
+n_heads           = "gemma4.attention.head_count"
+n_kv_heads        = "gemma4.attention.head_count_kv"
+n_embd            = "gemma4.embedding_length"
+n_ff              = "gemma4.feed_forward_length"
+rms_eps           = "gemma4.attention.layer_norm_rms_epsilon"
+head_dim          = "gemma4.attention.key_length"
+rope_n_rot        = "gemma4.rope.dimension_count"
+rope_freq_base    = "gemma4.rope.freq_base"
+head_dim_swa      = "gemma4.attention.key_length_swa"
+rope_n_rot_swa    = "gemma4.rope.dimension_count_swa"
+rope_freq_base_swa = "gemma4.rope.freq_base_swa"
+sliding_window    = "gemma4.attention.sliding_window"
+n_kv_shared_layers = "gemma4.attention.shared_kv_layers"
+n_embd_per_layer  = "gemma4.embedding_length_per_layer_input"
+logit_softcapping = "gemma4.final_logit_softcapping"
+swa_pattern       = "gemma4.attention.sliding_window_pattern"
+rope_mode         = "standard"
+
+[params.derived]
+n_vocab = "token_embd.ne[1]"
+
+[weights.global]
+token_embd             = "token_embd.weight"
+output_norm            = "output_norm.weight"
+output                 = "output.weight"
+tok_embd_per_layer     = "per_layer_token_embd.weight"
+per_layer_model_proj   = "per_layer_model_proj.weight"
+per_layer_proj_norm    = "per_layer_proj_norm.weight"
+
+[layers]
+count  = "n_layers"
+prefix = "blk.@{layer_idx}."
+
+[layers.routing]
+pattern  = "swa_pattern"
+if_true  = "swa_attention"
+if_false = "full_attention"
+
+[layers.common_weights]
+attn_norm       = "attn_norm.weight"
+ffn_norm        = "ffn_norm.weight"
+attn_post_norm  = "post_attention_norm.weight"
+ffn_post_norm   = "post_ffw_norm.weight"
+pe_inp_gate     = "inp_gate.weight"
+pe_proj         = "proj.weight"
+pe_post_norm    = "post_norm.weight"
+layer_output_scale = "layer_output_scale.weight"
+
+[blocks.full_attention]
+builder = "attention"
+
+  [blocks.full_attention.weights]
+  attn_q      = "attn_q.weight"
+  attn_k      = "attn_k.weight"
+  attn_v      = "attn_v.weight"
+  attn_output = "attn_output.weight"
+  attn_q_norm = "attn_q_norm.weight"
+  attn_k_norm = "attn_k_norm.weight"
+  rope_freqs  = "rope_freqs.weight"
+
+  [blocks.full_attention.config]
+  rope = "standard"
+  v_norm = "rms"
+  kq_scale = 1.0
+  shared_kv_group = "full"
+
+  [blocks.full_attention.cache]
+  k = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+  v = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+
+[blocks.swa_attention]
+builder = "attention"
+
+  [blocks.swa_attention.weights]
+  attn_q      = "attn_q.weight"
+  attn_k      = "attn_k.weight"
+  attn_v      = "attn_v.weight"
+  attn_output = "attn_output.weight"
+  attn_q_norm = "attn_q_norm.weight"
+  attn_k_norm = "attn_k_norm.weight"
+
+  [blocks.swa_attention.config]
+  rope = "standard"
+  v_norm = "rms"
+  sliding_window = true
+  kq_scale = 1.0
+  shared_kv_group = "swa"
+  head_dim = "head_dim_swa"
+  n_kv_heads = "n_kv_heads"
+  rope_n_rot = "rope_n_rot_swa"
+  rope_freq_base = "rope_freq_base_swa"
+
+  [blocks.swa_attention.cache]
+  k = { dims = ["head_dim_swa", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+  v = { dims = ["head_dim_swa", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+
+[ffn]
+builder = "geglu"
+
+  [ffn.weights]
+  gate = "ffn_gate.weight"
+  up   = "ffn_up.weight"
+  down = "ffn_down.weight"

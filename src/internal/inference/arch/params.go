@@ -15,6 +15,7 @@ type GGUFReader interface {
 	GetU32(key string) (uint32, bool)
 	GetF32(key string) (float32, bool)
 	GetArrInts(key string) ([]int, bool)
+	GetArrBools(key string) ([]bool, bool)
 	GetTensorDim(tensorName string, dim int) (int64, bool)
 }
 
@@ -112,6 +113,21 @@ func resolveParam(name, ggufKey string, reader GGUFReader, rp *ResolvedParams) e
 		// either scalar or per-layer array in GGUF (e.g. head_count_kv)
 		if len(v) > 0 {
 			rp.Ints[name] = v[0]
+		}
+		return nil
+	}
+
+	// Try bool array (e.g. sliding_window_pattern) — stored as IntArr (0/1)
+	if v, ok := reader.GetArrBools(ggufKey); ok {
+		arr := make([]int, len(v))
+		for i, b := range v {
+			if b {
+				arr[i] = 1
+			}
+		}
+		rp.IntArr[name] = arr
+		if len(arr) > 0 {
+			rp.Ints[name] = arr[0]
 		}
 		return nil
 	}
