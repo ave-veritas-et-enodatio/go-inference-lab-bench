@@ -207,6 +207,42 @@ See `models/arch/model_arch_toml_dsl_spec.md` for the full DSL spec.
 - Tied embeddings: LM head reuses `token_embd.weight`
 - Exact param values: see `models/arch/qwen35.arch.toml`
 
+## Adding a Model Architecture
+
+**Critical invariant**: zero model-specific Go code. Never write `if arch == "foo"` anywhere in Go. All architecture differences must be expressed in the TOML DSL and generic block builders.
+
+**Reference material**
+- `models/arch/model_arch_toml_dsl_spec.md` — authoritative DSL spec. Read this first.
+- `models/arch/*.arch.toml` — existing architectures; use the closest one as a template
+- `~/projects/llama.cpp/src/models/` — reference for how architectures are structured in the closest equivalent implementation
+- `~/projects/llama.cpp/src/llama-arch.cpp` — tensor name mappings; `llama-hparams.h` — canonical parameter names
+- GGUF metadata (param keys, tensor names): scan the model file via the project's GGUF parser, or read the llama.cpp sources above
+
+**TOML-only architecture** (all required block builders already exist)
+
+No Go changes needed. The model manager auto-detects `.arch.toml` files at startup.
+
+1. Identify the closest existing `.arch.toml` and copy it to `models/arch/<arch-name>.arch.toml`
+2. Adapt `[params]`, weight name templates, layer routing expressions, and cache specs to match the new architecture
+3. Validate by attempting to load the model — `arch.Load()` returns precise error messages with line numbers; iterate against it
+4. Confirm GGUF param keys and tensor names match the model file exactly (common mismatch source)
+
+**New block builder required** (the architecture uses a computation pattern not covered by existing builders)
+
+1. `src/internal/inference/arch/block_<type>.go` — implement `BlockBuilder` or `FFNBuilder` (see interfaces in `blocks.go`)
+2. Register the new builder in the `init()` function in `blocks.go`
+3. Define `Contract()` to declare required weights, optional weights, params, and config schema
+4. `models/arch/block_svg/<name>.svg` — add an SVG snippet for diagram rendering
+5. `models/arch/editor/editor.js` — add `BUILDER_` table entries for the new block type
+
+**Verification** (all must pass before the work is complete)
+```bash
+make test && make integration-test
+ALL_MODELS=true bash test_inference.sh "Hello"   # test against every loaded model
+bash test_llama_equiv.sh                         # logprob equivalence vs llama-server (Homebrew)
+make arch-diagrams                               # regenerate SVGs; confirm new arch renders correctly
+```
+
 ### Shell Scripting Style
 - Shebang: `#!/usr/bin/env bash`
 - Indent: 2 spaces
@@ -214,12 +250,3 @@ See `models/arch/model_arch_toml_dsl_spec.md` for the full DSL spec.
 - Test enclosure: `[[ ]]`, not `[ ]`
 - Equality: `==`, not `=`
 - define functions using keyword syntax `function funcname() {` not bare syntax `funcname() {`
-
-### Deferred Work (priority order)
-1. **Structured logging** — replace `fmt.Fprintf(os.Stderr, ...)` with a real logging package (slog or zerolog). Leveled output, consistent format, eliminate Makefile/test_inference.sh stderr redirects. Top tech debt priority.
-2. **Chat client streaming + acontextual mode** — add `--no-history` flag for stateless per-prompt testing with real-time SSE streaming output. Replaces need for test_inference.sh for interactive debugging of thinking models. refactor chat client to separate implementation from CLI entry point
-3. Batch inference
-4. Multiple concurrent models
-5. Linux/CUDA support (rename GPU init, add CUDA backend)
-6. **Palette unification** — export a .css color set from the SVG diagram palette (`diagramPalette()`) that the arch-editor can use for block coloring, eliminating the duplicated color constants in editor.js
-7. **Diffusion generation loop** — iterative masked denoising for non-causal models (LLaDA-MoE). Architecture definition at `models/arch/llada-moe.arch.toml.nyi`; builder support (attention QK-norm, non-causal mask, MoE FFN) already in place. Needs new generation strategy in engine.go.

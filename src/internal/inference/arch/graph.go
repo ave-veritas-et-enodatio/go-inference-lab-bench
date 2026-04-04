@@ -28,7 +28,8 @@ type blockFunc func(gctx *ggml.GraphContext, cur ggml.Tensor,
 // block (via blkFn) with residual, then FFN with residual. Layers with nil attn_norm
 // skip the block; layers with all FFN tensors nil skip FFN.
 func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
-	inputs *GraphInputs, rmsEps float32, blkFn blockFunc) ggml.Tensor {
+	inputs *GraphInputs, rmsEps float32, blkFn blockFunc,
+	perLayerEmbd ggml.Tensor) ggml.Tensor {
 	for il := range m.Params.Ints["n_layers"] {
 		lt := m.Store.Layer(il)
 		blockName := m.LayerBlockNames[il]
@@ -37,10 +38,24 @@ func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
 		if !lt["attn_norm"].IsNil() {
 			cur := rmsNormApply(gctx, x, lt["attn_norm"], rmsEps)
 			cur = blkFn(gctx, cur, lt, il, blockDef.Config, inputs)
+			// Optional post-attention norm
+			if !lt["attn_post_norm"].IsNil() {
+				cur = rmsNormApply(gctx, cur, lt["attn_post_norm"], rmsEps)
+			}
 			x = ggml.Add(gctx, x, cur)
 		}
 
 		x = m.buildFFNBlock(gctx, x, lt, il, rmsEps)
+
+		// Per-layer embedding injection (Gemma 4)
+		if !perLayerEmbd.IsNil() && !lt["pe_inp_gate"].IsNil() {
+			x = m.perLayerEmbedInject(gctx, x, lt, il, perLayerEmbd, rmsEps)
+		}
+
+		// Layer output scaling
+		if !lt["layer_output_scale"].IsNil() {
+			x = ggml.Mul(gctx, x, lt["layer_output_scale"])
+		}
 	}
 	return x
 }
@@ -59,6 +74,10 @@ func (m *GenericModel) buildFFNBlock(ctx *ggml.GraphContext, x ggml.Tensor,
 	if anyNonNil(ffnWeights) {
 		xn2 := rmsNormApply(ctx, x, ffnNorm(lt), rmsEps)
 		ffnOut := m.FFNBuilders[il].BuildFFN(ctx, xn2, ffnWeights, m.Params)
+		// Optional post-FFN norm
+		if !lt["ffn_post_norm"].IsNil() {
+			ffnOut = rmsNormApply(ctx, ffnOut, lt["ffn_post_norm"], rmsEps)
+		}
 		return ggml.Add(ctx, ffnInp, ffnOut)
 	}
 	return x
@@ -86,6 +105,14 @@ func (m *GenericModel) buildLogits(gctx *ggml.GraphContext, x ggml.Tensor,
 	last := ggml.View2D(gctx, x, int64(nEmbd), 1, x.Nb(1), int(nSeq-1)*x.Nb(1))
 	xn := rmsNormApply(gctx, last, m.Store.Global("output_norm"), rmsEps)
 	logits := ggml.MulMat(gctx, m.Store.Global("output"), xn)
+
+	// Logit softcapping: cap * tanh(logits / cap)
+	if cap, ok := m.Params.Floats["logit_softcapping"]; ok && cap > 0 {
+		logits = ggml.Scale(gctx, logits, 1.0/cap)
+		logits = ggml.Tanh(gctx, logits)
+		logits = ggml.Scale(gctx, logits, cap)
+	}
+
 	ggml.SetOutput(logits)
 	return logits
 }
@@ -127,13 +154,31 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32) ([]float32, error) {
 
 	x := ggml.GetRows(gctx, m.Store.Global("token_embd"), inpTokens)
 
-	inputs := &GraphInputs{
-		InpPos:  inpPos,
-		InpMask: inpMask,
-		NTokens: nTokens,
-		NKV:     nTokens,
-		SeqPos:  0,
+	// Embedding scaling: multiply by sqrt(n_embd)
+	if m.Def.Architecture.EmbedScale {
+		x = ggml.Scale(gctx, x, float32(math.Sqrt(float64(nEmbd))))
 	}
+
+	// SWA mask (only if sliding_window param exists)
+	swaWindow, hasSWA := m.Params.Ints["sliding_window"]
+	var inpMaskSWA ggml.Tensor
+	if hasSWA && swaWindow > 0 {
+		inpMaskSWA = ggml.NewTensor2D(gctx, ggml.TypeF32, nTokens, nTokens)
+		ggml.SetInput(inpMaskSWA)
+	}
+
+	inputs := &GraphInputs{
+		InpPos:     inpPos,
+		InpMask:    inpMask,
+		InpMaskSWA: inpMaskSWA,
+		NTokens:    nTokens,
+		NKV:        nTokens,
+		SeqPos:     0,
+		SharedKV:   &SharedKVState{K: make(map[string]ggml.Tensor), V: make(map[string]ggml.Tensor)},
+	}
+
+	// Per-layer embedding preparation
+	perLayerEmbd := m.buildPerLayerEmbedSetup(gctx, inpTokens, x, nTokens, rmsEps)
 
 	var zeroFill []ggml.Tensor
 
@@ -142,7 +187,7 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32) ([]float32, error) {
 		inputs *GraphInputs) ggml.Tensor {
 		return m.BlockBuilders[il].BuildStateless(gctx, cur, lt, m.Params, config, inputs, &zeroFill)
 	}
-	x = m.runLayers(gctx, x, inputs, rmsEps, blkFn)
+	x = m.runLayers(gctx, x, inputs, rmsEps, blkFn, perLayerEmbd)
 
 	logits := m.buildLogits(gctx, x, nEmbd, nTokens, rmsEps)
 
@@ -180,6 +225,19 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32) ([]float32, error) {
 		}
 	}
 	ggml.TensorSet(inpMask, unsafe.Pointer(&maskData[0]), 0, inpMask.Nbytes())
+
+	// SWA mask data
+	if hasSWA && swaWindow > 0 {
+		swaMaskData := make([]float32, nTokens*nTokens)
+		for qi := int64(0); qi < nTokens; qi++ {
+			for kj := int64(0); kj < nTokens; kj++ {
+				if kj > qi || kj < qi-int64(swaWindow) {
+					swaMaskData[qi*nTokens+kj] = float32(math.Inf(-1))
+				}
+			}
+		}
+		ggml.TensorSet(inpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, inpMaskSWA.Nbytes())
+	}
 
 	// Execute
 	status := sched.Compute(gf)
@@ -226,13 +284,31 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32) ([]floa
 
 	x := ggml.GetRows(gctx, m.Store.Global("token_embd"), inpTokens)
 
-	inputs := &GraphInputs{
-		InpPos:  inpPos,
-		InpMask: inpMask,
-		NTokens: nNew,
-		NKV:     nKV,
-		SeqPos:  seqPos,
+	// Embedding scaling
+	if m.Def.Architecture.EmbedScale {
+		x = ggml.Scale(gctx, x, float32(math.Sqrt(float64(nEmbd))))
 	}
+
+	// SWA mask
+	swaWindow, hasSWA := m.Params.Ints["sliding_window"]
+	var inpMaskSWA ggml.Tensor
+	if hasSWA && swaWindow > 0 {
+		inpMaskSWA = ggml.NewTensor2D(gctx, ggml.TypeF32, nKV, nNew)
+		ggml.SetInput(inpMaskSWA)
+	}
+
+	inputs := &GraphInputs{
+		InpPos:     inpPos,
+		InpMask:    inpMask,
+		InpMaskSWA: inpMaskSWA,
+		NTokens:    nNew,
+		NKV:        nKV,
+		SeqPos:     seqPos,
+		SharedKV:   &SharedKVState{K: make(map[string]ggml.Tensor), V: make(map[string]ggml.Tensor)},
+	}
+
+	// Per-layer embedding preparation
+	perLayerEmbd := m.buildPerLayerEmbedSetup(gctx, inpTokens, x, nNew, rmsEps)
 
 	var writebacks []CacheWriteback
 
@@ -242,7 +318,7 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32) ([]floa
 		return m.BlockBuilders[il].BuildCached(gctx, cur, lt, m.Params, config, inputs,
 			&gc.Layers[il], &writebacks)
 	}
-	x = m.runLayers(gctx, x, inputs, rmsEps, blkFn)
+	x = m.runLayers(gctx, x, inputs, rmsEps, blkFn, perLayerEmbd)
 
 	logits := m.buildLogits(gctx, x, nEmbd, nNew, rmsEps)
 
@@ -278,6 +354,20 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32) ([]floa
 	}
 	ggml.TensorSet(inpMask, unsafe.Pointer(&maskData[0]), 0, inpMask.Nbytes())
 
+	// SWA mask data
+	if hasSWA && swaWindow > 0 {
+		swaMaskData := make([]float32, nKV*nNew)
+		for qi := int64(0); qi < nNew; qi++ {
+			absQI := int64(seqPos) + qi
+			for kj := int64(0); kj < nKV; kj++ {
+				if kj > absQI || kj < absQI-int64(swaWindow) {
+					swaMaskData[qi*nKV+kj] = float32(math.Inf(-1))
+				}
+			}
+		}
+		ggml.TensorSet(inpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, inpMaskSWA.Nbytes())
+	}
+
 	status := sched.Compute(gf)
 	if status != ggml.StatusSuccess {
 		return nil, fmt.Errorf("graph compute failed: %d", status)
@@ -295,4 +385,64 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32) ([]floa
 	gc.SeqPos += int(nNew)
 
 	return readLogits(logits, nVocab), nil
+}
+
+// buildPerLayerEmbedSetup prepares the combined per-layer embedding tensor
+// used by perLayerEmbedInject inside the layer loop. Returns NilTensor if unused.
+func (m *GenericModel) buildPerLayerEmbedSetup(gctx *ggml.GraphContext,
+	inpTokens, x ggml.Tensor, nTokens int64, rmsEps float32) ggml.Tensor {
+	tokEmbdPL := m.Store.Global("tok_embd_per_layer")
+	if tokEmbdPL.IsNil() {
+		return ggml.NilTensor()
+	}
+
+	nLayers := int64(m.Params.Ints["n_layers"])
+	nEmbdPL := int64(m.Params.Ints["n_embd_per_layer"])
+	nEmbd := int64(m.Params.Ints["n_embd"])
+
+	// 1. Per-layer token embeddings: [n_embd_per_layer * n_layers, n_tokens]
+	inp := ggml.GetRows(gctx, tokEmbdPL, inpTokens)
+	inp = ggml.Reshape3D(gctx, inp, nEmbdPL, nLayers, nTokens)
+	inp = ggml.Scale(gctx, inp, float32(math.Sqrt(float64(nEmbdPL))))
+
+	// 2. Project model embeddings → per-layer space
+	proj := ggml.MulMat(gctx, m.Store.Global("per_layer_model_proj"), x)
+	proj = ggml.Scale(gctx, proj, float32(1.0/math.Sqrt(float64(nEmbd))))
+	proj = ggml.Reshape3D(gctx, proj, nEmbdPL, nLayers, nTokens)
+	proj = rmsNormApply(gctx, proj, m.Store.Global("per_layer_proj_norm"), rmsEps)
+
+	// 3. Combine and scale by 1/sqrt(2)
+	inp = ggml.Add(gctx, proj, inp)
+	inp = ggml.Scale(gctx, inp, float32(1.0/math.Sqrt(2.0)))
+
+	// 4. Permute to [n_embd_per_layer, n_tokens, n_layers] for per-layer slicing
+	inp = ggml.Cont(gctx, ggml.Permute(gctx, inp, 0, 2, 1, 3))
+	return inp
+}
+
+// perLayerEmbedInject applies gated per-layer embedding injection for one layer.
+// perLayerEmbd shape: [n_embd_per_layer, n_tokens, n_layers].
+func (m *GenericModel) perLayerEmbedInject(gctx *ggml.GraphContext, x ggml.Tensor,
+	lt map[string]ggml.Tensor, il int, perLayerEmbd ggml.Tensor, rmsEps float32) ggml.Tensor {
+
+	nEmbdPL := perLayerEmbd.Ne(0)
+	nTokens := perLayerEmbd.Ne(1)
+
+	// gate = gelu(pe_inp_gate @ x) → [n_embd_per_layer, n_tokens]
+	gate := ggml.MulMat(gctx, lt["pe_inp_gate"], x)
+	gate = ggml.Gelu(gctx, gate)
+
+	// Slice this layer's embedding: [n_embd_per_layer, n_tokens]
+	nb1 := int(nEmbdPL) * 4 // F32 element size
+	offset := il * int(nEmbdPL*nTokens) * 4
+	peSlice := ggml.View2D(gctx, perLayerEmbd, nEmbdPL, nTokens, nb1, offset)
+
+	// Gated element-wise multiplication
+	gate = ggml.Mul(gctx, gate, peSlice)
+
+	// Project back to model dimension and normalize
+	out := ggml.MulMat(gctx, lt["pe_proj"], gate)
+	out = rmsNormApply(gctx, out, lt["pe_post_norm"], rmsEps)
+
+	return ggml.Add(gctx, x, out)
 }

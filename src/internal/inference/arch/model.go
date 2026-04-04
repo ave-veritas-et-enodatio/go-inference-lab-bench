@@ -68,6 +68,10 @@ func (r *ggufReader) GetArrInts(key string) ([]int, bool) {
 	if !ok || kvType != int(C.GGML_GO_GGUF_TYPE_ARRAY) {
 		return nil, false
 	}
+	arrType := int(C.ggml_go_gguf_get_arr_type(r.gf, idx))
+	if arrType != int(C.GGML_GO_GGUF_TYPE_INT32) && arrType != int(C.GGML_GO_GGUF_TYPE_UINT32) {
+		return nil, false
+	}
 	n := int(C.ggml_go_gguf_get_arr_n(r.gf, idx))
 	if n == 0 {
 		return nil, false
@@ -77,6 +81,28 @@ func (r *ggufReader) GetArrInts(key string) ([]int, bool) {
 	raw := unsafe.Slice((*int32)(data), n)
 	for i := range n {
 		arr[i] = int(raw[i])
+	}
+	return arr, true
+}
+
+func (r *ggufReader) GetArrBools(key string) ([]bool, bool) {
+	idx, kvType, ok := r.findKey(key)
+	if !ok || kvType != int(C.GGML_GO_GGUF_TYPE_ARRAY) {
+		return nil, false
+	}
+	arrType := int(C.ggml_go_gguf_get_arr_type(r.gf, idx))
+	if arrType != int(C.GGML_GO_GGUF_TYPE_BOOL) {
+		return nil, false
+	}
+	n := int(C.ggml_go_gguf_get_arr_n(r.gf, idx))
+	if n == 0 {
+		return nil, false
+	}
+	data := C.ggml_go_gguf_get_arr_data(r.gf, idx)
+	arr := make([]bool, n)
+	raw := unsafe.Slice((*uint8)(data), n)
+	for i := range n {
+		arr[i] = raw[i] != 0
 	}
 	return arr, true
 }
@@ -263,12 +289,30 @@ func NewGenericModel(archName, modelPath, archDir string) (*GenericModel, error)
 			lt[logicalName] = t
 		}
 
+		blockDef := def.Blocks[lw.BlockName]
 		for logicalName, tensorName := range lw.Block {
 			t, ok := weightTensorIndex[tensorName]
+			if !ok {
+				// Fallback: try the raw suffix as a global tensor name (e.g. rope_freqs.weight)
+				if suffix, has := blockDef.Weights[logicalName]; has {
+					t, ok = weightTensorIndex[suffix]
+				}
+			}
 			if !ok {
 				t = ggml.NilTensor()
 			}
 			lt[logicalName] = t
+		}
+
+		// n_kv_shared_layers: non-KV layers still have weights in the GGUF but
+		// must NOT compute their own K/V or write to cache. Null out K/V weights
+		// so the builder's hasKV check correctly identifies them as non-KV.
+		if nKVShared, ok := params.Ints["n_kv_shared_layers"]; ok && nKVShared > 0 {
+			nKVFromStart := nLayers - nKVShared
+			if i >= nKVFromStart {
+				lt["attn_k"] = ggml.NilTensor()
+				lt["attn_v"] = ggml.NilTensor()
+			}
 		}
 
 		for logicalName, tensorName := range lw.FFN {

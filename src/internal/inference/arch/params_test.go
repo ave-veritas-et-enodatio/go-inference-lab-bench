@@ -9,12 +9,14 @@ type mockGGUF struct {
 	u32s    map[string]uint32
 	f32s    map[string]float32
 	arrs    map[string][]int
+	bools   map[string][]bool
 	tensors map[string][]int64 // tensor name → ne dims
 }
 
-func (m *mockGGUF) GetU32(key string) (uint32, bool) { v, ok := m.u32s[key]; return v, ok }
-func (m *mockGGUF) GetF32(key string) (float32, bool) { v, ok := m.f32s[key]; return v, ok }
-func (m *mockGGUF) GetArrInts(key string) ([]int, bool) { v, ok := m.arrs[key]; return v, ok }
+func (m *mockGGUF) GetU32(key string) (uint32, bool)     { v, ok := m.u32s[key]; return v, ok }
+func (m *mockGGUF) GetF32(key string) (float32, bool)    { v, ok := m.f32s[key]; return v, ok }
+func (m *mockGGUF) GetArrInts(key string) ([]int, bool)  { v, ok := m.arrs[key]; return v, ok }
+func (m *mockGGUF) GetArrBools(key string) ([]bool, bool) { v, ok := m.bools[key]; return v, ok }
 func (m *mockGGUF) GetTensorDim(name string, dim int) (int64, bool) {
 	dims, ok := m.tensors[name]
 	if !ok || dim >= len(dims) {
