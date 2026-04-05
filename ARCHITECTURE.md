@@ -167,6 +167,12 @@ The `attention` builder is the most flexible — it supports config-based param 
 layers), V-norm, sliding window mask selection, RoPE frequency factors, NeoX rope mode,
 and custom kq_scale. Prefer extending it via `[blocks.*.config]` over writing a new builder.
 
+The builder's KV preparation pipeline is factored into `prepareQKV()`, which handles Q/K/V
+projection, optional QK-norm, optional V-norm, RoPE (with optional frequency factors), and
+SharedKV read/write — all in one place. `BuildStateless` and `BuildCached` call `prepareQKV`
+then diverge only at the attention computation: stateless permutes and runs attention directly,
+cached writes/reads the KV cache (or SharedKV for non-KV layers) before attention.
+
 `BuilderContract` lists `RequiredWeights`, `OptionalWeights`, `RequiredParams`, and a
 `ConfigSchema`. `Validate()` in `arch.go` calls each builder's `Contract()` at TOML load time
 and reports mismatches. This is the primary protection against stale TOML definitions.
@@ -231,12 +237,15 @@ Both follow the same frame:
    - Optional: `Mul(x, layer_output_scale)` → per-layer scalar
 8. Final norm + LM head
 9. Optional: logit softcapping (`scale(1/cap) → tanh → scale(cap)`)
-10. Execute graph (`sched.Compute`)
-11. Post-compute KV cache writebacks (cached mode only)
-12. Read back logits → `[]float32`
+10. Build mask data via `buildCausalMaskData` / `buildSWAMaskData` (pure functions, shared by both forward paths)
+11. Execute graph (`sched.Compute`)
+12. Post-compute KV cache writebacks (cached mode only)
+13. Read back logits → `[]float32`
 
 The divergence between stateless and cached is: input tensor setup, KV cache writeback,
-cache-position tracking, and mask shapes. Everything else is shared structure.
+cache-position tracking, and mask dimensions. Mask generation logic is shared via
+`buildCausalMaskData(nQuery, nKV, startPos, nonCausal)` and
+`buildSWAMaskData(nQuery, nKV, startPos, window)`. Everything else is shared structure.
 
 ### Shared KV Cache (non-KV layers)
 

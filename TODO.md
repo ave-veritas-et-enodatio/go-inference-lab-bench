@@ -3,22 +3,21 @@
 ## Current - Gemma4 Support
 
 ### Critical Issues
-See ./.claude/gemma4_completion.md
+* None Open
+
+### Serious Issues
+* None Open
 
 ### Additional Issues
-1. Arch SVG diagram has issues
-  1. Both attention block types have the same label, color, and internal appearance
-  2. The color legend at the top has an orphaned entry labeled geglu that is SSM attention green
+1. Arch SVG diagram
+  1. The color legend at the top has an orphaned entry labeled geglu that is SSM attention green
+  2. Both attention block types have the same label, color, and internal appearance
+    1. These should have appropriate representations of their attention internals 
   3. The geglu SVG snippet doesn't show the proper placement of RMSNorm blocks
     1. Is 'geglu' even the right name? shouldn't that be geglu_attention? 
   4. Routing rule for the two attention block types is not properly shown
-2. Layers SVG diagram has issues
-  1. The attention heads are all the same type
-3. Architecture Pass Needed
-  1. The builder function is entering the death-by-conditionals bog zone
-  2. The inference execution is entering a similar state
-  3. Both of the preceding are due to Gemma support implementation, which is revealing current design limits
-  4. Requires an architectural review, exploration of options, final decision, then plan & build
+2. Layers SVG diagram
+  1. The attention heads are all the same type - should be alternating.
 
 ## Future
 
