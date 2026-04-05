@@ -115,7 +115,7 @@ An `*.arch.toml` file maps directly onto `arch.ArchDef`. Sections:
 | `[params]` | `ParamsDef` | GGUF metadata key mappings; `[params.derived]` = arithmetic expressions; `[params.defaults]` = fallback values |
 | `[weights.global]` | `WeightsDef` | Global tensor names: `token_embd`, `output_norm`, `output` |
 | `[layers]` | `LayersDef` | `count` (param ref), `prefix` (must contain `@{layer_idx}`), `[layers.routing]`, `[layers.common_weights]` |
-| `[layers.routing]` | `RoutingDef` | Binary routing: `rule` (Go expression), `if_true`/`if_false` (block names) |
+| `[layers.routing]` | `RoutingDef` | Binary routing: `rule` (Go expression) or `pattern` (bool array param), `if_true`/`if_false` (block names) |
 | `[layers.common_weights]` | `map[string]string` | Per-layer tensors shared by all block types (e.g. `attn_norm`) |
 | `[blocks.<name>]` | `BlockDef` | Block-type weights, config, cache specs — one section per block type |
 | `[ffn]` / `[ffn_alt]` | `FFNDef` | FFN builder + weights. `ffn_alt` for per-layer routing (dense vs MoE) |
@@ -159,8 +159,13 @@ type FFNBuilder interface {
 Registered in `init()`:
 ```
 block builders: attention, full_attention_gated, mla_attention, gated_delta_net
-FFN builders:   swiglu, moe_with_shared
+FFN builders:   swiglu, geglu, moe_with_shared
 ```
+
+The `attention` builder is the most flexible — it supports config-based param overrides
+(per-block head dim, head count, RoPE config), optional K/V weights (for shared KV cache
+layers), V-norm, sliding window mask selection, RoPE frequency factors, NeoX rope mode,
+and custom kq_scale. Prefer extending it via `[blocks.*.config]` over writing a new builder.
 
 `BuilderContract` lists `RequiredWeights`, `OptionalWeights`, `RequiredParams`, and a
 `ConfigSchema`. `Validate()` in `arch.go` calls each builder's `Contract()` at TOML load time
@@ -212,16 +217,41 @@ Two entry points: `ForwardStateless(tokenIDs)` and `ForwardCached(cache, tokenID
 Both follow the same frame:
 1. Extract params (`nLayers`, `nEmbd`, `nVocab`, `rmsEps`)
 2. Allocate graph context + Metal scheduler
-3. Build input tensors (`inpTokens`, `inpPos`, `inpMask`)
-4. Per-layer loop:
-   - `BlockBuilders[il].Build{Stateless,Cached}()` → attention/SSM output
-   - `buildFFNBlock()` → FFN output + residual
-5. Final norm + LM head + logit extraction
-6. Execute graph (`sched.Compute`)
-7. Read back logits → `[]float32`
+3. Build input tensors (`inpTokens`, `inpPos`, `inpMask`, optionally `inpMaskSWA`)
+4. Optional: embedding scaling (`sqrt(nEmbd)` if `ArchMeta.EmbedScale`)
+5. Optional: per-layer embedding setup (`buildPerLayerEmbedSetup` — pre-computes combined per-layer token embeddings + model projection for use in the layer loop)
+6. Initialize `SharedKVState` (maps for passing in-graph K/V between KV and non-KV layers)
+7. Per-layer loop (`runLayers`):
+   - `rmsNormApply(x, attn_norm)` → attention input
+   - `BlockBuilders[il].Build{Stateless,Cached}()` → attention output
+   - Optional: `rmsNormApply(cur, attn_post_norm)` → post-attention norm
+   - Residual add
+   - `buildFFNBlock()` → FFN norm + FFN + optional post-FFN norm + residual
+   - Optional: `perLayerEmbedInject()` → gated per-layer embedding injection
+   - Optional: `Mul(x, layer_output_scale)` → per-layer scalar
+8. Final norm + LM head
+9. Optional: logit softcapping (`scale(1/cap) → tanh → scale(cap)`)
+10. Execute graph (`sched.Compute`)
+11. Post-compute KV cache writebacks (cached mode only)
+12. Read back logits → `[]float32`
 
 The divergence between stateless and cached is: input tensor setup, KV cache writeback,
-and cache-position tracking. Everything else is shared structure.
+cache-position tracking, and mask shapes. Everything else is shared structure.
+
+### Shared KV Cache (non-KV layers)
+
+Some architectures (Gemma 4) have layers that do NOT have their own K/V projections —
+they share the KV cache of earlier layers. This is driven by the `n_kv_shared_layers` param:
+layers `>= (nLayers - nKVShared)` are non-KV. Their K/V weights are set to `NilTensor` at
+model load time (in `model.go`), causing the attention builder to detect `hasKV = false`.
+
+During the forward pass, `SharedKVState` passes in-graph K/V tensors from KV layers to
+non-KV layers. KV layers update `SharedKV.K[group]` / `.V[group]` after computing their K/V.
+Non-KV layers read from the matching group. In cached mode, `selectSharedKV` handles both
+prefill (use SharedKV directly) and decode (concat cache history with current-token SharedKV).
+
+Cache allocation (`cache.go`) deduplicates cache tensors: non-KV layers reuse the cache
+tensor of the last KV layer with the same block type via `lastKVByBlock`.
 
 ---
 
@@ -339,4 +369,4 @@ chat template rendering, forward pass correctness, and sampling.
 
 ## Open Architecture Issues
 
-(none)
+- **Gemma 4 equivalence failure**: `gemma4` arch loads and runs but logprob diff is -0.97 vs llama.cpp reference (threshold ~0.01). All other models pass. Root cause unidentified — likely a weight loading issue (`rope_freqs` global tensor via fallback path) or subtle computation difference. See `.claude/gemma4_completion.md` for full investigation handoff.
