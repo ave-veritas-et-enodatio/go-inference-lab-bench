@@ -23,15 +23,14 @@ func init() {
 // Tokenizer implements BPE tokenization loaded from a GGUF file's metadata.
 // Supports both GPT-2 byte-level BPE (Llama, Qwen) and SentencePiece BPE (Gemma).
 type Tokenizer struct {
-	tokens          []string          // token ID → string
-	tokenIDs        map[string]int32  // string → token ID
-	mergeRank       map[[2]string]int // merge rule → priority rank
-	specialTokens   []string       // control/user-defined tokens, sorted longest-first
-	bos             int32
-	eos             int32
-	chatTpl         *exec.Template
-	preTokenPattern *regexp.Regexp
-	useByteLevel    bool // true for GPT-2 style, false for SentencePiece style
+	tokens        []string          // token ID → string
+	tokenIDs      map[string]int32  // string → token ID
+	mergeRank     map[[2]string]int // merge rule → priority rank
+	specialTokens []string          // control/user-defined tokens, sorted longest-first
+	bos           int32
+	eos           int32
+	chatTpl       *exec.Template
+	useByteLevel  bool // true for GPT-2 style, false for SentencePiece style
 }
 
 // Pre-tokenisation regex (GPT-2 / tiktoken pattern).
@@ -122,15 +121,14 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 	}
 
 	return &Tokenizer{
-		tokens:          tokens,
-		tokenIDs:        tokenIDs,
-		mergeRank:       mergeRank,
-		specialTokens:   specialTokens,
-		bos:             bos,
-		eos:             eos,
-		chatTpl:         chatTpl,
-		preTokenPattern: preTokenPattern,
-		useByteLevel:    useByteLevel,
+		tokens:        tokens,
+		tokenIDs:      tokenIDs,
+		mergeRank:     mergeRank,
+		specialTokens: specialTokens,
+		bos:           bos,
+		eos:           eos,
+		chatTpl:       chatTpl,
+		useByteLevel:  useByteLevel,
 	}, nil
 }
 
@@ -149,7 +147,7 @@ func (t *Tokenizer) Encode(text string, addSpecial bool) []int32 {
 	}
 
 	// 2. Pre-tokenise with regex
-	pieces := t.preTokenPattern.FindAllString(encText, -1)
+	pieces := preTokenPattern.FindAllString(encText, -1)
 
 	// 3. BPE-encode each piece
 	var ids []int32
