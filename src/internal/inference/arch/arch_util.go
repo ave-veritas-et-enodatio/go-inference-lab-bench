@@ -1,10 +1,7 @@
 package arch
 
 import (
-	"fmt"
 	"math"
-	"os"
-	"unsafe"
 
 	ggml "inference-lab-bench/internal/inference/ggml"
 )
@@ -17,33 +14,6 @@ const (
 	CacheConvState = "conv_state"
 	CacheSSMState  = "ssm_state"
 )
-
-// debugCapture registers a tensor for post-compute dumping when instrumentation is active.
-func debugCapture(inputs *GraphInputs, label string, t ggml.Tensor) {
-	if inputs.DebugTensors != nil {
-		ggml.SetOutput(t)
-		*inputs.DebugTensors = append(*inputs.DebugTensors, DebugTensor{Label: label, Tensor: t})
-	}
-}
-
-// DumpDebugTensors reads and prints the first N float32 values of each captured tensor to stderr.
-func DumpDebugTensors(tensors []DebugTensor) {
-	const nVals = 16
-	for _, dt := range tensors {
-		vals := make([]float32, nVals)
-		nbytes := dt.Tensor.Nbytes()
-		readSize := nVals * 4
-		if readSize > nbytes {
-			readSize = nbytes
-		}
-		ggml.TensorGet(dt.Tensor, unsafe.Pointer(&vals[0]), 0, readSize)
-		fmt.Fprintf(os.Stderr, "[DUMP] %-24s ne=[%d,%d,%d]", dt.Label, dt.Tensor.Ne(0), dt.Tensor.Ne(1), dt.Tensor.Ne(2))
-		for i := range readSize / 4 {
-			fmt.Fprintf(os.Stderr, " %12.6f", vals[i])
-		}
-		fmt.Fprintln(os.Stderr)
-	}
-}
 
 // rmsNormApply applies RMS normalization and optional weight scaling.
 // If weight is nil, returns the plain normalized tensor.
