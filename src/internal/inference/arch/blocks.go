@@ -4,12 +4,6 @@ import (
 	ggml "inference-lab-bench/internal/inference/ggml"
 )
 
-// DebugTensor holds a labeled tensor for post-compute dumping.
-type DebugTensor struct {
-	Label  string
-	Tensor ggml.Tensor
-}
-
 // GraphInputs holds shared input tensors for the forward pass.
 type GraphInputs struct {
 	InpPos     ggml.Tensor
@@ -19,10 +13,7 @@ type GraphInputs struct {
 	NKV        int64       // total KV length (seqPos + nNew for cached, nTokens for stateless)
 	SeqPos     int         // cache position (0 for stateless)
 	SharedKV   *SharedKVState
-
-	// Debug instrumentation (active when DUMP_TENSORS=1)
-	DebugTensors *[]DebugTensor // non-nil when tensor dumping is active
-	CurrentLayer int            // set by runLayers before calling the block builder
+	CurrentLayer int       // set by runLayers before calling the block builder
 }
 
 // SharedKVState passes in-graph K/V tensors from KV layers to non-KV layers.

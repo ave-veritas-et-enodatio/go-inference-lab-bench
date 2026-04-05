@@ -135,7 +135,7 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 	gc.cacheBuf = cacheBuf
 	gc.Clear()
 
-	log.Printf("[DBG] cache: %d seq max, %.1f MB GPU VRAM",
+	log.Printf("[INF] cache: %d seq max, %.1f MB GPU VRAM",
 		maxSeqLen, float64(cacheBuf.Size())/(1024*1024))
 
 	return gc, nil
