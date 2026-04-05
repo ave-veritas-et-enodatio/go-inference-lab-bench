@@ -1,8 +1,11 @@
 # TODO
 
-## Current
+## Current - Gemma4 Support
 
-### Gemma4 Support
+### Critical Issues
+See ./.claude/gemma4_completion.md
+
+### Additional Issues
 1. Arch SVG diagram has issues
   1. Both attention block types have the same label, color, and internal appearance
   2. The color legend at the top has an orphaned entry labeled geglu that is SSM attention green

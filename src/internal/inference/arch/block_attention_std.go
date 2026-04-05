@@ -2,6 +2,7 @@ package arch
 
 import (
 	ggml "inference-lab-bench/internal/inference/ggml"
+	"log"
 )
 
 // AttentionBuilder implements standard multi-head attention with GQA and RoPE.
@@ -16,7 +17,7 @@ func (b *AttentionBuilder) Contract() BuilderContract {
 		OptionalWeights: []string{"attn_k", "attn_v", "attn_q_norm", "attn_k_norm", "rope_freqs"},
 		RequiredParams:  []string{"head_dim", "n_heads", "n_kv_heads", "rope_n_rot", "rope_freq_base"},
 		ConfigSchema: map[string][]string{
-			"rope":            {"standard", ""},
+			"rope":            {"standard", "neox", ""},
 			"v_norm":          {"rms", ""},
 			"sliding_window":  nil,
 			"shared_kv_group": nil,
@@ -31,7 +32,7 @@ func (b *AttentionBuilder) Contract() BuilderContract {
 }
 
 // attnParams reads attention dimensions from config overrides or global params.
-func attnParams(params *ResolvedParams, config map[string]any) (headDim, nHeads, nKVHeads int64, nRot int, freqBase, kqScale float32) {
+func attnParams(params *ResolvedParams, config map[string]any) (headDim, nHeads, nKVHeads int64, nRot, ropeMode int, freqBase, kqScale float32) {
 	headDim = int64(configIntOr(config, "head_dim", params))
 	nHeads = int64(configIntOr(config, "n_heads", params))
 	nKVHeads = int64(configIntOr(config, "n_kv_heads", params))
@@ -41,6 +42,9 @@ func attnParams(params *ResolvedParams, config map[string]any) (headDim, nHeads,
 	if kqScale == 0 {
 		kqScale = attentionScale(headDim)
 	}
+	if configStr(config, "rope") == "neox" {
+		ropeMode = ggml.RopeNeoX
+	}
 	return
 }
 
@@ -49,9 +53,15 @@ func (b *AttentionBuilder) BuildStateless(
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	zeroFill *[]ggml.Tensor) ggml.Tensor {
 
-	headDim, nHeads, nKVHeads, nRot, freqBase, kqScale := attnParams(params, config)
+	headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase, kqScale := attnParams(params, config)
 	nTokens := inputs.NTokens
 	hasKV := !weights["attn_k"].IsNil()
+
+	// DEBUG: verify rope_freqs loading and param resolution
+	if inputs.NKV == nTokens { // only on first call (stateless)
+		log.Printf("[DBG-ATTN] headDim=%d nHeads=%d nKVHeads=%d nRot=%d ropeMode=%d freqBase=%.1f kqScale=%.4f hasKV=%v rope_freqs.IsNil=%v",
+			headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase, kqScale, hasKV, weights["rope_freqs"].IsNil())
+	}
 
 	q := projectReshape3D(ctx, weights["attn_q"], cur, headDim, nHeads, nTokens)
 
@@ -85,10 +95,10 @@ func (b *AttentionBuilder) BuildStateless(
 	if freqFactors.IsNil() {
 		freqFactors = ggml.NilTensor()
 	}
-	q = ggml.RopeExt(ctx, q, inputs.InpPos, freqFactors, nRot, 0, 0,
+	q = ggml.RopeExt(ctx, q, inputs.InpPos, freqFactors, nRot, ropeMode, 0,
 		freqBase, 1.0, 0.0, 1.0, 32.0, 1.0)
 	if hasKV {
-		k = ggml.RopeExt(ctx, k, inputs.InpPos, freqFactors, nRot, 0, 0,
+		k = ggml.RopeExt(ctx, k, inputs.InpPos, freqFactors, nRot, ropeMode, 0,
 			freqBase, 1.0, 0.0, 1.0, 32.0, 1.0)
 	}
 
@@ -128,7 +138,7 @@ func (b *AttentionBuilder) BuildCached(
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	cache *LayerCache, writebacks *[]CacheWriteback) ggml.Tensor {
 
-	headDim, nHeads, nKVHeads, nRot, freqBase, kqScale := attnParams(params, config)
+	headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase, kqScale := attnParams(params, config)
 	nNew := inputs.NTokens
 	nKV := inputs.NKV
 	seqPos := inputs.SeqPos
@@ -166,10 +176,10 @@ func (b *AttentionBuilder) BuildCached(
 	if freqFactors.IsNil() {
 		freqFactors = ggml.NilTensor()
 	}
-	q = ggml.RopeExt(ctx, q, inputs.InpPos, freqFactors, nRot, 0, 0,
+	q = ggml.RopeExt(ctx, q, inputs.InpPos, freqFactors, nRot, ropeMode, 0,
 		freqBase, 1.0, 0.0, 1.0, 32.0, 1.0)
 	if hasKV {
-		kNew = ggml.RopeExt(ctx, kNew, inputs.InpPos, freqFactors, nRot, 0, 0,
+		kNew = ggml.RopeExt(ctx, kNew, inputs.InpPos, freqFactors, nRot, ropeMode, 0,
 			freqBase, 1.0, 0.0, 1.0, 32.0, 1.0)
 	}
 

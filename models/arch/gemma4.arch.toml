@@ -81,7 +81,7 @@ builder = "attention"
   rope_freqs  = "rope_freqs.weight"
 
   [blocks.full_attention.config]
-  rope = "standard"
+  rope = "neox"
   v_norm = "rms"
   kq_scale = 1.0
   shared_kv_group = "full"
@@ -102,7 +102,7 @@ builder = "attention"
   attn_k_norm = "attn_k_norm.weight"
 
   [blocks.swa_attention.config]
-  rope = "standard"
+  rope = "neox"
   v_norm = "rms"
   sliding_window = true
   kq_scale = 1.0
