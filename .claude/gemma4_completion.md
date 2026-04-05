@@ -79,22 +79,14 @@ rope_freqs.weight: global tensor, shape [256] (NOT per-layer)
 
 ## Investigations Required
 
-### 1. Verify `rope_freqs` is actually loading (HIGH PRIORITY)
+### 1. ~~Verify `rope_freqs` is actually loading~~ VERIFIED OK
 
-The `rope_freqs.weight` tensor is **global** in the GGUF (not per-layer `blk.N.rope_freqs.weight`). Our code relies on a fallback mechanism in `model.go:296`:
+**Tested 2026-04-04**: Added debug logging to `BuildCached`. Results confirm:
+- Full attention layers (headDim=512): `rope_freqs.IsNil=false` — loading correctly via global fallback
+- SWA layers (headDim=256): `rope_freqs.IsNil=true` — correctly absent
+- All other params match expected values (see "Verified Correct" section above)
 
-```go
-if !ok {
-    // Fallback: try the raw suffix as a global tensor name
-    if suffix, has := blockDef.Weights[logicalName]; has {
-        t, ok = weightTensorIndex[suffix]
-    }
-}
-```
-
-This should resolve `rope_freqs` → `"rope_freqs.weight"` → global tensor lookup. But it has NEVER been verified at runtime. If the fallback fails silently, `weights["rope_freqs"]` would be `NilTensor`, and all full attention layers would use standard geometric RoPE frequencies instead of the model's proportional frequencies. This alone could explain the entire discrepancy.
-
-**Test**: Add `log.Printf` in `block_attention_std.go:BuildStateless` to print `weights["rope_freqs"].IsNil()` for layer 5 (first full attention layer).
+This was the #1 suspect but is **not the bug**.
 
 ### 2. Compare intermediate tensor values (HIGH PRIORITY)
 
@@ -176,7 +168,6 @@ make arch-diagrams                      # SVG diagrams (should pass)
 
 ## Suggested Investigation Order
 
-1. Add debug logging to verify `rope_freqs` loading and `attnParams` resolution
-2. If rope_freqs is nil → fix the loading path, retest
-3. If rope_freqs is fine → add tensor value dumps, compare with llama.cpp layer 0
-4. Identify first divergence point, fix, iterate
+1. ~~Verify `rope_freqs` loading and `attnParams` resolution~~ **DONE — all correct**
+2. Add tensor value dumps at layer 0 checkpoints, compare with llama.cpp debug output
+3. Identify first divergence point, fix, iterate
