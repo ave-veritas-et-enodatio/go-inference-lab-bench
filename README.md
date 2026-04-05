@@ -2,7 +2,7 @@
 
 A [from-scratch Go language LLM lab bench](https://bennherrera.dev/writing/go-inference-lab-bench/) for doing R&D related to the mechanics of inference.
 
-<a href="models/arch/qwen35.arch.svg"><image src="models/arch/qwen35.arch.svg" height="600" alt="Qwen 3.5 Architecture"></a><a href="models/arch/qwen35.layers.svg"><image src="models/arch/qwen35.layers.svg" height="600" alt="Qwen 3.5 Layers"></a>
+<a href="models/arch/gemma4.arch.svg"><image src="models/arch/gemma4.arch.svg" height="600" alt="Gemma4 Architecture"></a><a href="models/arch/gemma4.layers.svg"><image src="models/arch/gemma4.layers.svg" height="600" alt="Gemma4 Layers"></a>
 
 Key features:
 * Does not use [llama.cpp](#third-party-acknowledgements) binding (too black of a box)
@@ -47,6 +47,7 @@ Supported architectures:
 * Qwen3.5 Dense and MoE
 * Llama
 * Deepseek2
+* Gemma4
 
 I've been using these:
 * [Qwen3.5-4B_Abliterated.f16.gguf](https://huggingface.co/mradermacher/Qwen3.5-4B_Abliterated-GGUF/resolve/main/Qwen3.5-4B_Abliterated.f16.gguf)
@@ -54,9 +55,11 @@ I've been using these:
 * [Qwen3.5-9B-abliterated.f16.gguf](https://huggingface.co/mradermacher/Qwen3.5-9B-abliterated-GGUF/resolve/main/Qwen3.5-9B-abliterated.f16.gguf)
   * Qwen3.5, hybrid SSM + attention
 * [Llama-3.2-3B-Instruct-f16.gguf](https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-f16.gguf)
-  * Llama 3.2, standard attention 
+  * Llama3.2, standard attention 
 * [llama-3.2-3b-instruct-q4_k_m.gguf](https://huggingface.co/hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF/resolve/main/llama-3.2-3b-instruct-q4_k_m.gguf)
-  * Llama 3.2, standard attention  (quantized)
+  * Llama3.2, standard attention  (quantized)
+* [gemma-4-E4B-it-Q4_K_M.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf)
+  * Gemma4, hybrid SWA + attention (quantized)
 
 ```bash
 # Build (first run compiles ggml, takes ~1 min, after that much faster)
@@ -220,7 +223,6 @@ Adding architectures is doable in about an hour with AI assistance, if you need 
   * Used to handle rendering prompt templates from GGUF files
 * [BurntSushi/toml](github.com/BurntSushi/toml) - [Andrew Gallant](https://github.com/BurntSushi)'s TOML parser
   * Model architecture DSL and config files
-* [regexp2](github.com/dlclark/regexp2) - [Doug Clark](https://github.com/dlclark)'s regular expression engine 
 * [go-chi](github.com/go-chi/chi) - HTTP services router
   * Used by server implementation of OpenAI API
 * [go-sqlite3](https://github.com/mattn/go-sqlite3) - [Matt N.](https://github.com/mattn)'s  sqlite3 driver

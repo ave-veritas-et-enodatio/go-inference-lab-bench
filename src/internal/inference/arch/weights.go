@@ -110,6 +110,18 @@ func ResolveWeightsFromDef(def *ArchDef, nLayers int) *ResolvedWeights {
 	fallbackParams := &ResolvedParams{
 		Ints:   map[string]int{"full_attn_interval": 4},
 		Floats: make(map[string]float32),
+		IntArr: make(map[string][]int),
+	}
+
+	// For pattern routing, generate a simple alternating pattern for diagram
+	if def.Layers.Routing.Pattern != "" {
+		pattern := make([]int, nLayers)
+		for i := range pattern {
+			if i%4 == 0 {
+				pattern[i] = 1
+			}
+		}
+		fallbackParams.IntArr[def.Layers.Routing.Pattern] = pattern
 	}
 
 	for i := range nLayers {
@@ -173,6 +185,22 @@ func expandPrefix(tmpl string, layerIdx int) string {
 
 func resolveBlockName(def *ArchDef, layerIdx int, params *ResolvedParams) (string, error) {
 	r := &def.Layers.Routing
+
+	// Pattern-based routing: index into IntArr by layer
+	if r.Pattern != "" {
+		arr, ok := params.IntArr[r.Pattern]
+		if !ok {
+			return "", fmt.Errorf("pattern param %q not found", r.Pattern)
+		}
+		if layerIdx >= len(arr) {
+			return "", fmt.Errorf("pattern param %q has %d elements, need index %d", r.Pattern, len(arr), layerIdx)
+		}
+		if arr[layerIdx] != 0 {
+			return r.IfTrue, nil
+		}
+		return r.IfFalse, nil
+	}
+
 	if r.Rule == "" {
 		// No routing — all layers use if_true (or if_false if if_true is empty)
 		if r.IfTrue != "" {

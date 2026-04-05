@@ -72,7 +72,7 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 		weights := arch.ResolveWeightsFromDef(def, svgLayers)
 		mm := arch.BuildModuleMap(weights)
 		layersPath := filepath.Join(filepath.Dir(outputPath), def.Architecture.Name+".layers.svg")
-		if err := arch.RenderModuleMapDiagram(mm, layersPath, def.Architecture.Name+".layers", nil); err != nil {
+		if err := arch.RenderModuleMapDiagram(mm, layersPath, strings.Title(def.Architecture.Name)+" Layers", nil); err != nil {
 			log.Fatalf("generating layers SVG: %v", err)
 		}
 		fmt.Fprintf(os.Stderr, "wrote %s\n", layersPath)

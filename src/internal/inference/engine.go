@@ -28,7 +28,7 @@ func NewEngine(info *model.ModelInfo, archDir string, maxSeqLen int) (*Engine, e
 		return nil, fmt.Errorf("parsing GGUF for tokenizer: %w", err)
 	}
 
-	tok, err := NewTokenizerFromGGUF(f)
+	tok, err := NewTokenizerFromGGUF(f, info.Path)
 	if err != nil {
 		return nil, fmt.Errorf("building tokenizer: %w", err)
 	}

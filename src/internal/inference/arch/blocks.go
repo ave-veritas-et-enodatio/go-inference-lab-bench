@@ -4,19 +4,39 @@ import (
 	ggml "inference-lab-bench/internal/inference/ggml"
 )
 
+// DebugTensor holds a labeled tensor for post-compute dumping.
+type DebugTensor struct {
+	Label  string
+	Tensor ggml.Tensor
+}
+
 // GraphInputs holds shared input tensors for the forward pass.
 type GraphInputs struct {
-	InpPos  ggml.Tensor
-	InpMask ggml.Tensor
-	NTokens int64 // number of new tokens being processed
-	NKV     int64 // total KV length (seqPos + nNew for cached, nTokens for stateless)
-	SeqPos  int   // cache position (0 for stateless)
+	InpPos     ggml.Tensor
+	InpMask    ggml.Tensor
+	InpMaskSWA ggml.Tensor // sliding-window attention mask (nil if unused)
+	NTokens    int64       // number of new tokens being processed
+	NKV        int64       // total KV length (seqPos + nNew for cached, nTokens for stateless)
+	SeqPos     int         // cache position (0 for stateless)
+	SharedKV   *SharedKVState
+
+	// Debug instrumentation (active when DUMP_TENSORS=1)
+	DebugTensors *[]DebugTensor // non-nil when tensor dumping is active
+	CurrentLayer int            // set by runLayers before calling the block builder
+}
+
+// SharedKVState passes in-graph K/V tensors from KV layers to non-KV layers.
+// KV layers update these after computing K/V; non-KV layers read them for attention.
+type SharedKVState struct {
+	K map[string]ggml.Tensor // group → latest K (post-RoPE, pre-permute shape: [headDim, nKVHeads, nTokens])
+	V map[string]ggml.Tensor // group → latest V (pre-permute shape)
 }
 
 // LayerCache holds per-layer cache tensors.
 type LayerCache struct {
-	Tensors   map[string]ggml.Tensor // cache name → tensor (e.g. "k", "v", "conv_state", "ssm_state")
-	MaxSeqLen int
+	Tensors     map[string]ggml.Tensor // cache name → tensor (e.g. "k", "v", "conv_state", "ssm_state")
+	MaxSeqLen   int
+	SharedGroup string // shared group name (empty = not shared)
 }
 
 // CacheWriteback describes a post-compute copy from a graph output to a persistent cache tensor.
@@ -70,6 +90,7 @@ func init() {
 	blockBuilders["full_attention_gated"] = &FullAttentionGatedBuilder{}
 	blockBuilders["gated_delta_net"] = &GatedDeltaNetBuilder{}
 	ffnBuilders["swiglu"] = &SwiGLUBuilder{}
+	ffnBuilders["geglu"] = &GeGLUBuilder{}
 	ffnBuilders["moe_with_shared"] = &MoEWithSharedBuilder{}
 }
 

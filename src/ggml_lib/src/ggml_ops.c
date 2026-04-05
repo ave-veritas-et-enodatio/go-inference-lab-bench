@@ -20,7 +20,9 @@ static_assert(GGML_GO_TYPE_I32 == GGML_TYPE_I32, "GGML_GO_TYPE_I32 must match GG
 static_assert(GGML_GO_ROPE_NEOX == GGML_GO_ROPE_NEOX, "GGML_GO_ROPE_NEOX must match GGML_ROPE_NEOX");
 
 static_assert(GGML_GO_GGUF_TYPE_UINT32  == GGUF_TYPE_UINT32, "GGML_GO_GGUF_TYPE_UINT32 must match GGUF_TYPE_UINT32");
+static_assert(GGML_GO_GGUF_TYPE_INT32   == GGUF_TYPE_INT32, "GGML_GO_GGUF_TYPE_INT32 must match GGUF_TYPE_INT32");
 static_assert(GGML_GO_GGUF_TYPE_FLOAT32 == GGUF_TYPE_FLOAT32, "GGML_GO_GGUF_TYPE_FLOAT32 must match GGUF_TYPE_FLOAT32");
+static_assert(GGML_GO_GGUF_TYPE_BOOL    == GGUF_TYPE_BOOL, "GGML_GO_GGUF_TYPE_BOOL must match GGUF_TYPE_BOOL");
 static_assert(GGML_GO_GGUF_TYPE_ARRAY   == GGUF_TYPE_ARRAY, "GGML_GO_GGUF_TYPE_ARRAY must match GGUF_TYPE_ARRAY");
 
 
@@ -76,6 +78,8 @@ ggml_go_tensor ggml_go_l2_norm(ggml_go_context ctx, ggml_go_tensor a, float eps)
 ggml_go_tensor ggml_go_silu(ggml_go_context ctx, ggml_go_tensor a)                                                         { return ggml_silu(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_sigmoid(ggml_go_context ctx, ggml_go_tensor a)                                                      { return ggml_sigmoid(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_softplus(ggml_go_context ctx, ggml_go_tensor a)                                                     { return ggml_softplus(CTX(ctx), T(a)); }
+ggml_go_tensor ggml_go_gelu(ggml_go_context ctx, ggml_go_tensor a)                                                        { return ggml_gelu(CTX(ctx), T(a)); }
+ggml_go_tensor ggml_go_tanh(ggml_go_context ctx, ggml_go_tensor a)                                                        { return ggml_tanh(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_soft_max_ext(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor mask, float scale, float max_bias) { return ggml_soft_max_ext(CTX(ctx), T(a), T(mask), scale, max_bias); }
 
 /* --- Embedding / indexing --- */
@@ -106,6 +110,9 @@ ggml_go_tensor ggml_go_rope_multi(ggml_go_context ctx, ggml_go_tensor a, ggml_go
 /* --- SSM / delta-net --- */
 ggml_go_tensor ggml_go_ssm_conv(ggml_go_context ctx, ggml_go_tensor sx, ggml_go_tensor c)                                                           { return ggml_ssm_conv(CTX(ctx), T(sx), T(c)); }
 ggml_go_tensor ggml_go_gated_delta_net(ggml_go_context ctx, ggml_go_tensor q, ggml_go_tensor k, ggml_go_tensor v, ggml_go_tensor g, ggml_go_tensor beta, ggml_go_tensor state) { return ggml_gated_delta_net(CTX(ctx), T(q), T(k), T(v), T(g), T(beta), T(state)); }
+
+/* --- Precision --- */
+void ggml_go_mul_mat_set_prec_f32(ggml_go_tensor t) { ggml_mul_mat_set_prec(T(t), GGML_PREC_F32); }
 
 /* --- Tensor flags --- */
 void ggml_go_set_input(ggml_go_tensor t)                   { ggml_set_input(T(t)); }
@@ -173,6 +180,7 @@ uint32_t        ggml_go_gguf_get_u32(ggml_go_gguf gf, int64_t idx)              
 float           ggml_go_gguf_get_f32(ggml_go_gguf gf, int64_t idx)               { return gguf_get_val_f32(GF(gf), idx); }
 size_t          ggml_go_gguf_get_arr_n(ggml_go_gguf gf, int64_t idx)             { return gguf_get_arr_n(GF(gf), idx); }
 const void*     ggml_go_gguf_get_arr_data(ggml_go_gguf gf, int64_t idx)          { return gguf_get_arr_data(GF(gf), idx); }
+int             ggml_go_gguf_get_arr_type(ggml_go_gguf gf, int64_t idx)         { return (int)gguf_get_arr_type(GF(gf), idx); }
 size_t          ggml_go_gguf_data_offset(ggml_go_gguf gf)                         { return gguf_get_data_offset(GF(gf)); }
 int64_t         ggml_go_gguf_n_tensors(ggml_go_gguf gf)                           { return gguf_get_n_tensors(GF(gf)); }
 const char*     ggml_go_gguf_tensor_name(ggml_go_gguf gf, int64_t idx)            { return gguf_get_tensor_name(GF(gf), idx); }

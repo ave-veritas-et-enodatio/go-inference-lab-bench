@@ -8,12 +8,13 @@ import (
 // Q, K, V must already be in [dim, nTokens/nKV, nHeads/nKVHeads] layout (post-permute).
 // Returns merged heads: [headDim*nHeads, nTokens].
 func scaledDotProductAttention(ctx *ggml.GraphContext, q, k, v, mask ggml.Tensor,
-	headDim, nHeads, nTokens int64) ggml.Tensor {
+	kqScale float32, nHeads, nTokens int64) ggml.Tensor {
 	kq := ggml.MulMat(ctx, k, q)
-	kq = ggml.SoftMaxExt(ctx, kq, mask, attentionScale(headDim), 0.0)
+	ggml.MulMatSetPrecF32(kq)
+	kq = ggml.SoftMaxExt(ctx, kq, mask, kqScale, 0.0)
 	vT := ggml.Cont(ctx, ggml.Transpose(ctx, v))
 	kqv := ggml.MulMat(ctx, vT, kq)
-	return ggml.Cont2D(ctx, ggml.Permute(ctx, kqv, 0, 2, 1, 3), headDim*nHeads, nTokens)
+	return ggml.Cont2D(ctx, ggml.Permute(ctx, kqv, 0, 2, 1, 3), kqv.Ne(0)*nHeads, nTokens)
 }
 
 // writeCacheKV prepares K and V for cache writeback and appends CacheWriteback entries.
@@ -84,4 +85,38 @@ func applyRoPEMultiPair(ctx *ggml.GraphContext, q, k, pos ggml.Tensor,
 	nRot int, sections [4]int, freqBase float32) (ggml.Tensor, ggml.Tensor) {
 	return defaultRopeMulti(ctx, q, pos, nRot, sections, freqBase),
 		defaultRopeMulti(ctx, k, pos, nRot, sections, freqBase)
+}
+
+// selectSharedKV returns K and V for a non-KV layer using the shared cache.
+// Prefill: uses SharedKV directly (all tokens computed by the KV layer in-graph).
+// Decode: concatenates cached history with the current-token SharedKV tensor.
+func selectSharedKV(ctx *ggml.GraphContext, cache *LayerCache, seqPos int,
+	shared *SharedKVState, group string, headDim, nKV, nKVHeads int64) (ggml.Tensor, ggml.Tensor) {
+	kShared := shared.K[group]
+	vShared := shared.V[group]
+
+	if seqPos == 0 {
+		// Prefill: SharedKV has all tokens — permute to [headDim, nTokens, nKVHeads]
+		kAttn := ggml.Cont(ctx, ggml.Permute(ctx, kShared, 0, 2, 1, 3))
+		vAttn := ggml.Cont(ctx, ggml.Permute(ctx, vShared, 0, 2, 1, 3))
+		return kAttn, vAttn
+	}
+
+	// Decode: concat cache[0:seqPos] with current-token shared K/V
+	kc := cache.Tensors[CacheK]
+	vc := cache.Tensors[CacheV]
+
+	// Cache view: [headDim, seqPos, nKVHeads]
+	kHist := ggml.View3D(ctx, kc, headDim, int64(seqPos), nKVHeads, kc.Nb(1), kc.Nb(2), 0)
+	vHist := ggml.View3D(ctx, vc, headDim, int64(seqPos), nKVHeads, vc.Nb(1), vc.Nb(2), 0)
+
+	// Shared current token: permute [headDim, nKVHeads, 1] → [headDim, 1, nKVHeads]
+	kCur := ggml.Cont(ctx, ggml.Permute(ctx, kShared, 0, 2, 1, 3))
+	vCur := ggml.Cont(ctx, ggml.Permute(ctx, vShared, 0, 2, 1, 3))
+
+	// Concat along dim 1 (sequence): [headDim, seqPos+1, nKVHeads]
+	kAttn := ggml.Concat(ctx, kHist, kCur, 1)
+	vAttn := ggml.Concat(ctx, vHist, vCur, 1)
+
+	return kAttn, vAttn
 }

@@ -1,0 +1,45 @@
+<!-- bbox: 620x200 -->
+<!-- color: #0097A7 (teal — sliding-window attention) -->
+<!-- block-name override for gemma4 swa_attention (builder: attention) -->
+<g>
+  <rect width="620" height="200" rx="6" fill="url(#swaGrad)" stroke="#0097A7" stroke-width="1.2" filter="url(#shadow)"/>
+  <text x="310" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#006064">Sliding-Window Attention</text>
+
+  <g transform="translate(15, 35)">
+    <rect width="170" height="56" rx="4" fill="#fff" stroke="#4dd0e1" stroke-width="0.8" opacity="0.9"/>
+    <text x="85" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#00838f">Q / K / V Projections</text>
+    <text x="85" y="31" text-anchor="middle" font-size="9" fill="#777">attn_q / attn_k / attn_v</text>
+    <text x="85" y="43" text-anchor="middle" font-size="9" fill="#777">QK-norm (RMS) + V-norm (RMS)</text>
+  </g>
+  <g transform="translate(200, 35)">
+    <rect width="170" height="56" rx="4" fill="#fff" stroke="#4dd0e1" stroke-width="0.8" opacity="0.9"/>
+    <text x="85" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#00838f">Standard RoPE</text>
+    <text x="85" y="31" text-anchor="middle" font-size="9" fill="#777">mode=neox / no freq factors</text>
+    <text x="85" y="43" text-anchor="middle" font-size="9" fill="#777">head_dim=256 (SWA)</text>
+  </g>
+
+  <g transform="translate(15, 105)">
+    <rect width="300" height="44" rx="4" fill="#fff" stroke="#4dd0e1" stroke-width="0.8" opacity="0.9"/>
+    <text x="150" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#00838f">Sliding-Window Attention</text>
+    <text x="150" y="31" text-anchor="middle" font-size="9" fill="#777">softmax(Q @ K) @ V — local window only</text>
+  </g>
+  <g transform="translate(335, 105)">
+    <rect width="130" height="44" rx="4" fill="#fff" stroke="#4dd0e1" stroke-width="0.8" opacity="0.9"/>
+    <text x="65" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#00838f">Output Proj</text>
+    <text x="65" y="31" text-anchor="middle" font-size="9" fill="#777">attn_output.weight</text>
+  </g>
+
+  <g transform="translate(385, 35)">
+    <rect width="125" height="56" rx="4" fill="#e0f7fa" stroke="#80deea" stroke-width="0.8" stroke-dasharray="3,2"/>
+    <text x="62" y="18" text-anchor="middle" font-size="10" font-weight="600" fill="#0097A7">KV Cache (SWA)</text>
+    <text x="62" y="32" text-anchor="middle" font-size="9" fill="#666">k / v [f32]</text>
+    <text x="62" y="44" text-anchor="middle" font-size="9" fill="#666">shared_kv_group</text>
+  </g>
+
+  <g transform="translate(525, 35)">
+    <rect width="80" height="56" rx="4" fill="url(#normGrad)" stroke="#7b1fa2" stroke-width="0.8" opacity="0.9"/>
+    <text x="40" y="18" text-anchor="middle" font-size="10" font-weight="600" fill="#6a1b9a">RMSNorm</text>
+    <text x="40" y="32" text-anchor="middle" font-size="9" fill="#777">post_attn</text>
+    <text x="40" y="44" text-anchor="middle" font-size="9" fill="#777">post_ffw</text>
+  </g>
+</g>
