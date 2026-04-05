@@ -150,6 +150,10 @@ func GatedDeltaNet(ctx *GraphContext, q, k, v, g, beta, state Tensor) Tensor {
 	return t(C.ggml_go_gated_delta_net(ctx.c(), q.c(), k.c(), v.c(), g.c(), beta.c(), state.c()))
 }
 
+// --- Precision ---
+
+func MulMatSetPrecF32(t Tensor) { C.ggml_go_mul_mat_set_prec_f32(t.c()) }
+
 // --- Tensor flags ---
 
 func SetInput(t Tensor)  { C.ggml_go_set_input(t.c()) }

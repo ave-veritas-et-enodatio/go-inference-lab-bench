@@ -111,6 +111,9 @@ ggml_go_tensor ggml_go_rope_multi(ggml_go_context ctx, ggml_go_tensor a, ggml_go
 ggml_go_tensor ggml_go_ssm_conv(ggml_go_context ctx, ggml_go_tensor sx, ggml_go_tensor c)                                                           { return ggml_ssm_conv(CTX(ctx), T(sx), T(c)); }
 ggml_go_tensor ggml_go_gated_delta_net(ggml_go_context ctx, ggml_go_tensor q, ggml_go_tensor k, ggml_go_tensor v, ggml_go_tensor g, ggml_go_tensor beta, ggml_go_tensor state) { return ggml_gated_delta_net(CTX(ctx), T(q), T(k), T(v), T(g), T(beta), T(state)); }
 
+/* --- Precision --- */
+void ggml_go_mul_mat_set_prec_f32(ggml_go_tensor t) { ggml_mul_mat_set_prec(T(t), GGML_PREC_F32); }
+
 /* --- Tensor flags --- */
 void ggml_go_set_input(ggml_go_tensor t)                   { ggml_set_input(T(t)); }
 void ggml_go_set_output(ggml_go_tensor t)                  { ggml_set_output(T(t)); }
