@@ -3,6 +3,7 @@ package arch
 import (
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"unsafe"
 
@@ -34,27 +35,50 @@ func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
 		lt := m.Store.Layer(il)
 		blockName := m.LayerBlockNames[il]
 		blockDef := m.Def.Blocks[blockName]
+		inputs.CurrentLayer = il
+		dbg0 := il == 0 && inputs.DebugTensors != nil
 
 		if !lt["attn_norm"].IsNil() {
 			cur := rmsNormApply(gctx, x, lt["attn_norm"], rmsEps)
+			if dbg0 {
+				debugCapture(inputs, "attn_norm_0", cur)
+			}
 			cur = blkFn(gctx, cur, lt, il, blockDef.Config, inputs)
+			if dbg0 {
+				debugCapture(inputs, "attn_out_0", cur)
+			}
 			// Optional post-attention norm
 			if !lt["attn_post_norm"].IsNil() {
 				cur = rmsNormApply(gctx, cur, lt["attn_post_norm"], rmsEps)
+				if dbg0 {
+					debugCapture(inputs, "post_attn_norm_0", cur)
+				}
 			}
 			x = ggml.Add(gctx, x, cur)
+			if dbg0 {
+				debugCapture(inputs, "attn_residual_0", x)
+			}
 		}
 
 		x = m.buildFFNBlock(gctx, x, lt, il, rmsEps)
+		if dbg0 {
+			debugCapture(inputs, "ffn_residual_0", x)
+		}
 
 		// Per-layer embedding injection (Gemma 4)
 		if !perLayerEmbd.IsNil() && !lt["pe_inp_gate"].IsNil() {
 			x = m.perLayerEmbedInject(gctx, x, lt, il, perLayerEmbd, rmsEps)
+			if dbg0 {
+				debugCapture(inputs, "pe_inject_0", x)
+			}
 		}
 
 		// Layer output scaling
 		if !lt["layer_output_scale"].IsNil() {
 			x = ggml.Mul(gctx, x, lt["layer_output_scale"])
+			if dbg0 {
+				debugCapture(inputs, "layer_scaled_0", x)
+			}
 		}
 	}
 	return x
@@ -167,6 +191,11 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32) ([]float32, error) {
 		ggml.SetInput(inpMaskSWA)
 	}
 
+	var debugTensors []DebugTensor
+	if os.Getenv("DUMP_TENSORS") == "1" {
+		debugTensors = make([]DebugTensor, 0, 64)
+	}
+
 	inputs := &GraphInputs{
 		InpPos:     inpPos,
 		InpMask:    inpMask,
@@ -176,6 +205,11 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32) ([]float32, error) {
 		SeqPos:     0,
 		SharedKV:   &SharedKVState{K: make(map[string]ggml.Tensor), V: make(map[string]ggml.Tensor)},
 	}
+	if debugTensors != nil {
+		inputs.DebugTensors = &debugTensors
+	}
+
+	debugCapture(inputs, "embd_scaled", x)
 
 	// Per-layer embedding preparation
 	perLayerEmbd := m.buildPerLayerEmbedSetup(gctx, inpTokens, x, nTokens, rmsEps)
@@ -245,6 +279,10 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32) ([]float32, error) {
 		return nil, fmt.Errorf("graph compute failed: %d", status)
 	}
 
+	if len(debugTensors) > 0 {
+		DumpDebugTensors(debugTensors)
+	}
+
 	return readLogits(logits, nVocab), nil
 }
 
@@ -297,6 +335,11 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32) ([]floa
 		ggml.SetInput(inpMaskSWA)
 	}
 
+	var debugTensorsCached []DebugTensor
+	if os.Getenv("DUMP_TENSORS") == "1" {
+		debugTensorsCached = make([]DebugTensor, 0, 64)
+	}
+
 	inputs := &GraphInputs{
 		InpPos:     inpPos,
 		InpMask:    inpMask,
@@ -306,6 +349,11 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32) ([]floa
 		SeqPos:     seqPos,
 		SharedKV:   &SharedKVState{K: make(map[string]ggml.Tensor), V: make(map[string]ggml.Tensor)},
 	}
+	if debugTensorsCached != nil {
+		inputs.DebugTensors = &debugTensorsCached
+	}
+
+	debugCapture(inputs, "embd_scaled", x)
 
 	// Per-layer embedding preparation
 	perLayerEmbd := m.buildPerLayerEmbedSetup(gctx, inpTokens, x, nNew, rmsEps)
@@ -371,6 +419,11 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32) ([]floa
 	status := sched.Compute(gf)
 	if status != ggml.StatusSuccess {
 		return nil, fmt.Errorf("graph compute failed: %d", status)
+	}
+
+	if len(debugTensorsCached) > 0 {
+		fmt.Fprintf(os.Stderr, "[DUMP-CACHED seqPos=%d nNew=%d nKV=%d]\n", seqPos, nNew, nKV)
+		DumpDebugTensors(debugTensorsCached)
 	}
 
 	// Post-compute writebacks (per-head strided copy)

@@ -10,6 +10,7 @@ import (
 func scaledDotProductAttention(ctx *ggml.GraphContext, q, k, v, mask ggml.Tensor,
 	kqScale float32, nHeads, nTokens int64) ggml.Tensor {
 	kq := ggml.MulMat(ctx, k, q)
+	ggml.MulMatSetPrecF32(kq)
 	kq = ggml.SoftMaxExt(ctx, kq, mask, kqScale, 0.0)
 	vT := ggml.Cont(ctx, ggml.Transpose(ctx, v))
 	kqv := ggml.MulMat(ctx, vT, kq)

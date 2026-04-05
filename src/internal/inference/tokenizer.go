@@ -1,8 +1,10 @@
 package inference
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -19,7 +21,7 @@ func init() {
 }
 
 // Tokenizer implements BPE tokenization loaded from a GGUF file's metadata.
-// Compatible with the Qwen3 / tiktoken-style tokenizer.
+// Supports both GPT-2 byte-level BPE (Llama, Qwen) and SentencePiece BPE (Gemma).
 type Tokenizer struct {
 	tokens          []string          // token ID → string
 	tokenIDs        map[string]int32  // string → token ID
@@ -28,6 +30,7 @@ type Tokenizer struct {
 	eos             int32
 	chatTpl         *exec.Template
 	preTokenPattern *regexp2.Regexp
+	useByteLevel    bool // true for GPT-2 style, false for SentencePiece style
 }
 
 // Qwen3 pre-tokenisation regex (tiktoken / cl100k_base pattern).
@@ -35,23 +38,28 @@ type Tokenizer struct {
 const preTokenRegex = `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`
 
 // specialTokenRe matches special token patterns emitted by chat templates:
-//   - <|...|>   — Qwen / Llama style
+//   - <|...|>   — Qwen / Llama style (symmetric)
+//   - <|word>   — Gemma 4 style (pipe only at start)
+//   - <word|>   — Gemma 4 style (pipe only at end)
 //   - <word>    — GLM4 <sop> style
 //   - </word>   — closing tags (e.g. </think>)
 //   - [WORD]    — GLM4 [gMASK] style
-var specialTokenRe = regexp.MustCompile(`<\|[^|>\n]*\|>|</[a-z][a-zA-Z0-9_]*>|<[a-z][a-zA-Z0-9_]*>|\[[a-zA-Z][a-zA-Z0-9_]*\]`)
+var specialTokenRe = regexp.MustCompile(`<\|[^|>\n]*\|>|<\|[a-zA-Z][a-zA-Z0-9_]*>|<[a-zA-Z][a-zA-Z0-9_]*\|>|</[a-z][a-zA-Z0-9_]*>|<[a-z][a-zA-Z0-9_]*>|\[[a-zA-Z][a-zA-Z0-9_]*\]`)
 
 // NewTokenizerFromGGUF loads vocab, merge rules, BOS/EOS IDs, and the chat
 // template Jinja2 string from a parsed GGUF file.
-func NewTokenizerFromGGUF(f *ggufparser.GGUFFile) (*Tokenizer, error) {
+// ggufPath is used to re-read raw token strings, working around a TrimSpace
+// bug in the gguf-parser library.
+func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, error) {
 	kvs := f.Header.MetadataKV
 
 	// ---- Tokens ----
-	tokensKV, ok := kvs.Get("tokenizer.ggml.tokens")
-	if !ok {
-		return nil, fmt.Errorf("missing tokenizer.ggml.tokens in GGUF")
+	// Read raw tokens directly from GGUF to avoid gguf-parser's TrimSpace bug
+	// which strips whitespace from token strings (e.g. "\n" → "").
+	tokens, err := readGGUFTokensRaw(ggufPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading raw tokens: %w", err)
 	}
-	tokens := tokensKV.ValueArray().ValuesString()
 	if len(tokens) == 0 {
 		return nil, fmt.Errorf("empty token list in GGUF")
 	}
@@ -103,6 +111,14 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile) (*Tokenizer, error) {
 		return nil, fmt.Errorf("pre-token regex compile: %w", err)
 	}
 
+	// Detect tokenizer type: "gpt2" uses byte-level encoding, everything else is SentencePiece.
+	useByteLevel := true
+	if modelKV, ok := kvs.Get("tokenizer.ggml.model"); ok {
+		if modelKV.ValueString() != "gpt2" {
+			useByteLevel = false
+		}
+	}
+
 	return &Tokenizer{
 		tokens:          tokens,
 		tokenIDs:        tokenIDs,
@@ -111,6 +127,7 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile) (*Tokenizer, error) {
 		eos:             eos,
 		chatTpl:         chatTpl,
 		preTokenPattern: re,
+		useByteLevel:    useByteLevel,
 	}, nil
 }
 
@@ -122,9 +139,15 @@ func (t *Tokenizer) Encode(text string, addSpecial bool) []int32 {
 		return []int32{id}
 	}
 
+	// For SentencePiece tokenizers, replace spaces with ▁ (U+2581)
+	encText := text
+	if !t.useByteLevel {
+		encText = strings.ReplaceAll(text, " ", "▁")
+	}
+
 	// 2. Pre-tokenise with regex
 	var pieces []string
-	m, _ := t.preTokenPattern.FindStringMatch(text)
+	m, _ := t.preTokenPattern.FindStringMatch(encText)
 	for m != nil {
 		pieces = append(pieces, m.String())
 		m, _ = t.preTokenPattern.FindNextMatch(m)
@@ -221,7 +244,12 @@ func (t *Tokenizer) StopID() int32 {
 // TokenString returns the string for a token ID.
 func (t *Tokenizer) TokenString(id int32) string {
 	if int(id) >= 0 && int(id) < len(t.tokens) {
-		return decodeByteLevel(t.tokens[id])
+		tok := t.tokens[id]
+		if t.useByteLevel {
+			return decodeByteLevel(tok)
+		}
+		// SentencePiece: replace ▁ with space
+		return strings.ReplaceAll(tok, "▁", " ")
 	}
 	return ""
 }
@@ -255,8 +283,15 @@ func (t *Tokenizer) encodeWithSpecials(s string) []int32 {
 // ---------------------------------------------------------------------------
 
 func (t *Tokenizer) bpePiece(piece string) []int32 {
-	// Convert piece to byte-level BPE representation
-	encoded := encodeByteLevel(piece)
+	// Convert piece to token-level representation.
+	// GPT-2: byte-level encoding (bytes → Unicode codepoints).
+	// SentencePiece: raw UTF-8 characters (spaces already replaced with ▁).
+	var encoded string
+	if t.useByteLevel {
+		encoded = encodeByteLevel(piece)
+	} else {
+		encoded = piece
+	}
 
 	// Start with individual characters/bytes as tokens
 	syms := strings.Split(encoded, "")
@@ -355,4 +390,122 @@ func decodeByteLevel(s string) string {
 		}
 	}
 	return string(result)
+}
+
+// readGGUFTokensRaw reads the tokenizer.ggml.tokens string array directly from
+// the GGUF file without applying bytes.TrimSpace, working around a bug in the
+// gguf-parser library that trims whitespace from all strings.
+func readGGUFTokensRaw(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// GGUF header: magic(4) + version(4) + n_tensors(8) + n_kv(8)
+	var header struct {
+		Magic     uint32
+		Version   uint32
+		NTensors  uint64
+		NKV       uint64
+	}
+	if err := binary.Read(f, binary.LittleEndian, &header); err != nil {
+		return nil, fmt.Errorf("read GGUF header: %w", err)
+	}
+
+	readStr := func() (string, error) {
+		var length uint64
+		if err := binary.Read(f, binary.LittleEndian, &length); err != nil {
+			return "", err
+		}
+		b := make([]byte, length)
+		if _, err := io.ReadFull(f, b); err != nil {
+			return "", err
+		}
+		return string(b), nil // no TrimSpace!
+	}
+
+	var skipValue func(vtype uint32) error
+	skipValue = func(vtype uint32) error {
+		switch vtype {
+		case 0, 1: // uint8, int8
+			_, err := f.Seek(1, io.SeekCurrent)
+			return err
+		case 2, 3: // uint16, int16
+			_, err := f.Seek(2, io.SeekCurrent)
+			return err
+		case 4, 5, 6: // uint32, int32, float32
+			_, err := f.Seek(4, io.SeekCurrent)
+			return err
+		case 7: // bool
+			_, err := f.Seek(1, io.SeekCurrent)
+			return err
+		case 8: // string
+			var length uint64
+			if err := binary.Read(f, binary.LittleEndian, &length); err != nil {
+				return err
+			}
+			_, err := f.Seek(int64(length), io.SeekCurrent)
+			return err
+		case 9: // array
+			var atype uint32
+			var acount uint64
+			if err := binary.Read(f, binary.LittleEndian, &atype); err != nil {
+				return err
+			}
+			if err := binary.Read(f, binary.LittleEndian, &acount); err != nil {
+				return err
+			}
+			for i := uint64(0); i < acount; i++ {
+				if err := skipValue(atype); err != nil {
+					return err
+				}
+			}
+			return nil
+		case 10, 11, 12: // uint64, int64, float64
+			_, err := f.Seek(8, io.SeekCurrent)
+			return err
+		default:
+			return fmt.Errorf("unknown GGUF value type %d", vtype)
+		}
+	}
+
+	// Scan KV pairs looking for tokenizer.ggml.tokens
+	for i := uint64(0); i < header.NKV; i++ {
+		key, err := readStr()
+		if err != nil {
+			return nil, fmt.Errorf("read KV key %d: %w", i, err)
+		}
+		var vtype uint32
+		if err := binary.Read(f, binary.LittleEndian, &vtype); err != nil {
+			return nil, fmt.Errorf("read KV type %d: %w", i, err)
+		}
+
+		if key == "tokenizer.ggml.tokens" && vtype == 9 { // array
+			var atype uint32
+			var acount uint64
+			if err := binary.Read(f, binary.LittleEndian, &atype); err != nil {
+				return nil, err
+			}
+			if atype != 8 { // must be string array
+				return nil, fmt.Errorf("tokens array type %d, expected 8 (string)", atype)
+			}
+			if err := binary.Read(f, binary.LittleEndian, &acount); err != nil {
+				return nil, err
+			}
+			tokens := make([]string, acount)
+			for j := uint64(0); j < acount; j++ {
+				tokens[j], err = readStr()
+				if err != nil {
+					return nil, fmt.Errorf("read token %d: %w", j, err)
+				}
+			}
+			return tokens, nil
+		}
+
+		if err := skipValue(vtype); err != nil {
+			return nil, fmt.Errorf("skip KV value %d (%s): %w", i, key, err)
+		}
+	}
+	return nil, fmt.Errorf("tokenizer.ggml.tokens not found in GGUF")
 }
