@@ -2,7 +2,6 @@ package arch
 
 import (
 	ggml "inference-lab-bench/internal/inference/ggml"
-	"log"
 )
 
 // AttentionBuilder implements standard multi-head attention with GQA and RoPE.
@@ -56,12 +55,6 @@ func (b *AttentionBuilder) BuildStateless(
 	headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase, kqScale := attnParams(params, config)
 	nTokens := inputs.NTokens
 	hasKV := !weights["attn_k"].IsNil()
-
-	// DEBUG: verify rope_freqs loading and param resolution
-	if inputs.NKV == nTokens { // only on first call (stateless)
-		log.Printf("[DBG-ATTN] headDim=%d nHeads=%d nKVHeads=%d nRot=%d ropeMode=%d freqBase=%.1f kqScale=%.4f hasKV=%v rope_freqs.IsNil=%v",
-			headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase, kqScale, hasKV, weights["rope_freqs"].IsNil())
-	}
 
 	q := projectReshape3D(ctx, weights["attn_q"], cur, headDim, nHeads, nTokens)
 
