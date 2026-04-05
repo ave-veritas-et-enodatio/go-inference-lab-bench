@@ -31,49 +31,61 @@
   <rect x="2" y="3" width="12" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
   <text class="tlbl" x="8" y="20" transform="rotate(-90,8,20)">norm</text>
   <line x1="15" y1="0" x2="15" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
-  <rect x="17" y="2" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="34" y="7">Q</text>
-  <rect x="17" y="15" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="34" y="20">K</text>
-  <rect x="17" y="28" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="34" y="33">V</text>
-  <line x1="52" y1="0" x2="52" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
-  <rect x="54" y="8" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="71" y="13">Kn</text>
-  <rect x="54" y="21" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="71" y="26">Qn</text>
-  <line x1="89" y1="0" x2="89" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
-  <rect x="91" y="3" width="17" height="34" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="99" y="20">out</text>
+  <rect x="17" y="2" width="32" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="33" y="7">Q</text>
+  <rect x="17" y="15" width="32" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="33" y="20">K</text>
+  <rect x="17" y="28" width="32" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="33" y="33">V</text>
+  <line x1="50" y1="0" x2="50" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="52" y="2" width="25" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="64" y="7">Kn</text>
+  <rect x="52" y="15" width="25" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="64" y="20">Qn</text>
+  <rect x="52" y="28" width="25" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="64" y="33">rope</text>
+  <line x1="78" y1="0" x2="78" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="80" y="3" width="16" height="34" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="88" y="20" transform="rotate(-90,88,20)">out</text>
+  <line x1="97" y1="0" x2="97" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="99" y="3" width="9" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="103" y="20" transform="rotate(-90,103,20)">norm</text>
   <line x1="113" y1="20" x2="113" y2="44" stroke="#1976D2" stroke-width="0.8"/>
   <path d="M 113,44 L -10,44" fill="none" stroke="#1976D2" stroke-width="1.0" stroke-dasharray="2,3"/>
   <polyline points="-6,42 -10,44 -6,46" fill="none" stroke="#1976D2" stroke-width="1.0"/>
   </symbol>
-  <symbol id="blk-recurrent_ssm" overflow="visible">
-  <rect x="0" y="0" width="110" height="40" fill="url(#zm_recurrent)" stroke="#66BB6A" stroke-width="0.8" rx="2"/>
+  <symbol id="blk-swa_attention" overflow="visible">
+  <rect x="0" y="0" width="110" height="40" fill="url(#zm_swa)" stroke="#66BB6A" stroke-width="0.8" rx="2"/>
   <rect x="2" y="3" width="12" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
   <text class="tlbl" x="8" y="20" transform="rotate(-90,8,20)">norm</text>
   <line x1="15" y1="0" x2="15" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
-  <rect x="17" y="3" width="12" height="34" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="23" y="20" transform="rotate(-90,23,20)">gate</text>
-  <rect x="30" y="3" width="12" height="34" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="36" y="20" transform="rotate(-90,36,20)">qkv</text>
-  <rect x="43" y="3" width="12" height="34" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="49" y="20" transform="rotate(-90,49,20)">alpha</text>
-  <rect x="56" y="3" width="12" height="34" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="62" y="20" transform="rotate(-90,62,20)">beta</text>
-  <rect x="69" y="3" width="12" height="34" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="75" y="20" transform="rotate(-90,75,20)">conv1</text>
-  <rect x="82" y="3" width="12" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="88" y="20" transform="rotate(-90,88,20)">norm</text>
-  <rect x="95" y="3" width="12" height="34" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="101" y="20" transform="rotate(-90,101,20)">out</text>
+  <rect x="17" y="2" width="32" height="10" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="33" y="7">Q</text>
+  <rect x="17" y="15" width="32" height="10" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="33" y="20">K</text>
+  <rect x="17" y="28" width="32" height="10" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="33" y="33">V</text>
+  <line x1="50" y1="0" x2="50" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="52" y="8" width="25" height="10" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="64" y="13">Kn</text>
+  <rect x="52" y="21" width="25" height="10" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="64" y="26">Qn</text>
+  <line x1="78" y1="0" x2="78" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="80" y="3" width="16" height="34" fill="#c8eac8" stroke="#66BB6A" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="88" y="20" transform="rotate(-90,88,20)">out</text>
+  <line x1="97" y1="0" x2="97" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="99" y="3" width="9" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="103" y="20" transform="rotate(-90,103,20)">norm</text>
+  <text x="108" y="8" font-size="6" font-weight="700" fill="#66BB6A" text-anchor="end">SW</text>
   <line x1="113" y1="20" x2="113" y2="44" stroke="#66BB6A" stroke-width="0.8"/>
   <path d="M 113,44 L -10,44" fill="none" stroke="#66BB6A" stroke-width="1.0" stroke-dasharray="2,3"/>
   <polyline points="-6,42 -10,44 -6,46" fill="none" stroke="#66BB6A" stroke-width="1.0"/>
   </symbol>
   <symbol id="ffn-dense" overflow="visible">
   <rect x="0" y="0" width="98" height="40" fill="url(#zm_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="2"/>
+  <rect x="2" y="3" width="12" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="8" y="20" transform="rotate(-90,8,20)">norm</text>
+  <line x1="15" y1="0" x2="15" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
   <rect x="17" y="8" width="52" height="10" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5" rx="1"/>
   <text class="tlbl" x="43" y="13">G</text>
   <rect x="17" y="21" width="52" height="10" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5" rx="1"/>
@@ -96,12 +108,18 @@
   <line x1="26" y1="0" x2="36" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
   <polyline points="32,-2 36,0 32,2" fill="none" stroke="#AAAAAA" stroke-width="0.8"/>
   <rect x="36" y="-20" width="214" height="40" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
-  <rect x="38" y="-17" width="69" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="72" y="0">out</text>
-  <rect x="108" y="-17" width="69" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="142" y="0">norm</text>
-  <rect x="178" y="-17" width="69" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="212" y="0">embd</text>
+  <rect x="38" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="55" y="0">out</text>
+  <rect x="73" y="-17" width="34" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="90" y="0">norm</text>
+  <rect x="108" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="125" y="0">proj</text>
+  <rect x="143" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="160" y="0">norm</text>
+  <rect x="178" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="195" y="0">embd</text>
+  <rect x="213" y="-17" width="34" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="230" y="0">embd</text>
   <line x1="143" y1="-20" x2="143" y2="-36" stroke="#AAAAAA" stroke-width="0.8"/>
   <polyline points="140,-30 143,-36 146,-30" fill="none" stroke="#AAAAAA" stroke-width="1"/>
   <text class="io" x="143" y="-42">OUT</text>
@@ -111,8 +129,8 @@
   <rect width="178" height="100" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
   <rect x="4" y="10" width="10" height="10" fill="url(#zm_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="1"/>
   <text class="ltxt" x="18" y="15">full attention</text>
-  <rect x="4" y="26" width="10" height="10" fill="url(#zm_recurrent)" stroke="#66BB6A" stroke-width="0.8" rx="1"/>
-  <text class="ltxt" x="18" y="31">recurrent ssm</text>
+  <rect x="4" y="26" width="10" height="10" fill="url(#zm_swa)" stroke="#66BB6A" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="18" y="31">swa attention</text>
   <rect x="4" y="42" width="10" height="10" fill="url(#zm_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="1"/>
   <text class="ltxt" x="18" y="47">FFN (dense)</text>
   <rect x="4" y="58" width="10" height="10" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="1"/>
@@ -124,13 +142,13 @@
   <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Summary</text>
   <rect width="178" height="75" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
   <text class="shdr" x="4" y="11">65 modules</text>
-  <text class="shdr" x="4" y="29">427 tensors</text>
-  <text class="shdr" x="4" y="47">379 weights</text>
+  <text class="shdr" x="4" y="29">574 tensors</text>
+  <text class="shdr" x="4" y="47">574 weights</text>
   </symbol>
 </defs>
   <rect width="580" height="1173" fill="#fafafa" rx="8"/>
 
-  <text class="title" x="275" y="32" text-anchor="middle">Qwen35 Layers</text>
+  <text class="title" x="275" y="32" text-anchor="middle">Gemma4 Layers</text>
   <line x1="26" y1="54" x2="26" y2="1006" stroke="#AAAAAA" stroke-width="1.5"/>
   <text class="io" x="26" y="48">IN</text>
   <path d="M 26,1006 L 26,1031 L 316,1031" fill="none" stroke="#AAAAAA" stroke-width="1.5"/>
@@ -138,15 +156,15 @@
   <line x1="316" y1="1006" x2="316" y2="122" stroke="#AAAAAA" stroke-width="1.5"/>
   <use href="#row-chrome" transform="translate(0,64)"/>
   <text class="lbl" x="21" y="64">0</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,44)"/>
+  <use href="#blk-swa_attention" transform="translate(36,44)"/>
   <use href="#ffn-dense" transform="translate(152,44)"/>
   <use href="#row-chrome" transform="translate(0,122)"/>
   <text class="lbl" x="21" y="122">1</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,102)"/>
+  <use href="#blk-full_attention" transform="translate(36,102)"/>
   <use href="#ffn-dense" transform="translate(152,102)"/>
   <use href="#row-chrome" transform="translate(0,180)"/>
   <text class="lbl" x="21" y="180">2</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,160)"/>
+  <use href="#blk-full_attention" transform="translate(36,160)"/>
   <use href="#ffn-dense" transform="translate(152,160)"/>
   <use href="#row-chrome" transform="translate(0,238)"/>
   <text class="lbl" x="21" y="238">3</text>
@@ -154,15 +172,15 @@
   <use href="#ffn-dense" transform="translate(152,218)"/>
   <use href="#row-chrome" transform="translate(0,296)"/>
   <text class="lbl" x="21" y="296">4</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,276)"/>
+  <use href="#blk-swa_attention" transform="translate(36,276)"/>
   <use href="#ffn-dense" transform="translate(152,276)"/>
   <use href="#row-chrome" transform="translate(0,354)"/>
   <text class="lbl" x="21" y="354">5</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,334)"/>
+  <use href="#blk-full_attention" transform="translate(36,334)"/>
   <use href="#ffn-dense" transform="translate(152,334)"/>
   <use href="#row-chrome" transform="translate(0,412)"/>
   <text class="lbl" x="21" y="412">6</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,392)"/>
+  <use href="#blk-full_attention" transform="translate(36,392)"/>
   <use href="#ffn-dense" transform="translate(152,392)"/>
   <use href="#row-chrome" transform="translate(0,470)"/>
   <text class="lbl" x="21" y="470">7</text>
@@ -170,15 +188,15 @@
   <use href="#ffn-dense" transform="translate(152,450)"/>
   <use href="#row-chrome" transform="translate(0,528)"/>
   <text class="lbl" x="21" y="528">8</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,508)"/>
+  <use href="#blk-swa_attention" transform="translate(36,508)"/>
   <use href="#ffn-dense" transform="translate(152,508)"/>
   <use href="#row-chrome" transform="translate(0,586)"/>
   <text class="lbl" x="21" y="586">9</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,566)"/>
+  <use href="#blk-full_attention" transform="translate(36,566)"/>
   <use href="#ffn-dense" transform="translate(152,566)"/>
   <use href="#row-chrome" transform="translate(0,644)"/>
   <text class="lbl" x="21" y="644">10</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,624)"/>
+  <use href="#blk-full_attention" transform="translate(36,624)"/>
   <use href="#ffn-dense" transform="translate(152,624)"/>
   <use href="#row-chrome" transform="translate(0,702)"/>
   <text class="lbl" x="21" y="702">11</text>
@@ -186,15 +204,15 @@
   <use href="#ffn-dense" transform="translate(152,682)"/>
   <use href="#row-chrome" transform="translate(0,760)"/>
   <text class="lbl" x="21" y="760">12</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,740)"/>
+  <use href="#blk-swa_attention" transform="translate(36,740)"/>
   <use href="#ffn-dense" transform="translate(152,740)"/>
   <use href="#row-chrome" transform="translate(0,818)"/>
   <text class="lbl" x="21" y="818">13</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,798)"/>
+  <use href="#blk-full_attention" transform="translate(36,798)"/>
   <use href="#ffn-dense" transform="translate(152,798)"/>
   <use href="#row-chrome" transform="translate(0,876)"/>
   <text class="lbl" x="21" y="876">14</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,856)"/>
+  <use href="#blk-full_attention" transform="translate(36,856)"/>
   <use href="#ffn-dense" transform="translate(152,856)"/>
   <use href="#row-chrome" transform="translate(0,934)"/>
   <text class="lbl" x="21" y="934">15</text>
@@ -202,15 +220,15 @@
   <use href="#ffn-dense" transform="translate(152,914)"/>
   <use href="#row-chrome" transform="translate(0,992)"/>
   <text class="lbl" x="21" y="992">16</text>
-  <use href="#blk-recurrent_ssm" transform="translate(36,972)"/>
+  <use href="#blk-swa_attention" transform="translate(36,972)"/>
   <use href="#ffn-dense" transform="translate(152,972)"/>
   <use href="#row-chrome" transform="translate(290,992)"/>
   <text class="lbl" x="311" y="992">17</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,972)"/>
+  <use href="#blk-full_attention" transform="translate(326,972)"/>
   <use href="#ffn-dense" transform="translate(442,972)"/>
   <use href="#row-chrome" transform="translate(290,934)"/>
   <text class="lbl" x="311" y="934">18</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,914)"/>
+  <use href="#blk-full_attention" transform="translate(326,914)"/>
   <use href="#ffn-dense" transform="translate(442,914)"/>
   <use href="#row-chrome" transform="translate(290,876)"/>
   <text class="lbl" x="311" y="876">19</text>
@@ -218,15 +236,15 @@
   <use href="#ffn-dense" transform="translate(442,856)"/>
   <use href="#row-chrome" transform="translate(290,818)"/>
   <text class="lbl" x="311" y="818">20</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,798)"/>
+  <use href="#blk-swa_attention" transform="translate(326,798)"/>
   <use href="#ffn-dense" transform="translate(442,798)"/>
   <use href="#row-chrome" transform="translate(290,760)"/>
   <text class="lbl" x="311" y="760">21</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,740)"/>
+  <use href="#blk-full_attention" transform="translate(326,740)"/>
   <use href="#ffn-dense" transform="translate(442,740)"/>
   <use href="#row-chrome" transform="translate(290,702)"/>
   <text class="lbl" x="311" y="702">22</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,682)"/>
+  <use href="#blk-full_attention" transform="translate(326,682)"/>
   <use href="#ffn-dense" transform="translate(442,682)"/>
   <use href="#row-chrome" transform="translate(290,644)"/>
   <text class="lbl" x="311" y="644">23</text>
@@ -234,15 +252,15 @@
   <use href="#ffn-dense" transform="translate(442,624)"/>
   <use href="#row-chrome" transform="translate(290,586)"/>
   <text class="lbl" x="311" y="586">24</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,566)"/>
+  <use href="#blk-swa_attention" transform="translate(326,566)"/>
   <use href="#ffn-dense" transform="translate(442,566)"/>
   <use href="#row-chrome" transform="translate(290,528)"/>
   <text class="lbl" x="311" y="528">25</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,508)"/>
+  <use href="#blk-full_attention" transform="translate(326,508)"/>
   <use href="#ffn-dense" transform="translate(442,508)"/>
   <use href="#row-chrome" transform="translate(290,470)"/>
   <text class="lbl" x="311" y="470">26</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,450)"/>
+  <use href="#blk-full_attention" transform="translate(326,450)"/>
   <use href="#ffn-dense" transform="translate(442,450)"/>
   <use href="#row-chrome" transform="translate(290,412)"/>
   <text class="lbl" x="311" y="412">27</text>
@@ -250,15 +268,15 @@
   <use href="#ffn-dense" transform="translate(442,392)"/>
   <use href="#row-chrome" transform="translate(290,354)"/>
   <text class="lbl" x="311" y="354">28</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,334)"/>
+  <use href="#blk-swa_attention" transform="translate(326,334)"/>
   <use href="#ffn-dense" transform="translate(442,334)"/>
   <use href="#row-chrome" transform="translate(290,296)"/>
   <text class="lbl" x="311" y="296">29</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,276)"/>
+  <use href="#blk-full_attention" transform="translate(326,276)"/>
   <use href="#ffn-dense" transform="translate(442,276)"/>
   <use href="#row-chrome" transform="translate(290,238)"/>
   <text class="lbl" x="311" y="238">30</text>
-  <use href="#blk-recurrent_ssm" transform="translate(326,218)"/>
+  <use href="#blk-full_attention" transform="translate(326,218)"/>
   <use href="#ffn-dense" transform="translate(442,218)"/>
   <use href="#row-chrome" transform="translate(290,180)"/>
   <text class="lbl" x="311" y="180">31</text>

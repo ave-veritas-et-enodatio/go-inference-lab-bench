@@ -102,6 +102,8 @@ func L2Norm(ctx *GraphContext, a Tensor, eps float32) Tensor {
 func Silu(ctx *GraphContext, a Tensor) Tensor     { return t(C.ggml_go_silu(ctx.c(), a.c())) }
 func Sigmoid(ctx *GraphContext, a Tensor) Tensor  { return t(C.ggml_go_sigmoid(ctx.c(), a.c())) }
 func Softplus(ctx *GraphContext, a Tensor) Tensor { return t(C.ggml_go_softplus(ctx.c(), a.c())) }
+func Gelu(ctx *GraphContext, a Tensor) Tensor     { return t(C.ggml_go_gelu(ctx.c(), a.c())) }
+func Tanh(ctx *GraphContext, a Tensor) Tensor     { return t(C.ggml_go_tanh(ctx.c(), a.c())) }
 func SoftMaxExt(ctx *GraphContext, a, mask Tensor, scale, maxBias float32) Tensor {
 	return t(C.ggml_go_soft_max_ext(ctx.c(), a.c(), mask.c(), C.float(scale), C.float(maxBias)))
 }
@@ -147,6 +149,10 @@ func SSMConv(ctx *GraphContext, sx, c Tensor) Tensor {
 func GatedDeltaNet(ctx *GraphContext, q, k, v, g, beta, state Tensor) Tensor {
 	return t(C.ggml_go_gated_delta_net(ctx.c(), q.c(), k.c(), v.c(), g.c(), beta.c(), state.c()))
 }
+
+// --- Precision ---
+
+func MulMatSetPrecF32(t Tensor) { C.ggml_go_mul_mat_set_prec_f32(t.c()) }
 
 // --- Tensor flags ---
 

@@ -35,7 +35,9 @@ enum {
 /* GGUF value types (must match gguf.h enum gguf_type) */
 enum {
     GGML_GO_GGUF_TYPE_UINT32  = 4,
+    GGML_GO_GGUF_TYPE_INT32   = 5,
     GGML_GO_GGUF_TYPE_FLOAT32 = 6,
+    GGML_GO_GGUF_TYPE_BOOL    = 7,
     GGML_GO_GGUF_TYPE_ARRAY   = 9,
 };
 enum {
@@ -84,6 +86,8 @@ ggml_go_tensor ggml_go_l2_norm(ggml_go_context ctx, ggml_go_tensor a, float eps)
 ggml_go_tensor ggml_go_silu(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_sigmoid(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_softplus(ggml_go_context ctx, ggml_go_tensor a);
+ggml_go_tensor ggml_go_gelu(ggml_go_context ctx, ggml_go_tensor a);
+ggml_go_tensor ggml_go_tanh(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_soft_max_ext(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor mask, float scale, float max_bias);
 
 /* --- Embedding / indexing --- */
@@ -104,6 +108,9 @@ ggml_go_tensor ggml_go_rope_multi(ggml_go_context ctx, ggml_go_tensor a, ggml_go
 ggml_go_tensor ggml_go_ssm_conv(ggml_go_context ctx, ggml_go_tensor sx, ggml_go_tensor c);
 ggml_go_tensor ggml_go_gated_delta_net(ggml_go_context ctx, ggml_go_tensor q, ggml_go_tensor k, ggml_go_tensor v,
     ggml_go_tensor g, ggml_go_tensor beta, ggml_go_tensor state);
+
+/* --- Precision --- */
+void ggml_go_mul_mat_set_prec_f32(ggml_go_tensor t);
 
 /* --- Tensor flags --- */
 void ggml_go_set_input(ggml_go_tensor t);
@@ -157,6 +164,7 @@ uint32_t        ggml_go_gguf_get_u32(ggml_go_gguf gf, int64_t idx);
 float           ggml_go_gguf_get_f32(ggml_go_gguf gf, int64_t idx);
 size_t          ggml_go_gguf_get_arr_n(ggml_go_gguf gf, int64_t idx);
 const void*     ggml_go_gguf_get_arr_data(ggml_go_gguf gf, int64_t idx);
+int             ggml_go_gguf_get_arr_type(ggml_go_gguf gf, int64_t idx);
 size_t          ggml_go_gguf_data_offset(ggml_go_gguf gf);
 int64_t         ggml_go_gguf_n_tensors(ggml_go_gguf gf);
 const char*     ggml_go_gguf_tensor_name(ggml_go_gguf gf, int64_t idx);

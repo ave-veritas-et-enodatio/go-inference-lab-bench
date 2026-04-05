@@ -36,16 +36,19 @@ Provides local multi-model inference server, multiple ways of testing inference,
 
 ## Current Status
 
-
 Known working models (from huggingface.co, links in README.md):
 * Llama-3.2-3B-Instruct-f16.gguf, llama-3.2-3b-instruct-q4_k_m.gguf (dense, `llama` arch)
 * Qwen3.5-4B_Abliterated.f16.gguf (dense, `qwen35` arch)
 * Qwen3.5-9B-abliterated.f16.gguf (dense, `qwen35` arch)
+* gemma-4-E4B-it-Q4_K_M.gguf (dense, `gemma4` arch)
+
+In-progress models:
+* gemma-4-E4B-it-Q4_K_M.gguf (dense, `gemma4` arch) — runs and generates coherent text but fails equivalence test (logprob diff -0.97). See `.claude/gemma4_completion.md` for investigation handoff.
 
 - **Inference** KV cached and stateless inference. Model architectures are defined via a TOML DSL (`models/arch/*.arch.toml`) that drives GGUF loading, graph construction, and cache allocation. Block builders implement the graph-level ops in Go. The only C code is a thin, model-agnostic ggml op wrapper layer (`ggml_ops.h/.c`). Zero C++ in the project.
 - HTTP server with Bearer auth, model listing, streaming SSE + non-streaming completions, logprobs
 - **TOML DSL-driven model loading**: architecture definitions in `models/arch/*.arch.toml` declare params, layer routing, weight bindings, cache specs, and FFN type
-- **Block builder registry**: `full_attention`, `full_attention_gated`, `mla_attention`, `gated_delta_net`, `swiglu`, `moe_with_shared` — pluggable graph construction
+- **Block builder registry**: `attention` (standard, with config-based param overrides, optional K/V, SharedKV, V-norm, SWA mask, RoPE freq factors), `full_attention_gated` (Qwen3.5), `mla_attention` (DeepSeek2/GLM-4), `gated_delta_net`, `swiglu`, `geglu`, `moe_with_shared` — pluggable graph construction
 - **Qwen3.5 dense**: hybrid forward pass (attention + delta-net SSM), logit-perfect vs reference
 - **Qwen3.5 MoE**: softmax router, top-k expert dispatch via `ggml_mul_mat_id`, sigmoid-gated shared expert, weight normalization
 - **Llama 3.2**: standard attention with GQA, standard RoPE, SwiGLU FFN
@@ -107,12 +110,12 @@ src/
       arch/
         arch.go                 ArchDef, TOML parser, Validate() with builder contracts
         arch_util.go            Shared tensor-op helpers (rmsNormApply, projectReshape3D, attentionScale), cache key constants (CacheK, CacheV, ...)
-        block_attention_util.go Shared attention helpers (scaledDotProductAttention, writeCacheKV, selectCachedKV, applyRoPEPair)
+        block_attention_util.go Shared attention helpers (scaledDotProductAttention, writeCacheKV, selectCachedKV, selectSharedKV, applyRoPEPair)
         params.go               Param resolver + routing expression eval
         weights.go              Weight resolver (template expansion, layer routing)
         blocks.go               BlockBuilder/FFNBuilder interfaces, registry
         block_attention.go      full_attention_gated (Qwen3.5)
-        block_attention_std.go  full_attention (Llama)
+        block_attention_std.go  attention (standard MHA+GQA+RoPE; prepareQKV pipeline, selectMask, KV/SharedKV)
         block_attention_mla.go  mla_attention (DeepSeek2/GLM-4)
         block_ssm.go            gated_delta_net (Qwen3.5 SSM)
         block_ffn.go            swiglu
@@ -122,7 +125,7 @@ src/
         weight_store.go         WeightStore: immutable weight storage
         model.go                GenericModel: GGUF loading, per-layer FFN routing
         cache.go                Cache allocation (NewCache, GenericCache)
-        graph.go                Forward pass (ForwardStateless, ForwardCached, runLayers)
+        graph.go                Forward pass (ForwardStateless, ForwardCached, runLayers, buildCausalMaskData, buildSWAMaskData)
         validate_lines.go       ResolveErrorLines (TOML key path → source line mapping)
         diagram_util.go         Shared diagram palette (diagramPalette, palPrefix, palPrefixBuilder)
         arch_diagram.go         Architecture overview SVG renderer (gen-arch-diagram)
@@ -207,6 +210,140 @@ See `models/arch/model_arch_toml_dsl_spec.md` for the full DSL spec.
 - Tied embeddings: LM head reuses `token_embd.weight`
 - Exact param values: see `models/arch/qwen35.arch.toml`
 
+## Adding a Model Architecture
+
+**Critical invariant**: zero model-specific Go code. Never write `if arch == "foo"` anywhere in Go. All architecture differences must be expressed in the TOML DSL and generic block builders.
+
+### Phase 0: Research — Understand the Architecture
+
+Before writing any code, build a complete picture of the model.
+
+1. **Read the llama.cpp reference implementation** — the authoritative source for how the architecture actually works at inference time:
+   - `../llama.cpp/src/models/<arch>.cpp` — full forward pass (layer loop, attention, FFN, any novel ops)
+   - `../llama.cpp/src/llama-arch.cpp` — GGUF tensor name mappings
+   - `../llama.cpp/src/llama-hparams.h` — parameter names, defaults, helper functions (e.g., `is_swa()`, `has_kv()`)
+   - `../llama.cpp/src/llama-model.cpp` — model init (look for arch-specific overrides like `f_attention_scale`, `rope_type`, `layer_reuse_cb`)
+   - `../llama.cpp/src/llama-graph.cpp` — shared graph construction (attention, KV cache writes, mask construction)
+
+2. **Scan the GGUF file** — verify actual metadata keys and tensor names:
+   ```python
+   # Use the python gguf library to inspect metadata and tensor inventory
+   import gguf
+   reader = gguf.GGUFReader("models/<model>.gguf")
+   for field in reader.fields.values(): print(field.name, ...)
+   for t in reader.tensors: print(t.name, t.shape)
+   ```
+   Common surprises: tensors named without `.weight` suffix, global vs per-layer tensors, bool arrays stored as GGUF bool type, scalar params stored as arrays.
+
+3. **Read existing arch TOMLs** — find the closest existing architecture and understand the DSL patterns:
+   - `models/arch/model_arch_toml_dsl_spec.md` — authoritative DSL spec
+   - `models/arch/*.arch.toml` — existing architectures as templates
+
+4. **Identify novel features** — catalog what this architecture does that no existing builder supports. Common categories:
+   - New activation functions (need ggml op bindings)
+   - New attention variants (config overrides on existing `attention` builder vs new builder)
+   - New layer routing patterns (expression-based vs array-based)
+   - New cache sharing patterns (param-driven shared KV, sliding window)
+   - New pre/post-processing (embedding scaling, logit capping, per-layer embeddings)
+
+### Phase 1: Add Missing ggml Ops (if needed)
+
+If the architecture needs ggml ops not yet exposed:
+1. `src/ggml_lib/src/ggml_ops.h` — add function declaration
+2. `src/ggml_lib/src/ggml_ops.c` — add implementation (typically a one-line cast+forward to the underlying ggml function)
+3. `src/internal/inference/ggml/ops_graph.go` — add Go wrapper function
+
+Pattern: each op is 1 line .h + 1 line .c + 1 function in Go. Keep it mechanical.
+
+### Phase 2: Add New Block Builders (if needed)
+
+Only needed if the architecture uses a computation pattern not covered by existing builders. Check the builder registry in `blocks.go` first.
+
+**Available builders** (as of this writing):
+- `attention` — standard multi-head attention with GQA, RoPE. Highly configurable via block config: per-block head dim/count overrides, optional K/V (shared KV for non-KV layers), V-norm, sliding window mask, RoPE frequency factors, NeoX rope mode, custom kq_scale. This is the most flexible builder — prefer extending it via config over writing a new one.
+- `full_attention_gated` — gated attention with joint Q+gate projection, MRoPE (Qwen3.5)
+- `mla_attention` — multi-latent attention with low-rank Q/KV (DeepSeek2/GLM-4)
+- `gated_delta_net` — delta net SSM (Qwen3.5 hybrid)
+- `swiglu` — SiLU-gated FFN
+- `geglu` — GELU-gated FFN (Gemma 4)
+- `moe_with_shared` — mixture of experts with shared expert and expert bias
+
+To add a new builder:
+1. `src/internal/inference/arch/block_<type>.go` — implement `BlockBuilder` or `FFNBuilder` (see interfaces in `blocks.go`). Must implement both `BuildStateless` and `BuildCached`.
+2. Register in `init()` in `blocks.go`
+3. Define `Contract()` — required/optional weights, required params, config schema with allowed values
+4. `models/arch/block_svg/<name>.svg` — SVG snippet for diagram rendering
+5. `models/arch/editor/editor.js` — `BUILDER_` table entries for the editor
+
+### Phase 3: Extend the TOML DSL (if needed)
+
+If the architecture needs TOML/param features not yet supported:
+- **New param types**: `params.go` handles int, float, string, int arrays, bool arrays. Add new `Get*` methods to `GGUFReader` interface if needed.
+- **New routing patterns**: `weights.go:resolveBlockName()` supports expression-based (`rule`) and array-based (`pattern`) routing. Array routing uses `IntArr[pattern][layer_idx]` — nonzero → `if_true`, zero → `if_false`.
+- **New cache sharing**: `cache.go:NewCache()` supports param-driven sharing via `n_kv_shared_layers` (layers past `nLayers - nKVShared` reuse the last KV layer's cache per block type).
+- **Architecture-level flags**: `arch.go:ArchMeta` — add fields like `EmbedScale bool`, `TiedEmbeddings bool`, `NonCausal bool`.
+
+### Phase 4: Extend graph.go (if needed)
+
+`graph.go` owns the layer loop and pre/post-processing. If the architecture has novel features at this level:
+- **Embedding scaling** — `m.Def.Architecture.EmbedScale` flag, applied after `GetRows`
+- **Logit softcapping** — checked via `m.Params.Floats["logit_softcapping"]`, applied after LM head
+- **Post-attention/post-FFN norms** — checked via `lt["attn_post_norm"]` / `lt["ffn_post_norm"]`
+- **Per-layer embeddings** — `buildPerLayerEmbedSetup` + `perLayerEmbedInject` (Gemma 4 pattern)
+- **Layer output scaling** — `lt["layer_output_scale"]` per-layer scalar
+- **SWA mask** — second mask tensor built when `sliding_window` param exists
+
+The layer loop ordering in `runLayers` is: `attn_norm → attention block → post_attn_norm → residual → ffn_norm → FFN → post_ffn_norm → residual → per-layer embed → layer_output_scale`. Verify this matches the reference implementation — ordering differences cause silent numerical divergence.
+
+### Phase 5: Write the `.arch.toml` File
+
+1. Copy the closest existing `.arch.toml` to `models/arch/<arch-name>.arch.toml`
+2. Update `[architecture]` section (name, flags)
+3. Update `[params]` — map param names to GGUF metadata keys. Use `?` suffix for optional params.
+4. Update `[layers]` — count, prefix, routing
+5. Update `[layers.common_weights]` — per-layer tensors shared across block types
+6. Update `[blocks.*]` — per-block-type weights, config overrides, cache specs
+7. Update `[ffn]` — FFN builder and weights
+
+**Common pitfalls:**
+- GGUF tensor names: check for `.weight` suffix presence/absence. Our loader tries both.
+- Global vs per-layer tensors: per-layer tensors use `blk.@{layer_idx}.` prefix. Global tensors need `[weights.global]` entries. A per-layer weight entry that references a global-only tensor will use the fallback lookup (raw suffix as global name).
+- Config overrides: block config values that are strings reference param names (`head_dim = "head_dim_swa"` → look up `params.Ints["head_dim_swa"]`). Literal numeric values are also supported (`kq_scale = 1.0`).
+- Bool arrays from GGUF: stored as `IntArr` (0/1 values) after conversion in `resolveParam`.
+- Shared KV groups: blocks that share cache must declare matching `shared_kv_group` config values.
+
+### Phase 6: Debug Numerical Equivalence
+
+This is typically the hardest phase. The model will load and run before the output is correct.
+
+**Debugging strategy** — isolate the first layer/component where values diverge from llama.cpp:
+
+1. Add temporary debug prints in `graph.go` and `block_attention_std.go` to dump first few float values of intermediate tensors at key checkpoints (after norm, after attention, after FFN, etc.)
+2. Add matching debug prints to the llama.cpp reference model (at `cb()` callsites)
+3. Run both on the same prompt, compare values checkpoint by checkpoint
+4. The first checkpoint where values diverge identifies the buggy component
+
+**Common sources of numerical divergence:**
+- Wrong RoPE mode (standard vs NeoX — check `rope_type` in llama.cpp model init)
+- Wrong attention scale (`f_attention_scale` — some models use 1.0 instead of 1/sqrt(headDim))
+- Param resolution errors — wrong GGUF key, config override pointing to wrong param name
+- Weight not loading — global tensor expected at per-layer path, fallback silently returns NilTensor
+- Layer loop ordering mismatch — post-norm before vs after residual add
+- Wrong mask — SWA layers getting full mask or vice versa
+- Shared KV not wired — non-KV layers getting nil K/V from SharedKV because group names don't match
+
+### Verification
+
+All must pass before the work is complete:
+```bash
+make test && make integration-test
+ALL_MODELS=true bash test_inference.sh "Hello"   # test against every loaded model
+bash test_llama_equiv.sh                         # logprob equivalence vs llama-server (Homebrew)
+make arch-diagrams                               # regenerate SVGs; confirm new arch renders correctly
+```
+
+The equivalence test (`test_llama_equiv.sh`) is the critical gate. It compares our stateless forward pass logprobs against llama.cpp's output on the same prompt. Threshold is ~0.01 logprob diff. Metal floating-point variance accounts for small differences; anything larger indicates a computation bug.
+
 ### Shell Scripting Style
 - Shebang: `#!/usr/bin/env bash`
 - Indent: 2 spaces
@@ -214,12 +351,3 @@ See `models/arch/model_arch_toml_dsl_spec.md` for the full DSL spec.
 - Test enclosure: `[[ ]]`, not `[ ]`
 - Equality: `==`, not `=`
 - define functions using keyword syntax `function funcname() {` not bare syntax `funcname() {`
-
-### Deferred Work (priority order)
-1. **Structured logging** — replace `fmt.Fprintf(os.Stderr, ...)` with a real logging package (slog or zerolog). Leveled output, consistent format, eliminate Makefile/test_inference.sh stderr redirects. Top tech debt priority.
-2. **Chat client streaming + acontextual mode** — add `--no-history` flag for stateless per-prompt testing with real-time SSE streaming output. Replaces need for test_inference.sh for interactive debugging of thinking models. refactor chat client to separate implementation from CLI entry point
-3. Batch inference
-4. Multiple concurrent models
-5. Linux/CUDA support (rename GPU init, add CUDA backend)
-6. **Palette unification** — export a .css color set from the SVG diagram palette (`diagramPalette()`) that the arch-editor can use for block coloring, eliminating the duplicated color constants in editor.js
-7. **Diffusion generation loop** — iterative masked denoising for non-causal models (LLaDA-MoE). Architecture definition at `models/arch/llada-moe.arch.toml.nyi`; builder support (attention QK-norm, non-causal mask, MoE FFN) already in place. Needs new generation strategy in engine.go.
