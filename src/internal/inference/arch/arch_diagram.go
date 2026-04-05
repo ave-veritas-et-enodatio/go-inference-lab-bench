@@ -500,7 +500,12 @@ func emitLayerPattern(w *bufio.Writer, def *ArchDef, nLayers, x, y, width, heigh
 	pal := diagramPalette()
 	fmt.Fprintf(w, "  <g transform=\"translate(%d, %d)\">\n", x, y)
 	fmt.Fprintf(w, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"%s\" stroke=\"%s\" stroke-width=\"1\" filter=\"url(#shadow)\"/>\n", width, height, pal["ui.box_bg"], pal["ui.box_border"])
-	fmt.Fprintf(w, "    <text x=\"%d\" y=\"19\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"600\" fill=\"%s\">Layer Pattern (example: %d layers)</text>\n", width/2, pal["ui.text_head"], nLayers)
+	title := fmt.Sprintf("Layer Pattern (example: %d layers", nLayers)
+	if def.Layers.Routing.IfTrue != def.Layers.Routing.IfFalse {
+		title += fmt.Sprintf(", full attention every %d", diagramFallbackInterval)
+	}
+	title += ")"
+	fmt.Fprintf(w, "    <text x=\"%d\" y=\"19\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"600\" fill=\"%s\">%s</text>\n", width/2, pal["ui.text_head"], title)
 
 	if nLayers > 0 {
 		// Build fallback params for diagram rendering (no GGUF available).
@@ -539,23 +544,27 @@ func emitLayerPattern(w *bufio.Writer, def *ArchDef, nLayers, x, y, width, heigh
 	w.WriteString("  </g>\n")
 }
 
+// diagramFallbackInterval is the example full-attention interval used in diagrams
+// when no GGUF is available. Used by both diagramFallbackParams and emitLayerPattern.
+const diagramFallbackInterval = 4
+
 // diagramFallbackParams builds ResolvedParams for diagram rendering without GGUF.
-// Covers both rule-based routing (Qwen3.5: full_attn_interval=4) and pattern-based
-// routing (Gemma4: swa_pattern as every-4th-layer example).
+// Covers both rule-based routing (Qwen3.5: full_attn_interval) and pattern-based
+// routing (Gemma4: swa_pattern as every-Nth-layer example).
 func diagramFallbackParams(def *ArchDef, nLayers int) *ResolvedParams {
 	rp := &ResolvedParams{
-		Ints:    map[string]int{"full_attn_interval": 4},
+		Ints:    map[string]int{"full_attn_interval": diagramFallbackInterval},
 		Floats:  map[string]float32{},
 		Strings: map[string]string{},
 		IntArr:  map[string][]int{},
 	}
 	// For pattern routing, generate a representative pattern.
-	// Use every-4th-layer as if_true, rest as if_false (matching the convention
+	// Use every-Nth-layer as if_true, rest as if_false (matching the convention
 	// in BuildModuleMapFromDef).
 	if def.Layers.Routing.Pattern != "" {
 		pattern := make([]int, nLayers)
 		for i := range pattern {
-			if i%4 == 0 {
+			if i%diagramFallbackInterval == 0 {
 				pattern[i] = 1
 			}
 		}

@@ -202,7 +202,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		return name == "ffn_norm"
 	}
 	isNormWeight := func(name string) bool {
-		return name == "attn_norm" || name == "output_norm" || name == "ssm_norm" || isFFNNorm(name)
+		return name == "attn_norm" || name == "post_attention_norm" || name == "output_norm" || name == "ssm_norm" || isFFNNorm(name)
 	}
 
 	tensorLabels := map[string]string{
@@ -211,8 +211,11 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		"attn_k":              "K",
 		"attn_v":              "V",
 		"attn_output":         "out",
-		"ffn_norm":            "norm",
+		"attn_q_norm":         "Qn",
+		"attn_k_norm":         "Kn",
+		"rope_freqs":          "rope",
 		"post_attention_norm": "norm",
+		"ffn_norm":            "norm",
 		"ffn_gate":            "G",
 		"ffn_up":              "U",
 		"ffn_down":            "D",
@@ -288,18 +291,96 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 			blockCellW, cellH, pp, pal[pp+".stroke"])
 
 		if isAttentionBlock(m) {
-			slots = append(slots, drawBaseRect(&sb, blkNormX, normY, blockNormW, normH, blockType, "attn_norm"))
+			// Classify weights into data-flow columns:
+			//   norm | Q,K,V | Qn,Kn,rope (pre-attn extras) | out | post_norm
+			// This matches the actual computation order in prepareQKV → attention → output → post-norm.
+			coreSet := map[string]bool{"attn_norm": true, "attn_q": true, "attn_k": true, "attn_v": true, "attn_output": true, "post_attention_norm": true}
+			hasPostNorm := false
+			var extras []string
+			for _, w := range m.Weights {
+				if w == "post_attention_norm" {
+					hasPostNorm = true
+				} else if !coreSet[w] {
+					extras = append(extras, w)
+				}
+			}
+			sort.Strings(extras)
+
+			// Compute column widths dynamically.
+			// Columns: input_norm(fixed 12) | QKV | extras(if any) | out | post_norm(if any)
+			const divW = 3   // divider (1px line + 2px gap)
+			inputNormW := 12 // narrower than default blockNormW to save space
+			nDividers := 2   // after input_norm, after QKV, and between out sections
+			if len(extras) > 0 {
+				nDividers++
+			}
+			if hasPostNorm {
+				nDividers++
+			}
+			avail := blockCellW - blkNormX - inputNormW - 2 - nDividers*divW
+			// Distribute remaining space proportionally.
+			qkvW := avail * 40 / 100
+			outW := avail * 20 / 100
+			postNormW := 0
+			extraW := 0
+			if hasPostNorm {
+				postNormW = avail * 12 / 100
+			}
+			if len(extras) > 0 {
+				extraW = avail - qkvW - outW - postNormW
+			} else if hasPostNorm {
+				postNormW = avail * 15 / 100
+				outW = avail - qkvW - postNormW
+			} else {
+				outW = avail - qkvW
+			}
+
+			x := blkNormX
+			slots = append(slots, drawBaseRect(&sb, x, normY, inputNormW, normH, blockType, "attn_norm"))
+			x += inputNormW + 1
 			fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
-				blkDiv1X, blkDiv1X, cellH, pal["ui.divider"])
+				x, x, cellH, pal["ui.divider"])
+			x += 2
+
+			// QKV column
 			total3H := 3*subRowH + 2*subRowGap
 			qStartY := (cellH - total3H) / 2
 			for qi, qn := range []string{"attn_q", "attn_k", "attn_v"} {
 				qy := qStartY + qi*(subRowH+subRowGap)
-				slots = append(slots, drawBaseRect(&sb, blkQKVX, qy, blockQKVW, subRowH, blockType, qn))
+				slots = append(slots, drawBaseRect(&sb, x, qy, qkvW, subRowH, blockType, qn))
 			}
+			x += qkvW + 1
 			fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
-				blkDiv2X, blkDiv2X, cellH, pal["ui.divider"])
-			slots = append(slots, drawBaseRect(&sb, blkOutX, normY, blockOutW, normH, blockType, "attn_output"))
+				x, x, cellH, pal["ui.divider"])
+			x += 2
+
+			// Pre-attention extras: Qn, Kn, rope_freqs (applied before attention)
+			if len(extras) > 0 {
+				nExtras := len(extras)
+				totalExH := nExtras*subRowH + (nExtras-1)*subRowGap
+				exStartY := (cellH - totalExH) / 2
+				for ei, en := range extras {
+					ey := exStartY + ei*(subRowH+subRowGap)
+					slots = append(slots, drawBaseRect(&sb, x, ey, extraW, subRowH, blockType, en))
+				}
+				x += extraW + 1
+				fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
+					x, x, cellH, pal["ui.divider"])
+				x += 2
+			}
+
+			// Output projection
+			slots = append(slots, drawBaseRect(&sb, x, normY, outW, normH, blockType, "attn_output"))
+			x += outW + 1
+
+			// Post-attention norm (applied after output projection, in graph.go)
+			if hasPostNorm {
+				fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
+					x, x, cellH, pal["ui.divider"])
+				x += 2
+				slots = append(slots, drawBaseRect(&sb, x, normY, postNormW, normH, blockType, "post_attention_norm"))
+				x += postNormW + 1
+			}
 
 			// Visual indicator for sliding-window attention blocks
 			if strings.Contains(blockType, "swa") {
@@ -665,8 +746,8 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 
 	const rightColOffset = 290 // horizontal offset for right column
 
-	// Vertical layout
-	spineY1 := 30
+	// Vertical layout (headroom for 20px title)
+	spineY1 := 54
 	firstRowCY := spineY1 + 10
 	colRows := leftCount // left column always has >= right column rows
 	bottomCY := firstRowCY + (colRows-1)*pitch
@@ -696,7 +777,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	fmt.Fprintf(&b, `<svg viewBox="0 0 %d %d" xmlns="http://www.w3.org/2000/svg">
 <style>
   text { font-family: 'Courier New', monospace; }
-  .title { font-size: 11px; font-weight: bold; fill: %s; }
+  .title { font-size: 20px; font-weight: bold; fill: %s; font-family: system-ui, -apple-system, sans-serif; }
   .hdr   { font-size: 9px; font-weight: bold; fill: %s; text-anchor: middle; dominant-baseline: middle; }
   .lbl   { font-size: 9px; fill: %s; text-anchor: end; dominant-baseline: middle; }
   .tlbl  { font-size: 7px; fill: %s; text-anchor: middle; dominant-baseline: middle; }
@@ -707,7 +788,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 </style>
 <defs>
 `, canvasW2, canvasH,
-		pal["ui.text_title"],
+		pal["ui.text_head"],
 		pal["ui.text_head"],
 		pal["ui.text_label"],
 		pal["ui.text_tensor"],
@@ -766,7 +847,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 
 	// Title (centered over the U)
 	titleCX := (rightColOffset + returnRailX) / 2
-	fmt.Fprintf(&b, "  <text class=\"title\" x=\"%d\" y=\"14\" text-anchor=\"middle\">%s</text>\n", titleCX, title)
+	fmt.Fprintf(&b, "  <text class=\"title\" x=\"%d\" y=\"32\" text-anchor=\"middle\">%s</text>\n", titleCX, title)
 
 	// U-shaped spine
 	rightSpineX := rightColOffset + spineX
