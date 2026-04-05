@@ -10,6 +10,38 @@ import (
 	ggml "inference-lab-bench/internal/inference/ggml"
 )
 
+// buildCausalMaskData generates the float32 mask data for causal attention.
+// Positions where key > query get -Inf. Returns all zeros if nonCausal.
+func buildCausalMaskData(nQuery, nKV int64, startPos int, nonCausal bool) []float32 {
+	data := make([]float32, nQuery*nKV)
+	if !nonCausal {
+		for qi := int64(0); qi < nQuery; qi++ {
+			absQI := int64(startPos) + qi
+			for kj := int64(0); kj < nKV; kj++ {
+				if kj > absQI {
+					data[qi*nKV+kj] = float32(math.Inf(-1))
+				}
+			}
+		}
+	}
+	return data
+}
+
+// buildSWAMaskData generates the float32 mask data for sliding window attention.
+// Positions where key > query or key < query - window get -Inf.
+func buildSWAMaskData(nQuery, nKV int64, startPos, window int) []float32 {
+	data := make([]float32, nQuery*nKV)
+	for qi := int64(0); qi < nQuery; qi++ {
+		absQI := int64(startPos) + qi
+		for kj := int64(0); kj < nKV; kj++ {
+			if kj > absQI || kj < absQI-int64(window) {
+				data[qi*nKV+kj] = float32(math.Inf(-1))
+			}
+		}
+	}
+	return data
+}
+
 // nodesPerLayer estimates ggml graph nodes per transformer layer. The +1 in
 // graphCtxSize accounts for global ops (embedding lookup, final norm, LM head).
 const nodesPerLayer = 128
@@ -248,28 +280,11 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32) ([]float32, error) {
 	}
 	ggml.TensorSet(inpPos, unsafe.Pointer(&positions[0]), 0, inpPos.Nbytes())
 
-	maskData := make([]float32, nTokens*nTokens)
-	if !m.Def.Architecture.NonCausal {
-		for qi := int64(0); qi < nTokens; qi++ {
-			for kj := int64(0); kj < nTokens; kj++ {
-				if kj > qi {
-					maskData[qi*nTokens+kj] = float32(math.Inf(-1))
-				}
-			}
-		}
-	}
+	maskData := buildCausalMaskData(nTokens, nTokens, 0, m.Def.Architecture.NonCausal)
 	ggml.TensorSet(inpMask, unsafe.Pointer(&maskData[0]), 0, inpMask.Nbytes())
 
-	// SWA mask data
 	if hasSWA && swaWindow > 0 {
-		swaMaskData := make([]float32, nTokens*nTokens)
-		for qi := int64(0); qi < nTokens; qi++ {
-			for kj := int64(0); kj < nTokens; kj++ {
-				if kj > qi || kj < qi-int64(swaWindow) {
-					swaMaskData[qi*nTokens+kj] = float32(math.Inf(-1))
-				}
-			}
-		}
+		swaMaskData := buildSWAMaskData(nTokens, nTokens, 0, swaWindow)
 		ggml.TensorSet(inpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, inpMaskSWA.Nbytes())
 	}
 
@@ -389,30 +404,11 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32) ([]floa
 	}
 	ggml.TensorSet(inpPos, unsafe.Pointer(&positions[0]), 0, inpPos.Nbytes())
 
-	maskData := make([]float32, nKV*nNew)
-	if !m.Def.Architecture.NonCausal {
-		for qi := int64(0); qi < nNew; qi++ {
-			absQI := int64(seqPos) + qi
-			for kj := int64(0); kj < nKV; kj++ {
-				if kj > absQI {
-					maskData[qi*nKV+kj] = float32(math.Inf(-1))
-				}
-			}
-		}
-	}
+	maskData := buildCausalMaskData(nNew, nKV, seqPos, m.Def.Architecture.NonCausal)
 	ggml.TensorSet(inpMask, unsafe.Pointer(&maskData[0]), 0, inpMask.Nbytes())
 
-	// SWA mask data
 	if hasSWA && swaWindow > 0 {
-		swaMaskData := make([]float32, nKV*nNew)
-		for qi := int64(0); qi < nNew; qi++ {
-			absQI := int64(seqPos) + qi
-			for kj := int64(0); kj < nKV; kj++ {
-				if kj > absQI || kj < absQI-int64(swaWindow) {
-					swaMaskData[qi*nKV+kj] = float32(math.Inf(-1))
-				}
-			}
-		}
+		swaMaskData := buildSWAMaskData(nNew, nKV, seqPos, swaWindow)
 		ggml.TensorSet(inpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, inpMaskSWA.Nbytes())
 	}
 

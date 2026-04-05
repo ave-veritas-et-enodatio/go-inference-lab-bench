@@ -110,12 +110,12 @@ src/
       arch/
         arch.go                 ArchDef, TOML parser, Validate() with builder contracts
         arch_util.go            Shared tensor-op helpers (rmsNormApply, projectReshape3D, attentionScale), cache key constants (CacheK, CacheV, ...)
-        block_attention_util.go Shared attention helpers (scaledDotProductAttention, writeCacheKV, selectCachedKV, applyRoPEPair)
+        block_attention_util.go Shared attention helpers (scaledDotProductAttention, writeCacheKV, selectCachedKV, selectSharedKV, applyRoPEPair)
         params.go               Param resolver + routing expression eval
         weights.go              Weight resolver (template expansion, layer routing)
         blocks.go               BlockBuilder/FFNBuilder interfaces, registry
         block_attention.go      full_attention_gated (Qwen3.5)
-        block_attention_std.go  full_attention (Llama)
+        block_attention_std.go  attention (standard MHA+GQA+RoPE; prepareQKV pipeline, selectMask, KV/SharedKV)
         block_attention_mla.go  mla_attention (DeepSeek2/GLM-4)
         block_ssm.go            gated_delta_net (Qwen3.5 SSM)
         block_ffn.go            swiglu
@@ -125,7 +125,7 @@ src/
         weight_store.go         WeightStore: immutable weight storage
         model.go                GenericModel: GGUF loading, per-layer FFN routing
         cache.go                Cache allocation (NewCache, GenericCache)
-        graph.go                Forward pass (ForwardStateless, ForwardCached, runLayers)
+        graph.go                Forward pass (ForwardStateless, ForwardCached, runLayers, buildCausalMaskData, buildSWAMaskData)
         validate_lines.go       ResolveErrorLines (TOML key path → source line mapping)
         diagram_util.go         Shared diagram palette (diagramPalette, palPrefix, palPrefixBuilder)
         arch_diagram.go         Architecture overview SVG renderer (gen-arch-diagram)

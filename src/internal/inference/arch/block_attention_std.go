@@ -47,12 +47,20 @@ func attnParams(params *ResolvedParams, config map[string]any) (headDim, nHeads,
 	return
 }
 
-func (b *AttentionBuilder) BuildStateless(
+// qkvResult holds the prepared Q, K, V tensors from the KV pipeline.
+// HasKV indicates whether this layer projected its own K/V (vs reading from SharedKV).
+type qkvResult struct {
+	Q, K, V ggml.Tensor
+	HasKV   bool
+}
+
+// prepareQKV runs the full KV preparation pipeline: Q/K/V projection, optional QK-norm,
+// optional V-norm, RoPE (with optional frequency factors), and SharedKV read/write.
+func (b *AttentionBuilder) prepareQKV(
 	ctx *ggml.GraphContext, cur ggml.Tensor, weights map[string]ggml.Tensor,
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
-	zeroFill *[]ggml.Tensor) ggml.Tensor {
-
-	headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase, kqScale := attnParams(params, config)
+	headDim, nHeads, nKVHeads int64, nRot, ropeMode int, freqBase float32,
+) qkvResult {
 	nTokens := inputs.NTokens
 	hasKV := !weights["attn_k"].IsNil()
 
@@ -64,7 +72,7 @@ func (b *AttentionBuilder) BuildStateless(
 		if !weights["attn_v"].IsNil() {
 			v = projectReshape3D(ctx, weights["attn_v"], cur, headDim, nKVHeads, nTokens)
 		} else {
-			v = k // use K as V if attn_v absent
+			v = k
 		}
 	}
 
@@ -79,8 +87,7 @@ func (b *AttentionBuilder) BuildStateless(
 
 	// Optional V-norm (raw RMS norm, no learned weights)
 	if hasKV && configStr(config, "v_norm") == "rms" {
-		rmsEps := params.Floats["rms_eps"]
-		v = ggml.RmsNorm(ctx, v, rmsEps)
+		v = ggml.RmsNorm(ctx, v, params.Floats["rms_eps"])
 	}
 
 	// RoPE with optional frequency factors
@@ -110,20 +117,33 @@ func (b *AttentionBuilder) BuildStateless(
 		v = inputs.SharedKV.V[group]
 	}
 
-	// Select mask (SWA or standard)
-	mask := inputs.InpMask
+	return qkvResult{Q: q, K: k, V: v, HasKV: hasKV}
+}
+
+// selectMask returns the SWA mask if sliding_window is configured, else the standard mask.
+func selectMask(config map[string]any, inputs *GraphInputs) ggml.Tensor {
 	if configStr(config, "sliding_window") == "true" && !inputs.InpMaskSWA.IsNil() {
-		mask = inputs.InpMaskSWA
+		return inputs.InpMaskSWA
 	}
+	return inputs.InpMask
+}
 
-	// Permute for attention
-	q = ggml.Permute(ctx, q, 0, 2, 1, 3)
-	k = ggml.Permute(ctx, k, 0, 2, 1, 3)
-	v = ggml.Permute(ctx, v, 0, 2, 1, 3)
+func (b *AttentionBuilder) BuildStateless(
+	ctx *ggml.GraphContext, cur ggml.Tensor, weights map[string]ggml.Tensor,
+	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
+	zeroFill *[]ggml.Tensor) ggml.Tensor {
 
-	cur = scaledDotProductAttention(ctx, q, k, v, mask, kqScale, nHeads, nTokens)
-	cur = ggml.MulMat(ctx, weights["attn_output"], cur)
-	return cur
+	headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase, kqScale := attnParams(params, config)
+	kv := b.prepareQKV(ctx, cur, weights, params, config, inputs,
+		headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase)
+	mask := selectMask(config, inputs)
+
+	q := ggml.Permute(ctx, kv.Q, 0, 2, 1, 3)
+	k := ggml.Permute(ctx, kv.K, 0, 2, 1, 3)
+	v := ggml.Permute(ctx, kv.V, 0, 2, 1, 3)
+
+	cur = scaledDotProductAttention(ctx, q, k, v, mask, kqScale, nHeads, inputs.NTokens)
+	return ggml.MulMat(ctx, weights["attn_output"], cur)
 }
 
 func (b *AttentionBuilder) BuildCached(
@@ -132,80 +152,22 @@ func (b *AttentionBuilder) BuildCached(
 	cache *LayerCache, writebacks *[]CacheWriteback) ggml.Tensor {
 
 	headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase, kqScale := attnParams(params, config)
-	nNew := inputs.NTokens
-	nKV := inputs.NKV
-	seqPos := inputs.SeqPos
-	hasKV := !weights["attn_k"].IsNil()
+	kv := b.prepareQKV(ctx, cur, weights, params, config, inputs,
+		headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase)
+	mask := selectMask(config, inputs)
 
-	q := projectReshape3D(ctx, weights["attn_q"], cur, headDim, nHeads, nNew)
-
-	var kNew, vNew ggml.Tensor
-	if hasKV {
-		kNew = projectReshape3D(ctx, weights["attn_k"], cur, headDim, nKVHeads, nNew)
-		if !weights["attn_v"].IsNil() {
-			vNew = projectReshape3D(ctx, weights["attn_v"], cur, headDim, nKVHeads, nNew)
-		} else {
-			vNew = kNew
-		}
-	}
-
-	// Optional QK-norm
-	if !weights["attn_q_norm"].IsNil() {
-		rmsEps := params.Floats["rms_eps"]
-		q = rmsNormApply(ctx, q, weights["attn_q_norm"], rmsEps)
-		if hasKV {
-			kNew = rmsNormApply(ctx, kNew, weights["attn_k_norm"], rmsEps)
-		}
-	}
-
-	// Optional V-norm (raw RMS norm, no learned weights)
-	if hasKV && configStr(config, "v_norm") == "rms" {
-		rmsEps := params.Floats["rms_eps"]
-		vNew = ggml.RmsNorm(ctx, vNew, rmsEps)
-	}
-
-	// RoPE with optional frequency factors
-	freqFactors := weights["rope_freqs"]
-	if freqFactors.IsNil() {
-		freqFactors = ggml.NilTensor()
-	}
-	q = ggml.RopeExt(ctx, q, inputs.InpPos, freqFactors, nRot, ropeMode, 0,
-		freqBase, 1.0, 0.0, 1.0, 32.0, 1.0)
-	if hasKV {
-		kNew = ggml.RopeExt(ctx, kNew, inputs.InpPos, freqFactors, nRot, ropeMode, 0,
-			freqBase, 1.0, 0.0, 1.0, 32.0, 1.0)
-	}
-
-	// Update SharedKV with in-graph K/V for downstream non-KV layers
-	if hasKV && inputs.SharedKV != nil {
-		if group := configStr(config, "shared_kv_group"); group != "" {
-			inputs.SharedKV.K[group] = kNew
-			inputs.SharedKV.V[group] = vNew
-		}
-	}
-
-	// Select mask (SWA or standard)
-	mask := inputs.InpMask
-	if configStr(config, "sliding_window") == "true" && !inputs.InpMaskSWA.IsNil() {
-		mask = inputs.InpMaskSWA
-	}
-
-	if hasKV {
-		// KV layer: write to cache and use cache for attention
-		writeCacheKV(ctx, kNew, vNew, cache, seqPos, nKVHeads, writebacks)
-		kAttn, vAttn := selectCachedKV(ctx, cache, seqPos, kNew, vNew, headDim, nKV, nKVHeads)
-		q = ggml.Permute(ctx, q, 0, 2, 1, 3)
-		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, nNew)
+	q := ggml.Permute(ctx, kv.Q, 0, 2, 1, 3)
+	if kv.HasKV {
+		writeCacheKV(ctx, kv.K, kv.V, cache, inputs.SeqPos, nKVHeads, writebacks)
+		kAttn, vAttn := selectCachedKV(ctx, cache, inputs.SeqPos, kv.K, kv.V, headDim, inputs.NKV, nKVHeads)
+		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens)
 	} else {
-		// Non-KV layer: get K/V from shared state + cache
 		group := configStr(config, "shared_kv_group")
-		kAttn, vAttn := selectSharedKV(ctx, cache, seqPos, inputs.SharedKV, group, headDim, nKV, nKVHeads)
-		q = ggml.Permute(ctx, q, 0, 2, 1, 3)
-		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, nNew)
+		kAttn, vAttn := selectSharedKV(ctx, cache, inputs.SeqPos, inputs.SharedKV, group, headDim, inputs.NKV, nKVHeads)
+		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens)
 	}
 
-	cur = ggml.MulMat(ctx, weights["attn_output"], cur)
-	return cur
+	return ggml.MulMat(ctx, weights["attn_output"], cur)
 }
 
 // configStr returns a string config value or "".
