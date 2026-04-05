@@ -10,7 +10,7 @@
       <stop offset="0%" stop-color="#e3f2fd"/><stop offset="100%" stop-color="#bbdefb"/>
     </linearGradient>
     <linearGradient id="swaGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#e0f7fa"/><stop offset="100%" stop-color="#b2dfdb"/>
+      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
     </linearGradient>
     <linearGradient id="ffnGrad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#fff3e0"/><stop offset="100%" stop-color="#ffe0b2"/>

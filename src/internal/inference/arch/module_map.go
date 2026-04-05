@@ -126,10 +126,10 @@ func BuildModuleMap(weights *ResolvedWeights) *ModuleMap {
 		ffn := Module{ID: nextID, Name: fmt.Sprintf("ffn_%d", L), WeightContext: ctx}
 		nextID++
 
-		// Route common weights by purpose: attn_norm is the block's pre-norm;
-		// ffn_norm (or any other non-attn_norm common weight) is the FFN's pre-norm.
+		// Route common weights by purpose: attention-related norms go to the
+		// block module; everything else goes to the FFN module.
 		for logicalName, ggufName := range lw.Common {
-			if logicalName == "attn_norm" {
+			if logicalName == "attn_norm" || logicalName == "attn_post_norm" {
 				addCompact(&block, ctx, ggufName)
 			} else {
 				addCompact(&ffn, ctx, ggufName)
