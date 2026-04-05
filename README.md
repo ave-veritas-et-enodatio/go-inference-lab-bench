@@ -220,7 +220,6 @@ Adding architectures is doable in about an hour with AI assistance, if you need 
   * Used to handle rendering prompt templates from GGUF files
 * [BurntSushi/toml](github.com/BurntSushi/toml) - [Andrew Gallant](https://github.com/BurntSushi)'s TOML parser
   * Model architecture DSL and config files
-* [regexp2](github.com/dlclark/regexp2) - [Doug Clark](https://github.com/dlclark)'s regular expression engine 
 * [go-chi](github.com/go-chi/chi) - HTTP services router
   * Used by server implementation of OpenAI API
 * [go-sqlite3](https://github.com/mattn/go-sqlite3) - [Matt N.](https://github.com/mattn)'s  sqlite3 driver

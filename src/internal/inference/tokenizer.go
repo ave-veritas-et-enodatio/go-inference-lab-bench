@@ -6,10 +6,10 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/dlclark/regexp2"
 	ggufparser "github.com/gpustack/gguf-parser-go"
 	"github.com/nikolalohinski/gonja/v2"
 	"github.com/nikolalohinski/gonja/v2/exec"
@@ -26,25 +26,17 @@ type Tokenizer struct {
 	tokens          []string          // token ID → string
 	tokenIDs        map[string]int32  // string → token ID
 	mergeRank       map[[2]string]int // merge rule → priority rank
+	specialTokens   []string       // control/user-defined tokens, sorted longest-first
 	bos             int32
 	eos             int32
 	chatTpl         *exec.Template
-	preTokenPattern *regexp2.Regexp
+	preTokenPattern *regexp.Regexp
 	useByteLevel    bool // true for GPT-2 style, false for SentencePiece style
 }
 
-// Qwen3 pre-tokenisation regex (tiktoken / cl100k_base pattern).
-// Uses dlclark/regexp2 for lookahead and inline flag support.
-const preTokenRegex = `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`
-
-// specialTokenRe matches special token patterns emitted by chat templates:
-//   - <|...|>   — Qwen / Llama style (symmetric)
-//   - <|word>   — Gemma 4 style (pipe only at start)
-//   - <word|>   — Gemma 4 style (pipe only at end)
-//   - <word>    — GLM4 <sop> style
-//   - </word>   — closing tags (e.g. </think>)
-//   - [WORD]    — GLM4 [gMASK] style
-var specialTokenRe = regexp.MustCompile(`<\|[^|>\n]*\|>|<\|[a-zA-Z][a-zA-Z0-9_]*>|<[a-zA-Z][a-zA-Z0-9_]*\|>|</[a-z][a-zA-Z0-9_]*>|<[a-z][a-zA-Z0-9_]*>|\[[a-zA-Z][a-zA-Z0-9_]*\]`)
+// Pre-tokenisation regex (GPT-2 / tiktoken pattern).
+// \s+(?!\S)|\s+ simplifies to \s+ since the union is equivalent.
+var preTokenPattern = regexp.MustCompile(`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+`)
 
 // NewTokenizerFromGGUF loads vocab, merge rules, BOS/EOS IDs, and the chat
 // template Jinja2 string from a parsed GGUF file.
@@ -105,12 +97,6 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 		chatTpl = tpl
 	}
 
-	// Compile pre-token regex
-	re, err := regexp2.Compile(preTokenRegex, regexp2.Unicode)
-	if err != nil {
-		return nil, fmt.Errorf("pre-token regex compile: %w", err)
-	}
-
 	// Detect tokenizer type: "gpt2" uses byte-level encoding, everything else is SentencePiece.
 	useByteLevel := true
 	if modelKV, ok := kvs.Get("tokenizer.ggml.model"); ok {
@@ -119,14 +105,31 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 		}
 	}
 
+	// Build special tokens list from token_type metadata.
+	// Type 3 = CONTROL, Type 4 = USER_DEFINED — these are the special tokens.
+	var specialTokens []string
+	if typesKV, ok := kvs.Get("tokenizer.ggml.token_type"); ok {
+		types := typesKV.ValueArray().ValuesInt32()
+		for i, tt := range types {
+			if (tt == 3 || tt == 4) && i < len(tokens) && len(tokens[i]) > 0 {
+				specialTokens = append(specialTokens, tokens[i])
+			}
+		}
+		// Sort longest-first for greedy matching.
+		sort.Slice(specialTokens, func(i, j int) bool {
+			return len(specialTokens[i]) > len(specialTokens[j])
+		})
+	}
+
 	return &Tokenizer{
 		tokens:          tokens,
 		tokenIDs:        tokenIDs,
 		mergeRank:       mergeRank,
+		specialTokens:   specialTokens,
 		bos:             bos,
 		eos:             eos,
 		chatTpl:         chatTpl,
-		preTokenPattern: re,
+		preTokenPattern: preTokenPattern,
 		useByteLevel:    useByteLevel,
 	}, nil
 }
@@ -146,12 +149,7 @@ func (t *Tokenizer) Encode(text string, addSpecial bool) []int32 {
 	}
 
 	// 2. Pre-tokenise with regex
-	var pieces []string
-	m, _ := t.preTokenPattern.FindStringMatch(encText)
-	for m != nil {
-		pieces = append(pieces, m.String())
-		m, _ = t.preTokenPattern.FindNextMatch(m)
-	}
+	pieces := t.preTokenPattern.FindAllString(encText, -1)
 
 	// 3. BPE-encode each piece
 	var ids []int32
@@ -255,25 +253,40 @@ func (t *Tokenizer) TokenString(id int32) string {
 }
 
 // encodeWithSpecials encodes a string that may contain special token literals
-// (e.g. <|im_start|>, [gMASK], <sop>) mixed with regular text.
-// Special token patterns are looked up directly in the vocab; the rest is BPE-encoded.
+// (e.g. <|im_start|>, <|turn>, <bos>) mixed with regular text.
+// Special tokens are identified from the GGUF token_type metadata (CONTROL/USER_DEFINED)
+// and matched by exact string lookup — no regex patterns to maintain per model.
 func (t *Tokenizer) encodeWithSpecials(s string) []int32 {
 	var ids []int32
 	pos := 0
-	for _, loc := range specialTokenRe.FindAllStringIndex(s, -1) {
-		if loc[0] > pos {
-			ids = append(ids, t.Encode(s[pos:loc[0]], false)...)
+	for pos < len(s) {
+		// Try to match a special token at this position (longest first).
+		matched := false
+		for _, st := range t.specialTokens {
+			if strings.HasPrefix(s[pos:], st) {
+				// Encode any text before this special token.
+				if pos > 0 {
+					// Already handled by the caller structure below
+				}
+				ids = append(ids, t.tokenIDs[st])
+				pos += len(st)
+				matched = true
+				break
+			}
 		}
-		special := s[loc[0]:loc[1]]
-		if id, ok := t.tokenIDs[special]; ok {
-			ids = append(ids, id)
-		} else {
-			ids = append(ids, t.Encode(special, false)...)
+		if matched {
+			continue
 		}
-		pos = loc[1]
-	}
-	if pos < len(s) {
-		ids = append(ids, t.Encode(s[pos:], false)...)
+		// Find the next special token occurrence to delimit the regular text.
+		nextPos := len(s)
+		for _, st := range t.specialTokens {
+			if idx := strings.Index(s[pos:], st); idx >= 0 && pos+idx < nextPos {
+				nextPos = pos + idx
+			}
+		}
+		// Encode the regular text up to the next special token (or end).
+		ids = append(ids, t.Encode(s[pos:nextPos], false)...)
+		pos = nextPos
 	}
 	return ids
 }
