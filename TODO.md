@@ -17,7 +17,7 @@
     1. Is 'geglu' even the right name? shouldn't that be geglu_attention? 
   4. Routing rule for the two attention block types is not properly shown
 2. Layers SVG diagram
-  1. The attention heads are all the same type - should be alternating.
+  1. The attention heads are all the same type - should be interleaved at appropriate intervals. If the interval comes from a GGUF use a reasonable example value, labeled as such, in the same way the Qwen35 diagrams do.
 
 ## Future
 

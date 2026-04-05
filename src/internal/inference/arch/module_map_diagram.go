@@ -287,7 +287,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		fmt.Fprintf(&sb, "  <rect x=\"0\" y=\"0\" width=\"%d\" height=\"%d\" fill=\"url(#zm_%s)\" stroke=\"%s\" stroke-width=\"0.8\" rx=\"2\"/>\n",
 			blockCellW, cellH, pp, pal[pp+".stroke"])
 
-		if palPrefix(blockType) == "full_attention" {
+		if isAttentionBlock(m) {
 			slots = append(slots, drawBaseRect(&sb, blkNormX, normY, blockNormW, normH, blockType, "attn_norm"))
 			fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
 				blkDiv1X, blkDiv1X, cellH, pal["ui.divider"])
@@ -300,6 +300,12 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 			fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
 				blkDiv2X, blkDiv2X, cellH, pal["ui.divider"])
 			slots = append(slots, drawBaseRect(&sb, blkOutX, normY, blockOutW, normH, blockType, "attn_output"))
+
+			// Visual indicator for sliding-window attention blocks
+			if strings.Contains(blockType, "swa") {
+				fmt.Fprintf(&sb, "  <text x=\"%d\" y=\"%d\" font-size=\"6\" font-weight=\"700\" fill=\"%s\" text-anchor=\"end\">SW</text>\n",
+					blockCellW-2, 8, pal[pp+".stroke"])
+			}
 		} else {
 			// Generic: attn_norm as left norm slot, remaining weights as equal sub-rects.
 			var normWt string
@@ -512,7 +518,8 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	// --- Pre-compute box dimensions needed by symbol builders ---
 	legBoxX := legendX - 4
 	legBoxW := canvasW - legBoxX - 4
-	legBoxH := 144
+	legItemCount := len(blockTypes) + 3 // block types + FFN + global + norm
+	legBoxH := 10 + legItemCount*16 + 10 // top pad + items + bottom pad
 	hasParams := totalParams > 0
 	statsBoxH := 75
 	if hasParams {
@@ -709,7 +716,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		pal["ui.text_head"])
 
 	// Gradients
-	for _, name := range []string{"full_attention", "recurrent", "ffn", "global"} {
+	for _, name := range []string{"full_attention", "swa", "recurrent", "ffn", "global"} {
 		fmt.Fprintf(&b, "  <linearGradient id=\"zm_%s\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n", name)
 		fmt.Fprintf(&b, "    <stop offset=\"0%%%%\" stop-color=\"%s\"/><stop offset=\"100%%%%\" stop-color=\"%s\"/>\n",
 			pal[name+".grad_top"], pal[name+".grad_bottom"])
@@ -823,4 +830,15 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	fmt.Fprintf(&b, "</svg>\n")
 
 	return os.WriteFile(svgPath, []byte(b.String()), 0644)
+}
+
+// isAttentionBlock returns true if the module has the standard attention weight pattern
+// (attn_q, attn_k, attn_v, attn_output). Used to determine rendering layout in the
+// module map — attention blocks get the structured Q/K/V layout regardless of palette prefix.
+func isAttentionBlock(m *Module) bool {
+	has := map[string]bool{}
+	for _, w := range m.Weights {
+		has[w] = true
+	}
+	return has["attn_q"] && has["attn_k"] && has["attn_v"] && has["attn_output"]
 }
