@@ -27,6 +27,12 @@ func diagramPalette() map[string]string {
 		"full_attention.grad_top":    "#e3f2fd",
 		"full_attention.grad_bottom": "#bbdefb",
 
+		// swa (sliding-window attention) blocks — lighter teal to distinguish from full attention
+		"swa.stroke":      "#0097A7",
+		"swa.fill":        "#b2ebf2",
+		"swa.grad_top":    "#e0f7fa",
+		"swa.grad_bottom": "#b2dfdb",
+
 		// recurrent blocks (recurrent_ssm, recurrent_delta_net, etc.)
 		"recurrent.stroke":      "#66BB6A",
 		"recurrent.fill":        "#c8eac8",
@@ -89,7 +95,7 @@ func palPrefixBuilder(builderName string) string {
 	switch {
 	case strings.Contains(builderName, "attention"):
 		return "full_attention"
-	case strings.Contains(builderName, "swiglu") || strings.Contains(builderName, "moe"):
+	case strings.Contains(builderName, "swiglu") || strings.Contains(builderName, "moe") || strings.Contains(builderName, "geglu"):
 		return "ffn"
 	default:
 		return "recurrent"
@@ -97,10 +103,12 @@ func palPrefixBuilder(builderName string) string {
 }
 
 // palPrefix maps a GGUF block type or module type to its palette key prefix.
-// full_attention → "full_attention"; ffn/ffn_moe → "ffn"; global → "global";
+// swa_* → "swa"; *attention* → "full_attention"; ffn/ffn_moe → "ffn"; global → "global";
 // everything else (recurrent_ssm, recurrent_delta_net, …) → "recurrent".
 func palPrefix(blockType string) string {
 	switch {
+	case strings.HasPrefix(blockType, "swa"):
+		return "swa"
 	case strings.Contains(blockType, "attention"):
 		return "full_attention"
 	case blockType == "ffn" || blockType == "ffn_moe":
