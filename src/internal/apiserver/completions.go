@@ -3,11 +3,11 @@ package apiserver
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	log "inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/inference"
 	"inference-lab-bench/internal/util"
 )
@@ -76,7 +76,7 @@ func (f *thinkFilter) flush() string {
 
 func (f *thinkFilter) logThinking(model string) {
 	if s := f.think.String(); s != "" {
-		log.Printf("[think] model=%s %s", model, s)
+		log.Info("[think] model=%s %s", model, s)
 	}
 }
 
@@ -226,7 +226,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			overrides = append(overrides, fmt.Sprintf("elide_thinking=%v (server: %v)", *req.ElideThinking, s.cfg.Inference.ShouldElideThink()))
 		}
 		if len(overrides) > 0 {
-			log.Printf("[req] param overrides: %s", strings.Join(overrides, ", "))
+			log.Info("[req] param overrides: %s", strings.Join(overrides, ", "))
 		}
 	}
 
@@ -275,7 +275,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return true
 		})
 		if metrics != nil {
-			log.Printf("[metrics] prompt=%d completion=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f",
+			log.Info("[metrics] prompt=%d completion=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f",
 				metrics.PromptTokens, metrics.CompletionTokens,
 				float64(metrics.PrefillDuration.Microseconds())/1000,
 				float64(metrics.DecodeDuration.Microseconds())/1000,
@@ -334,7 +334,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if metrics != nil {
-			log.Printf("[metrics] prompt=%d completion=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f",
+			log.Info("[metrics] prompt=%d completion=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f",
 				metrics.PromptTokens, metrics.CompletionTokens,
 				float64(metrics.PrefillDuration.Microseconds())/1000,
 				float64(metrics.DecodeDuration.Microseconds())/1000,

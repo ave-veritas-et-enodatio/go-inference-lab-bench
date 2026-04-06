@@ -15,7 +15,7 @@ func (b *SwiGLUBuilder) Contract() BuilderContract {
 }
 
 func (b *SwiGLUBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
-	weights map[string]ggml.Tensor, params *ResolvedParams) ggml.Tensor {
+	weights map[string]ggml.Tensor, params *ResolvedParams, config map[string]any) ggml.Tensor {
 
 	gateFfn := ggml.Silu(ctx, ggml.MulMat(ctx, weights["gate"], input))
 	up := ggml.MulMat(ctx, weights["up"], input)

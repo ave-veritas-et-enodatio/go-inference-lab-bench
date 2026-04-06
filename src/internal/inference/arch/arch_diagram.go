@@ -15,7 +15,8 @@ import (
 
 // ArchDiagramOptions controls SVG generation.
 type ArchDiagramOptions struct {
-	LayerCount int // if > 0, render layer pattern strip with routing evaluation
+	LayerCount int  // if > 0, render layer pattern strip with routing evaluation
+	UseFFNAlt  bool // render using FFNAlt builder instead of FFN
 }
 
 // blockSVG holds a loaded block fragment.
@@ -34,7 +35,7 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 	// then fall back to <builderName>.svg. Map is keyed by display key (block name
 	// for blocks, builder name for FFN).
 	blocks := make(map[string]*blockSVG)
-	displayKeys := collectDisplayKeys(def)
+	displayKeys := collectDisplayKeys(def, opts.UseFFNAlt)
 	for _, dk := range displayKeys {
 		svg, err := loadBlockSVGWithFallback(blockSVGDir, dk.displayKey, dk.builderName)
 		if err != nil {
@@ -67,7 +68,10 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 	y += globalBoxH + arrowLen // embed
 	// For each unique block path in routing
 	routingPaths := collectRoutingPaths(def)
-	ffnKey := def.FFN.Builder // FFN display key is always the builder name
+	ffnKey := def.FFN.Builder
+	if opts.UseFFNAlt && def.FFNAlt != nil {
+		ffnKey = def.FFNAlt.Builder
+	}
 	for i, rp := range routingPaths {
 		if i > 0 {
 			y += groupGap
@@ -110,10 +114,14 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 
 	// Title
 	cx := svgWidth / 2
-	fmt.Fprintf(bw, "  <text x=\"%d\" y=\"32\" text-anchor=\"middle\" font-size=\"20\" font-weight=\"bold\" fill=\"%s\">%s Architecture</text>\n", cx, pal["ui.text_head"], strings.Title(def.Architecture.Name))
+	title := strings.Title(def.Architecture.Name) + " Architecture"
+	if opts.UseFFNAlt && def.FFNAlt != nil {
+		title += " (" + def.FFNAlt.Builder + " variant)"
+	}
+	fmt.Fprintf(bw, "  <text x=\"%d\" y=\"32\" text-anchor=\"middle\" font-size=\"20\" font-weight=\"bold\" fill=\"%s\">%s</text>\n", cx, pal["ui.text_head"], title)
 
 	// Legend (centered)
-	emitLegend(bw, def, cx)
+	emitLegend(bw, def, cx, ffnKey)
 
 	// (syntax hint is now inside the legend box)
 
@@ -296,7 +304,7 @@ type displayKeyEntry struct {
 	builderName string
 }
 
-func collectDisplayKeys(def *ArchDef) []displayKeyEntry {
+func collectDisplayKeys(def *ArchDef, useFFNAlt bool) []displayKeyEntry {
 	seen := map[string]bool{}
 	var entries []displayKeyEntry
 	add := func(dk, builder string) {
@@ -313,7 +321,11 @@ func collectDisplayKeys(def *ArchDef) []displayKeyEntry {
 	for _, k := range blockKeys {
 		add(k, def.Blocks[k].Builder)
 	}
-	add(def.FFN.Builder, def.FFN.Builder)
+	ffnBuilder := def.FFN.Builder
+	if useFFNAlt && def.FFNAlt != nil {
+		ffnBuilder = def.FFNAlt.Builder
+	}
+	add(ffnBuilder, ffnBuilder)
 	return entries
 }
 
@@ -415,7 +427,7 @@ func emitSharedDefs(w *bufio.Writer) {
 	w.WriteString("    </filter>\n")
 }
 
-func emitLegend(w *bufio.Writer, def *ArchDef, cx int) {
+func emitLegend(w *bufio.Writer, def *ArchDef, cx int, ffnKey string) {
 	pal := diagramPalette()
 	// First pass: compute total width
 	type legendItem struct {
@@ -473,8 +485,8 @@ func emitLegend(w *bufio.Writer, def *ArchDef, cx int) {
 		}
 		items = append(items, legendItem{label, gradID[pp], pal[pp+".stroke"]})
 	}
-	ffnPP := palPrefixBuilder(def.FFN.Builder)
-	items = append(items, legendItem{formatBuilderName(def.FFN.Builder), gradID[ffnPP], pal[ffnPP+".stroke"]})
+	ffnPP := palPrefixBuilder(ffnKey)
+	items = append(items, legendItem{formatBuilderName(ffnKey), gradID[ffnPP], pal[ffnPP+".stroke"]})
 
 	totalW := 0
 	for _, it := range items {

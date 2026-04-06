@@ -24,11 +24,12 @@ type ModelsConfig struct {
 }
 
 type InferenceConfig struct {
-	NThreads             int    `toml:"n_threads"`
-	LogThinking             bool   `toml:"log_thinking"`
-	EnableThinkingDefault bool  `toml:"enable_thinking_default"`
-	MaxSeqLen            int    `toml:"max_seq_len"`    // KV cache size in tokens (default: 4096)
-	ElideThinkingDefault *bool  `toml:"elide_thinking_default"` // nil = default true; strip <think>...</think> from output
+	NThreads              int    `toml:"n_threads"`
+	LogThinking           bool   `toml:"log_thinking"`
+	EnableThinkingDefault bool   `toml:"enable_thinking_default"`
+	MaxSeqLen             int    `toml:"max_seq_len"`             // KV cache size in tokens (default: 4096)
+	ElideThinkingDefault  *bool  `toml:"elide_thinking_default"`  // nil = default true; strip <think>...</think> from output
+	SingleResidentModel   *bool  `toml:"single_resident_model"`   // nil/true (default): evict previous model on switch; false: keep all loaded
 }
 
 // ShouldElideThink returns true if <think> content should be stripped from output (default: true).

@@ -9,7 +9,13 @@
 # gating, embedding scaling, logit softcapping, V-norm (raw RMS), layer output scaling,
 # RoPE frequency factors for full attention layers.
 #
+# MoE variant (e.g. 26B-A4B): same GGUF architecture name ("gemma4"), auto-detected via
+# [ffn_alt] weights. All layers use routed MoE + shared expert. n_kv_heads is a per-layer
+# array in the GGUF (8 for SWA, 2 for full-attn); param fallback = first element (8).
+# Full-attn n_kv_heads inferred at runtime from K tensor shape.
+#
 # Known model sizes:
+#   30 layers → 26B-A4B (MoE: 128 experts, top-8)
 #   35 layers → E2B
 #   42 layers → E4B
 
@@ -37,6 +43,10 @@ n_embd_per_layer  = "gemma4.embedding_length_per_layer_input"
 logit_softcapping = "gemma4.final_logit_softcapping"
 swa_pattern       = "gemma4.attention.sliding_window_pattern"
 rope_mode         = "standard"
+# MoE params (absent in dense models)
+n_expert          = "gemma4.expert_count?"
+n_expert_used     = "gemma4.expert_used_count?"
+n_ff_exp          = "gemma4.expert_feed_forward_length?"
 
 [params.derived]
 n_vocab = "token_embd.ne[1]"
@@ -123,3 +133,36 @@ builder = "geglu"
   gate = "ffn_gate.weight"
   up   = "ffn_up.weight"
   down = "ffn_down.weight"
+
+# --- MoE FFN (auto-detected from weight presence in 26B-A4B and similar) ---
+
+[ffn_alt]
+builder = "moe"
+
+  [ffn_alt.config]
+  activation  = "gelu"
+  self_normed = "true"
+
+  [ffn_alt.weights]
+  # Router (normalized: rms_norm + learned scale)
+  gate_inp     = "ffn_gate_inp.weight"
+  gate_inp_s   = "ffn_gate_inp.scale"
+  # Fused gate+up experts (3D: stacked by expert)
+  gate_up_exps = "ffn_gate_up_exps.weight"
+  down_exps    = "ffn_down_exps.weight"
+  # Per-expert output scaling
+  down_exps_s  = "ffn_down_exps.scale"
+  # Shared expert (plain FFN, same activation as experts)
+  gate         = "ffn_gate.weight"
+  up           = "ffn_up.weight"
+  down         = "ffn_down.weight"
+  # Self-normed: separate pre/post norms for shared and expert paths
+  # (norm = shared expert pre-norm, same tensor as common ffn_norm)
+  norm         = "ffn_norm.weight"
+  pre_norm_2   = "pre_ffw_norm_2.weight"
+  post_norm_1  = "post_ffw_norm_1.weight"
+  post_norm_2  = "post_ffw_norm_2.weight"
+
+[tokens]
+think_open  = "<|channel>"
+think_close = "<channel|>"

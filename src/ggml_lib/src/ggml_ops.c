@@ -191,3 +191,13 @@ size_t          ggml_go_gguf_tensor_size(ggml_go_gguf gf, int64_t idx)          
 ggml_go_tensor ggml_go_get_first_tensor(ggml_go_context ctx)                     { return ggml_get_first_tensor(CTX(ctx)); }
 ggml_go_tensor ggml_go_get_next_tensor(ggml_go_context ctx, ggml_go_tensor t)    { return ggml_get_next_tensor(CTX(ctx), T(t)); }
 const char*    ggml_go_tensor_name(ggml_go_tensor t)                             { return T(t)->name; }
+
+/* --- Log callback bridge --- */
+// Forward declaration for the CGo-exported Go callback (defined in logging.go via //export).
+// CGo generates its own declaration in _cgo_export.h; we declare it locally here so
+// this translation unit can reference it without including _cgo_export.h.
+extern void ggmlGoLogCallback(int level, char* text, void* user_data);
+
+void ggml_go_register_log_callback(void) {
+    ggml_log_set((ggml_log_callback)ggmlGoLogCallback, NULL);
+}
