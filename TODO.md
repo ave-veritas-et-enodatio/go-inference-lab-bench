@@ -16,4 +16,4 @@
 3. Multiple concurrent models
 4. Linux/CUDA support (rename GPU init, add CUDA backend)
 5. **Diffusion generation loop** — iterative masked denoising for non-causal models (LLaDA-MoE). Architecture definition at `models/arch/llada-moe.arch.toml.nyi`; builder support (attention QK-norm, non-causal mask, MoE FFN) already in place. Needs new generation strategy in engine.go.
-6. arch.toml editor web app
+6. finish arch.toml editor web app
