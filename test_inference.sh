@@ -306,16 +306,12 @@ function wait_for_starting_server() {
   return 1
 }
 
-function run_api_server() {
-  ./bin/bench serve-api 2>&1
-}
-
 function start_new_api_server() {
   [[ -x "./bin/bench" ]] || { echo "./bin/bench binary missing. 'make all' first." 1>&2; exit 1; }
 
   ps aux | grep "bin/bench" | awk '!/grep/ { print $2; }' | xargs kill
   sleep 1
-  run_api_server >> ./bin/test_inference.log &
+  ./bin/bench serve-api serve-api --log ${LOG:-"bin/test_inference.log"} --log-level NONE &
   SERVER_PID=$!
 
   wait_for_starting_server

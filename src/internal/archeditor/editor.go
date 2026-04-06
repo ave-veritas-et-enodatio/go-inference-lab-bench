@@ -3,11 +3,12 @@ package archeditor
 
 import (
 	"fmt"
-	"log"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
+
+	log "inference-lab-bench/internal/log"
 )
 
 // Run starts the editor HTTP server on localhost at the given port.
@@ -53,6 +54,6 @@ func Run(archDir, staticDir string, port int) error {
 	mux.HandleFunc("POST /api/validate", api.handleValidate)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	log.Printf("arch-editor listening on http://%s", addr)
+	log.Info("arch-editor listening on http://%s", addr)
 	return http.ListenAndServe(addr, mux)
 }
