@@ -176,6 +176,10 @@ ggml_go_tensor ggml_go_get_first_tensor(ggml_go_context ctx);
 ggml_go_tensor ggml_go_get_next_tensor(ggml_go_context ctx, ggml_go_tensor t);
 const char*    ggml_go_tensor_name(ggml_go_tensor t);
 
+// ggml_go_register_log_callback installs the Go log callback as ggml's log handler.
+// The callback itself (ggmlGoLogCallback) is defined in logging.go via //export —
+// CGo auto-generates its declaration; do not redeclare it here.
+void ggml_go_register_log_callback(void);
 
 #ifdef __cplusplus
 }

@@ -15,7 +15,7 @@ func (b *GeGLUBuilder) Contract() BuilderContract {
 }
 
 func (b *GeGLUBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
-	weights map[string]ggml.Tensor, params *ResolvedParams) ggml.Tensor {
+	weights map[string]ggml.Tensor, params *ResolvedParams, config map[string]any) ggml.Tensor {
 
 	gateFfn := ggml.Gelu(ctx, ggml.MulMat(ctx, weights["gate"], input))
 	up := ggml.MulMat(ctx, weights["up"], input)

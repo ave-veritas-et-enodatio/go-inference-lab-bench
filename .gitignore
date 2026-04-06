@@ -21,3 +21,5 @@ nohup.out
 .DS_Store
 .claude/settings.local.json
 .claude/worktrees/
+
+src/third_party/ggml/
