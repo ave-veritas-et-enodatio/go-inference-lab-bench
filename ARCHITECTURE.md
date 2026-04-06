@@ -53,6 +53,12 @@ inference/engine.go (Generate())
 Thin cobra command wrappers. Each subcommand delegates immediately to `internal/`.
 No business logic lives here. `serve_api.go` builds config and calls `apiserver.NewServer`.
 
+### `internal/log/`
+Leveled logger (DEBUG/INFO/WARN/ERROR/NONE). Dual output: stderr (filtered by level) +
+optional file (all levels). `InitLogger(path, level)` initializes; all packages import as
+`log "inference-lab-bench/internal/log"`. The ggml C library's log output is routed through
+the Go logger via a callback bridge in `ggml/logging.go`.
+
 ### `internal/config/`
 Loads `api_config.toml` into `Config`.
 
@@ -67,6 +73,8 @@ Loads `api_config.toml` into `Config`.
   `httpServer` for graceful shutdown, and `pending` WaitGroup for in-flight request tracking.
   No mutex on `engines` currently (single-client R&D use case). `Engine()` method looks up
   by model name; `"default"` resolves to the configured default model.
+  `single_resident_model` config (default true): when switching models, the previous engine
+  is evicted to prevent RAM accumulation from multiple loaded models.
 - `completions.go` — POST `/api/v1/chat/completions`. Builds `GenerateParams` from JSON body
   (pointer semantics: nil = use server config). SSE streaming via `onToken` callback.
   Logprobs: `logprobs: true` + `top_logprobs: N` in request; response includes
@@ -126,8 +134,8 @@ An `*.arch.toml` file maps directly onto `arch.ArchDef`. Sections:
 `derived` expressions; `tensor.ne[dim]` reads a tensor shape dimension.
 Full expression language spec — including arithmetic operators, optional `?` suffix,
 array-to-scalar promotion, and `[params.defaults]` semantics — is in
-`models/arch/model_arch_toml_dsl_spec.md`, which also specifies each builder's params, weights, config
-keys, cache layout, and step-by-step forward pass algorithm. **Read `model_arch_toml_dsl_spec.md` for the
+`models/arch/MODEL_ARCH_TOML_DSL_SPEC.md`, which also specifies each builder's params, weights, config
+keys, cache layout, and step-by-step forward pass algorithm. **Read `MODEL_ARCH_TOML_DSL_SPEC.md` for the
 complete DSL picture before writing or modifying any `.arch.toml` file.**
 
 **Validation happens at parse time** (`Validate()` in `arch.go`). Unknown keys, missing required
@@ -152,14 +160,14 @@ type BlockBuilder interface {
 
 type FFNBuilder interface {
     Contract() BuilderContract
-    BuildFFN(...) ggml.Tensor
+    BuildFFN(..., config map[string]any) ggml.Tensor
 }
 ```
 
 Registered in `init()`:
 ```
 block builders: attention, full_attention_gated, mla_attention, gated_delta_net
-FFN builders:   swiglu, geglu, moe_with_shared
+FFN builders:   swiglu, geglu, moe
 ```
 
 The `attention` builder is the most flexible — it supports config-based param overrides
@@ -169,7 +177,9 @@ and custom kq_scale. Prefer extending it via `[blocks.*.config]` over writing a 
 
 The builder's KV preparation pipeline is factored into `prepareQKV()`, which handles Q/K/V
 projection, optional QK-norm, optional V-norm, RoPE (with optional frequency factors), and
-SharedKV read/write — all in one place. `BuildStateless` and `BuildCached` call `prepareQKV`
+SharedKV read/write — all in one place. `prepareQKV` also infers actual `n_kv_heads` from the
+K weight tensor shape (`weights["attn_k"].Ne(1) / headDim`), which handles models where SWA
+and full attention layers have different kv_head counts but only one GGUF param exists. `BuildStateless` and `BuildCached` call `prepareQKV`
 then diverge only at the attention computation: stateless permutes and runs attention directly,
 cached writes/reads the KV cache (or SharedKV for non-KV layers) before attention.
 
@@ -206,6 +216,7 @@ type GenericModel struct {
     Store            *WeightStore             // GPU-resident tensors
     BlockBuilders    []BlockBuilder           // per-layer block builder
     FFNBuilders      []FFNBuilder             // per-layer FFN builder
+    FFNConfigs       []map[string]any         // per-layer FFN config (from TOML [ffn.config] / [ffn_alt.config])
     CanonicalModuleMap *ModuleMap             // immutable structural map (never mutated)
     TensorDims       TensorDimsMap            // tensor shape info for diagnostics
     ModelPath        string                   // path to GGUF file
@@ -232,7 +243,9 @@ Both follow the same frame:
    - `BlockBuilders[il].Build{Stateless,Cached}()` → attention output
    - Optional: `rmsNormApply(cur, attn_post_norm)` → post-attention norm
    - Residual add
-   - `buildFFNBlock()` → FFN norm + FFN + optional post-FFN norm + residual
+   - `buildFFNBlock()` → FFN norm + FFN (with `FFNConfigs[il]`) + optional post-FFN norm + residual.
+     `self_normed` config: builder manages its own pre/post norms internally; `graph.go`
+     still applies the common `ffn_post_norm` when the weight exists.
    - Optional: `perLayerEmbedInject()` → gated per-layer embedding injection
    - Optional: `Mul(x, layer_output_scale)` → per-layer scalar
 8. Final norm + LM head
@@ -290,7 +303,10 @@ both diagrams reflect the change. Do not hardcode color strings in renderer code
 ### Architecture diagram (`arch/arch_diagram.go`)
 `RenderArchDiagram(def, outPath)` — generates `*.arch.svg` from a parsed `ArchDef`.
 Shows the layer structure, block types, weight modules, and cache specs.
-Invoked by `bench gen-arch-diagram`.
+Invoked by `bench gen-arch-diagram`. When `ArchDef` has `FFNAlt`, the command also generates
+an alt variant diagram (`{arch}-{alt_builder}.arch.svg` + `.layers.svg`) showing the
+alternative FFN builder (e.g. `gemma4-moe.arch.svg` for the MoE variant).
+`ArchDiagramOptions.UseFFNAlt` controls which FFN path is rendered.
 
 ### Module map diagram (`arch/module_map_diagram.go`)
 `RenderModuleMapDiagram(mm, svgPath, tensorDims)` — generates a per-layer tensor detail
@@ -338,7 +354,7 @@ not GGUF tensor names. The translation layer is `ResolvedLayerWeights` in `arch/
    - Used in ≥2 files, package-internal → `internal/<pkg>/<pkg>_util.go`
    - Single-file use → define in that file
 
-10. **Test with all models.** Llama is easy. Qwen3.5, Qwen3.5-MoE, and DeepSeek2/GLM-4
+10. **Test with all models.** Llama is easy. Qwen3.5, Qwen3.5-MoE, DeepSeek2/GLM-4, and Gemma4 (dense + MoE)
     are where architectural edge cases surface. Always run `ALL_MODELS=true` before
     declaring a change complete.
 
@@ -376,6 +392,6 @@ chat template rendering, forward pass correctness, and sampling.
 
 ---
 
-## Open Architecture Issues
+## Resolved Architecture Issues
 
-- **Gemma 4 equivalence failure**: `gemma4` arch loads and runs but logprob diff is -0.97 vs llama.cpp reference (threshold ~0.01). All other models pass. Root cause unidentified — likely a weight loading issue (`rope_freqs` global tensor via fallback path) or subtle computation difference. See `.claude/gemma4_completion.md` for full investigation handoff.
+- **Gemma 4 equivalence**: resolved. Both dense and MoE variants produce correct output across all models.

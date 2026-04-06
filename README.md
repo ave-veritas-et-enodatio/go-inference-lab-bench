@@ -58,8 +58,10 @@ I've been using these:
   * Llama3.2, standard attention 
 * [llama-3.2-3b-instruct-q4_k_m.gguf](https://huggingface.co/hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF/resolve/main/llama-3.2-3b-instruct-q4_k_m.gguf)
   * Llama3.2, standard attention  (quantized)
-* [gemma-4-E4B-it-Q4_K_M.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf)
-  * Gemma4, hybrid SWA + attention (quantized)
+* [gemma-4-E4B-it-Q4_K_M.gguf](https://huggingface.co/lmstudio-community/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf)
+  * Gemma4, Dense, ISWA (interleaved sliding-window + global attention), GeGLU FFN
+* [gemma-4-26B-A4B-it-MXFP4_MOE](https://huggingface.co/noctrex/gemma-4-26B-A4B-it-MXFP4_MOE-GGUF/resolve/main/gemma-4-26B-A4B-it-MXFP4_MOE.gguf)
+  * Gemma4, MoE ISWA (interleaved sliding-window + global attention), GeGLU FFN
 
 ```bash
 # Build (first run compiles ggml, takes ~1 min, after that much faster)
@@ -143,7 +145,7 @@ config/                         bench subcommand config files
 models/
   *.gguf                        Model files (not committed)
   arch/                         Architecture TOML definitions (*.arch.toml) + generated SVGs (*.arch.svg, *.layers.svg)
-    model_arch_toml_dsl_spec.md               DSL specification
+    MODEL_ARCH_TOML_DSL_SPEC.md               DSL specification
     block_svg/                  Hand-crafted SVG fragments per block builder
     editor/                     Web-based TOML editor (HTML/JS/CSS)
 src/
@@ -199,7 +201,7 @@ Run `bin/bench` without arguments for complete help.
 ## Adding a model architecture
 Adding architectures is doable in about an hour with AI assistance, if you need to code a new block. If you can use existing blocks, it's around 15 minutes.
 
-* see `models/arch/model_arch_toml_dsl_spec.md` for the block and architecture format spec
+* see `models/arch/MODEL_ARCH_TOML_DSL_SPEC.md` for the block and architecture format spec
 * If a new block type is needed:
   * add a Go file that implements it in `src/internal/inference/arch/block_<name>`
   * add an SVG snippet for it to `models/arch/block_svg/<name>.svg`
