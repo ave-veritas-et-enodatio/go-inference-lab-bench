@@ -361,15 +361,16 @@ output   = down @ (gate_out * up_out)     # [n_embd, n_tokens]
 
 ---
 
-## Builder: `moe_with_shared`
+## Builder: `moe`
 
-Mixture-of-Experts FFN with optional shared expert and optional expert selection bias.
+Unified Mixture-of-Experts FFN. Handles Qwen3.5 MoE, Gemma4 MoE, and DeepSeek2 hybrid via config and weight detection.
 
 **Required weights:** `gate_inp`, `gate_exps`, `up_exps`, `down_exps`
-**Optional weights:** `gate_inp_shexp`, `gate_shexp`, `up_shexp`, `down_shexp`, `exp_probs_b`
+**Optional weights:** `gate_inp_shexp`, `gate_shexp`, `up_shexp`, `down_shexp`, `exp_probs_b`, `gate_up_exps`, `down_exps_s`
 **Required params:** `n_expert`, `n_expert_used`
+**Config keys:** `act` (activation: `silu` default, `gelu`), `norm_w` (weight normalization), `norm_router` (normalized router: `rms`), `self_normed` (builder manages internal norms), `shared_kv_group`
 
-Expert routing: softmax → optional bias (`exp_probs_b` for selection only) → top-k → mul_mat_id → SwiGLU → aggregate. Weight normalization (sum_rows → clamp → div). Optional shared expert added with optional sigmoid gate.
+Expert routing: softmax (or normalized router) → optional bias (`exp_probs_b` for selection only) → top-k → mul_mat_id → activation → aggregate. Optional weight normalization (sum_rows → clamp → div). Optional shared expert with optional sigmoid gate. Fused `gate_up_exps` detected from weights. Per-expert output scaling via `down_exps_s`.
 
 ---
 

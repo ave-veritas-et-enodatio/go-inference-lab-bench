@@ -40,19 +40,21 @@ Known working models (from huggingface.co, links in README.md):
 * Llama-3.2-3B-Instruct-f16.gguf, llama-3.2-3b-instruct-q4_k_m.gguf (dense, `llama` arch)
 * Qwen3.5-4B_Abliterated.f16.gguf (dense, `qwen35` arch)
 * Qwen3.5-9B-abliterated.f16.gguf (dense, `qwen35` arch)
+* Qwen3.5-35B-A3B MoE (`qwen35moe` arch)
+* DeepSeek2/GLM-4 4.7B (`deepseek2` arch)
 * gemma-4-E4B-it-Q4_K_M.gguf (dense, `gemma4` arch)
-
-In-progress models:
-* gemma-4-E4B-it-Q4_K_M.gguf (dense, `gemma4` arch) — runs and generates coherent text but fails equivalence test (logprob diff -0.97). See `.claude/gemma4_completion.md` for investigation handoff.
+* Gemma 4 MoE (`gemma4` arch, auto-detected via `[ffn_alt]` GGUF weights)
 
 - **Inference** KV cached and stateless inference. Model architectures are defined via a TOML DSL (`models/arch/*.arch.toml`) that drives GGUF loading, graph construction, and cache allocation. Block builders implement the graph-level ops in Go. The only C code is a thin, model-agnostic ggml op wrapper layer (`ggml_ops.h/.c`). Zero C++ in the project.
 - HTTP server with Bearer auth, model listing, streaming SSE + non-streaming completions, logprobs
 - **TOML DSL-driven model loading**: architecture definitions in `models/arch/*.arch.toml` declare params, layer routing, weight bindings, cache specs, and FFN type
-- **Block builder registry**: `attention` (standard, with config-based param overrides, optional K/V, SharedKV, V-norm, SWA mask, RoPE freq factors), `full_attention_gated` (Qwen3.5), `mla_attention` (DeepSeek2/GLM-4), `gated_delta_net`, `swiglu`, `geglu`, `moe_with_shared` — pluggable graph construction
+- **Block builder registry**: `attention` (standard, with config-based param overrides, optional K/V, SharedKV, V-norm, SWA mask, RoPE freq factors), `full_attention_gated` (Qwen3.5), `mla_attention` (DeepSeek2/GLM-4), `gated_delta_net`, `swiglu`, `geglu`, `moe` — pluggable graph construction
 - **Qwen3.5 dense**: hybrid forward pass (attention + delta-net SSM), logit-perfect vs reference
 - **Qwen3.5 MoE**: softmax router, top-k expert dispatch via `ggml_mul_mat_id`, sigmoid-gated shared expert, weight normalization
 - **Llama 3.2**: standard attention with GQA, standard RoPE, SwiGLU FFN
 - **DeepSeek2/GLM-4**: MLA attention (low-rank Q/KV, Q-nope absorption), hybrid dense/MoE FFN, expert bias
+- **Gemma 4 dense**: ISWA (full+SWA attention), GeGLU FFN, V-norm, per-layer embeddings, embed_scale, logit_softcapping
+- **Gemma 4 MoE**: same `gemma4` arch name, auto-detected via `[ffn_alt]` GGUF weights; 128 experts top-8, shared expert, MXFP4, fused gate_up_exps, per-expert output scaling, GELU activation, normalized router
 - GGUF loading entirely in Go (metadata parsing, weight loading to Metal VRAM)
 - Unsupported architectures auto-filtered at scan time
 - **Zero model-specific code**: chat templates executed from GGUF `tokenizer.chat_template` via gonja; BOS/EOS from GGUF metadata; no per-architecture tokenizer branches. Thinking mode controlled entirely by template `enable_thinking` variable — no post-render prompt manipulation.
@@ -68,10 +70,11 @@ In-progress models:
 - **Model definition**: TOML DSL (`models/arch/*.arch.toml`) — declares params, layer routing, weight bindings, cache specs
 - **Inference backend**: ggml (git submodule), Metal-accelerated
 - **Model format**: GGUF (files in `models/`)
-- **Target models**: Llama 3.2 (3B), Qwen3.5 dense (4B, 9B), Qwen3.5 MoE (35B-A3B), DeepSeek2/GLM-4 (4.7B)
+- **Target models**: Llama 3.2 (3B), Qwen3.5 dense (4B, 9B), Qwen3.5 MoE (35B-A3B), DeepSeek2/GLM-4 (4.7B), Gemma 4 (dense E4B + MoE)
 - **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"enable_thinking"`, `"elide_thinking"`, `"logprobs"`, `"top_logprobs"`, `"model":"default"`. Legacy `/v1/*` also supported. Diagnostic browser at `/diag/`. Control endpoint at `/ctl` (graceful shutdown via `?quit` or immediate via `?quit&now`).
 - **Diagnostics**: `/diag/` serves files from `bin/diag/` — a useful location for dumping R&D diagnostic output (SVGs, data files, etc.) that can be viewed in-browser while the server is running. The directory is auto-created at startup.
-- **Config**: `api_config.toml` — server, models, inference settings (`max_seq_len`, `enable_thinking_default`, `elide_thinking_default`, `log_thinking`)
+- **Config**: `api_config.toml` — server, models, inference settings (`max_seq_len`, `enable_thinking_default`, `elide_thinking_default`, `log_thinking`, `single_resident_model`)
+- **Logging**: leveled structured logging via `internal/log` (DEBUG/INFO/WARN/ERROR/NONE). Dual stderr+file output via `--log <path>`. Level controlled via `--log-level`. ggml C logs routed through Go logger via callback bridge in `ggml/logging.go`.
 - **Default listen**: `0.0.0.0:11116`
 
 ## Source Layout
@@ -84,7 +87,7 @@ config/
 models/
   *.gguf                        Model files (not committed)
   arch/                         Architecture TOML definitions (*.arch.toml) + generated SVGs (*.arch.svg, *.layers.svg)
-    model_arch_toml_dsl_spec.md               DSL specification
+    MODEL_ARCH_TOML_DSL_SPEC.md               DSL specification
     block_svg/                  Hand-crafted SVG fragments per block builder
     editor/                     Web-based TOML editor (HTML/JS/CSS)
 src/
@@ -94,11 +97,12 @@ src/
     main.go                     Root command (cobra)
     serve_api.go                serve-api: dispatches to apiserver
     chat.go                     chat: dispatches to chatclient
-    gen_arch_diagram.go         gen-arch-diagram: SVG from TOML
+    gen_arch_diagram.go         gen-arch-diagram: SVG from TOML (+ alt FFN variant diagrams when [ffn_alt] present)
     arch_editor.go              arch-editor: dispatches to archeditor
   internal/
+    log/                        Leveled logger (DEBUG/INFO/WARN/ERROR), dual stderr+file, ggml log bridge
     util/                       Project-wide utilities (LoadTOML, WriteJSON, BenchPaths, extension constants)
-    apiserver/                  HTTP handlers (OpenAI-compatible: /api/v1/*), /ctl endpoint
+    apiserver/                  HTTP handlers (OpenAI-compatible: /api/v1/*), /ctl endpoint, single_resident_model eviction
     chatclient/                 Interactive chat client implementation
     model/                      GGUF scanning + metadata
     archeditor/                 Arch editor web server
@@ -119,7 +123,8 @@ src/
         block_attention_mla.go  mla_attention (DeepSeek2/GLM-4)
         block_ssm.go            gated_delta_net (Qwen3.5 SSM)
         block_ffn.go            swiglu
-        block_ffn_moe.go        moe_with_shared (MoE + expert bias)
+        block_ffn_geglu.go      geglu (GELU-gated FFN, Gemma 4)
+        block_ffn_moe.go        moe (unified MoE: shared expert, expert bias, fused gate_up, normalized router)
         modules.go              Module, ModuleMap
         module_map.go           BuildModuleMap, BuildTensorDimsMap
         weight_store.go         WeightStore: immutable weight storage
@@ -130,7 +135,7 @@ src/
         diagram_util.go         Shared diagram palette (diagramPalette, palPrefix, palPrefixBuilder)
         arch_diagram.go         Architecture overview SVG renderer (gen-arch-diagram)
         module_map_diagram.go   Module map SVG renderer (per-layer tensor details)
-      ggml/                     Go wrappers for ggml ops (~36 functions)
+      ggml/                     Go wrappers for ggml ops (~36 functions), logging.go (ggml C log callback bridge)
   ggml_lib/                     C op wrappers + ggml build
   third_party/ggml/             ggml git submodule
 test_inference.sh               Test harness
@@ -147,7 +152,7 @@ make serve              # build + start API server (stderr to bin/bench.log)
 make chat               # build + start interactive chat client
 make arch-diagrams      # (re)builds SVG architecture diagrams from models/arch/*.arch.toml
 
-# CLI subcommands
+# CLI subcommands (all support --log <path> --log-level DEBUG|INFO|WARN|ERROR|NONE)
 ./bin/bench serve-api           # run inference API server
 ./bin/bench chat                # interactive chat client
 ./bin/bench gen-arch-diagram    # generate SVG from TOML definition
@@ -165,7 +170,7 @@ ALL_MODELS=true bash test_inference.sh "Hi"     # applies the same query to each
 
 # In --loop mode: /all-models toggles ALL_MODELS mode; /model [n] selects a specific model
 # IMPORTANT: always test with ALL_MODELS=true before considering a change complete.
-# Llama is easy mode — Qwen3.5, Qwen3.5-MoE, and DeepSeek2/GLM4 are where issues surface.
+# Llama is easy mode — Qwen3.5, Qwen3.5-MoE, DeepSeek2/GLM4, and Gemma4 (dense + MoE) are where issues surface.
 
 # API
 curl localhost:11116/api/v1/models
@@ -191,9 +196,9 @@ Model architectures are declared in TOML files (`models/arch/*.arch.toml`). The 
 - **Tokens**: `[tokens]` section declares `think_open`, `think_close` per architecture.
 - **Param defaults**: `[params.defaults]` provides fallback values when GGUF params resolve to 0.
 
-Block builders (`full_attention`, `full_attention_gated`, `mla_attention`, `gated_delta_net`, `swiglu`, `moe_with_shared`) implement the ggml graph construction. Adding a new model that uses existing block types requires only a new `.arch.toml` file. A genuinely new block type requires a new builder implementation. Optional GGUF params use `?` suffix (e.g., `"arch.key?"` — silently skipped if missing).
+Block builders (`full_attention`, `full_attention_gated`, `mla_attention`, `gated_delta_net`, `swiglu`, `geglu`, `moe`) implement the ggml graph construction. Adding a new model that uses existing block types requires only a new `.arch.toml` file. A genuinely new block type requires a new builder implementation. Optional GGUF params use `?` suffix (e.g., `"arch.key?"` — silently skipped if missing).
 
-See `models/arch/model_arch_toml_dsl_spec.md` for the full DSL spec.
+See `models/arch/MODEL_ARCH_TOML_DSL_SPEC.md` for the full DSL spec.
 
 ### ggml Semantics (verified)
 - `ggml_permute(ctx, a, ax0, ax1, ax2, ax3)`: input dim i goes to output position ax_i. `ne[ax_i] = a->ne[i]`.
@@ -236,7 +241,7 @@ Before writing any code, build a complete picture of the model.
    Common surprises: tensors named without `.weight` suffix, global vs per-layer tensors, bool arrays stored as GGUF bool type, scalar params stored as arrays.
 
 3. **Read existing arch TOMLs** — find the closest existing architecture and understand the DSL patterns:
-   - `models/arch/model_arch_toml_dsl_spec.md` — authoritative DSL spec
+   - `models/arch/MODEL_ARCH_TOML_DSL_SPEC.md` — authoritative DSL spec
    - `models/arch/*.arch.toml` — existing architectures as templates
 
 4. **Identify novel features** — catalog what this architecture does that no existing builder supports. Common categories:
@@ -266,7 +271,7 @@ Only needed if the architecture uses a computation pattern not covered by existi
 - `gated_delta_net` — delta net SSM (Qwen3.5 hybrid)
 - `swiglu` — SiLU-gated FFN
 - `geglu` — GELU-gated FFN (Gemma 4)
-- `moe_with_shared` — mixture of experts with shared expert and expert bias
+- `moe` — unified mixture of experts (Qwen3.5 MoE, Gemma4 MoE, DeepSeek2 hybrid); shared experts, expert bias, fused gate_up_exps, normalized router — all via config/weight detection
 
 To add a new builder:
 1. `src/internal/inference/arch/block_<type>.go` — implement `BlockBuilder` or `FFNBuilder` (see interfaces in `blocks.go`). Must implement both `BuildStateless` and `BuildCached`.
