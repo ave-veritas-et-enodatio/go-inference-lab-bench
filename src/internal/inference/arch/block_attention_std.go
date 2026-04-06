@@ -50,8 +50,9 @@ func attnParams(params *ResolvedParams, config map[string]any) (headDim, nHeads,
 // qkvResult holds the prepared Q, K, V tensors from the KV pipeline.
 // HasKV indicates whether this layer projected its own K/V (vs reading from SharedKV).
 type qkvResult struct {
-	Q, K, V ggml.Tensor
-	HasKV   bool
+	Q, K, V  ggml.Tensor
+	HasKV    bool
+	NKVHeads int64 // actual kv_heads (may be inferred from K weight shape)
 }
 
 // prepareQKV runs the full KV preparation pipeline: Q/K/V projection, optional QK-norm,
@@ -68,6 +69,12 @@ func (b *AttentionBuilder) prepareQKV(
 
 	var k, v ggml.Tensor
 	if hasKV {
+		// Infer actual n_kv_heads from K weight shape when it differs from the param.
+		// Handles models where SWA and full attention have different kv_head counts
+		// but only one n_kv_heads param exists in the GGUF.
+		if actual := weights["attn_k"].Ne(1) / headDim; actual > 0 {
+			nKVHeads = actual
+		}
 		k = projectReshape3D(ctx, weights["attn_k"], cur, headDim, nKVHeads, nTokens)
 		if !weights["attn_v"].IsNil() {
 			v = projectReshape3D(ctx, weights["attn_v"], cur, headDim, nKVHeads, nTokens)
@@ -117,7 +124,7 @@ func (b *AttentionBuilder) prepareQKV(
 		v = inputs.SharedKV.V[group]
 	}
 
-	return qkvResult{Q: q, K: k, V: v, HasKV: hasKV}
+	return qkvResult{Q: q, K: k, V: v, HasKV: hasKV, NKVHeads: nKVHeads}
 }
 
 // selectMask returns the SWA mask if sliding_window is configured, else the standard mask.
@@ -157,13 +164,14 @@ func (b *AttentionBuilder) BuildCached(
 	mask := selectMask(config, inputs)
 
 	q := ggml.Permute(ctx, kv.Q, 0, 2, 1, 3)
+	nKVHeadsActual := kv.NKVHeads
 	if kv.HasKV {
-		writeCacheKV(ctx, kv.K, kv.V, cache, inputs.SeqPos, nKVHeads, writebacks)
-		kAttn, vAttn := selectCachedKV(ctx, cache, inputs.SeqPos, kv.K, kv.V, headDim, inputs.NKV, nKVHeads)
+		writeCacheKV(ctx, kv.K, kv.V, cache, inputs.SeqPos, nKVHeadsActual, writebacks)
+		kAttn, vAttn := selectCachedKV(ctx, cache, inputs.SeqPos, kv.K, kv.V, headDim, inputs.NKV, nKVHeadsActual)
 		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens)
 	} else {
 		group := configStr(config, "shared_kv_group")
-		kAttn, vAttn := selectSharedKV(ctx, cache, inputs.SeqPos, inputs.SharedKV, group, headDim, inputs.NKV, nKVHeads)
+		kAttn, vAttn := selectSharedKV(ctx, cache, inputs.SeqPos, inputs.SharedKV, group, headDim, inputs.NKV, nKVHeadsActual)
 		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens)
 	}
 
