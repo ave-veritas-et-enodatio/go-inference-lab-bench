@@ -3,7 +3,6 @@ package apiserver
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -11,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	log "inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/inference"
 	"inference-lab-bench/internal/model"
 	"inference-lab-bench/internal/util"
@@ -52,18 +52,18 @@ func (s *Server) Engine(modelID string) (*inference.Engine, error) {
 	// Evict previous engines unless configured to keep all loaded.
 	if s.cfg.Inference.SingleResidentModel == nil || *s.cfg.Inference.SingleResidentModel {
 		for id, eng := range s.engines {
-			log.Printf("evicting engine for %s", id)
+			log.Info("evicting engine for %s", id)
 			eng.Close()
 			delete(s.engines, id)
 		}
 	}
-	log.Printf("loading inference engine for %s ...", modelID)
+	log.Info("loading inference engine for %s ...", modelID)
 	eng, err := inference.NewEngine(info, s.archDir, s.cfg.Inference.MaxSeqLen)
 	if err != nil {
 		return nil, fmt.Errorf("inference engine: %w", err)
 	}
 	s.engines[modelID] = eng
-	log.Printf("inference engine ready for %s", modelID)
+	log.Info("inference engine ready for %s", modelID)
 	return eng, nil
 }
 
@@ -88,8 +88,8 @@ func (s *Server) Run() error {
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)
 	s.httpServer = &http.Server{Addr: addr, Handler: r}
-	log.Printf("listening on %s", addr)
-	fmt.Printf("diagnostics: http://localhost:%d/diag/\n", s.cfg.Server.Port)
+	log.Info("listening on %s", addr)
+	log.Info("diagnostics: http://localhost:%d/diag/", s.cfg.Server.Port)
 	if err := s.httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

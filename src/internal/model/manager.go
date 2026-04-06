@@ -2,7 +2,6 @@ package model
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	log "inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/util"
 )
 
@@ -64,15 +64,15 @@ func (m *Manager) scan() error {
 		id := strings.TrimSuffix(base, ".gguf")
 		meta, err := ParseGGUF(path)
 		if err != nil {
-			log.Printf("skipping %s: %v", base, err)
+			log.Info("skipping %s: %v", base, err)
 			continue
 		}
 		if !supportedArchitectures[meta.Architecture] {
-			fmt.Fprintf(os.Stderr, "skipping %s: unsupported architecture %q\n", id, meta.Architecture)
+			log.Warn("skipping %s: unsupported architecture %q", id, meta.Architecture)
 			continue
 		}
 		m.models[id] = &ModelInfo{ID: id, Path: path, Metadata: meta, LoadedAt: time.Now().Unix()}
-		log.Printf("loaded model: %s (%d tensors)", id, len(meta.Tensors))
+		log.Info("loaded model: %s (%d tensors)", id, len(meta.Tensors))
 	}
 	return nil
 }
@@ -107,7 +107,7 @@ func (m *Manager) List() []*ModelInfo {
 			continue
 		}
 		fresh[id] = &ModelInfo{ID: id, Path: path, Metadata: meta, LoadedAt: time.Now().Unix()}
-		log.Printf("discovered model: %s (%d tensors)", id, len(meta.Tensors))
+		log.Info("discovered model: %s (%d tensors)", id, len(meta.Tensors))
 	}
 
 	// Write lock only for the pointer swap.
@@ -158,6 +158,6 @@ func (m *Manager) tryLoadOne(id string) *ModelInfo {
 	}
 	info := &ModelInfo{ID: id, Path: path, Metadata: meta, LoadedAt: time.Now().Unix()}
 	m.models[id] = info
-	log.Printf("discovered model: %s (%d tensors)", id, len(meta.Tensors))
+	log.Info("discovered model: %s (%d tensors)", id, len(meta.Tensors))
 	return info
 }

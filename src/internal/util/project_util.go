@@ -8,6 +8,8 @@ import (
 	"os"
 
 	"github.com/BurntSushi/toml"
+
+	log "inference-lab-bench/internal/log"
 )
 
 // WriteJSON writes a JSON response with the appropriate Content-Type header.
@@ -49,6 +51,6 @@ func CopyFile(src, dst string) {
 	}
 	defer out.Close()
 	if _, err := io.Copy(out, in); err != nil {
-		fmt.Fprintf(os.Stderr, "[WRN] copyFile %s → %s: %v\n", src, dst, err)
+		log.Warn("copyFile %s → %s: %v", src, dst, err)
 	}
 }

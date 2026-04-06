@@ -2,9 +2,10 @@ package apiserver
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"time"
+
+	log "inference-lab-bench/internal/log"
 )
 
 func (s *Server) handleCtl(w http.ResponseWriter, r *http.Request) {
@@ -20,14 +21,14 @@ func (s *Server) handleCtl(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		if now {
-			log.Printf("[ctl] quit now — shutting down immediately")
+			log.Info("[ctl] quit now — shutting down immediately")
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
 			s.httpServer.Shutdown(ctx) //nolint:errcheck
 		} else {
-			log.Printf("[ctl] quit — waiting for pending inference to finish")
+			log.Info("[ctl] quit — waiting for pending inference to finish")
 			s.pending.Wait()
-			log.Printf("[ctl] all inference done — shutting down")
+			log.Info("[ctl] all inference done — shutting down")
 			s.httpServer.Shutdown(context.Background()) //nolint:errcheck
 		}
 	}()

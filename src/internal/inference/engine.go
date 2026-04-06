@@ -2,11 +2,11 @@ package inference
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	ggufparser "github.com/gpustack/gguf-parser-go"
 
+	log "inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/inference/arch"
 	"inference-lab-bench/internal/model"
 )
@@ -63,9 +63,9 @@ func validateArchTokens(tokens arch.TokensDef, tok *Tokenizer) {
 		}
 		ids := tok.Encode(value, false)
 		if len(ids) == 0 {
-			log.Printf("[WRN] arch token %s=%q encodes to zero tokens — not in vocabulary", name, value)
+			log.Warn("arch token %s=%q encodes to zero tokens — not in vocabulary", name, value)
 		} else if !tok.VocabContains(value) {
-			log.Printf("[WRN] arch token %s=%q is not a single vocabulary entry (encodes to %d BPE sub-tokens)", name, value, len(ids))
+			log.Warn("arch token %s=%q is not a single vocabulary entry (encodes to %d BPE sub-tokens)", name, value, len(ids))
 		}
 	}
 	check("think_open", tokens.ThinkOpen)

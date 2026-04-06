@@ -11,6 +11,7 @@ import (
 	"os"
 	"unsafe"
 
+	log "inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/inference/ggml"
 )
 
@@ -395,7 +396,7 @@ func NewGenericModel(archName, modelPath, archDir string) (*GenericModel, error)
 		}
 		blockSummary += fmt.Sprintf("%d %s", count, name)
 	}
-	fmt.Fprintf(os.Stderr, "[INF] %s: %d layers (%s), n_embd=%d, n_heads=%d/%d, head_dim=%d\n",
+	log.Info("%s: %d layers (%s), n_embd=%d, n_heads=%d/%d, head_dim=%d",
 		def.Architecture.Name, nLayers, blockSummary,
 		params.Ints["n_embd"], params.Ints["n_heads"], params.Ints["n_kv_heads"], params.Ints["head_dim"])
 
