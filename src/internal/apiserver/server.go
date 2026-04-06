@@ -49,6 +49,14 @@ func (s *Server) Engine(modelID string) (*inference.Engine, error) {
 	if info == nil {
 		return nil, fmt.Errorf("model not found: %s", modelID)
 	}
+	// Evict previous engines unless configured to keep all loaded.
+	if s.cfg.Inference.SingleResidentModel == nil || *s.cfg.Inference.SingleResidentModel {
+		for id, eng := range s.engines {
+			log.Printf("evicting engine for %s", id)
+			eng.Close()
+			delete(s.engines, id)
+		}
+	}
 	log.Printf("loading inference engine for %s ...", modelID)
 	eng, err := inference.NewEngine(info, s.archDir, s.cfg.Inference.MaxSeqLen)
 	if err != nil {

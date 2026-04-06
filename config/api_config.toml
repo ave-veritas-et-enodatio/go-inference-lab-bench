@@ -14,3 +14,4 @@ max_seq_len = 8192           # KV cache size in tokens (default: 8192)
 log_thinking = false           # log <think>...</think> content to stderr (spammy; enable for diagnostics)
 enable_thinking_default = true   # default thinking mode; overridable per-request via enable_thinking
 elide_thinking_default = true            # strip <think>...</think> from output (default: true)
+single_resident_model = true             # true (default) = evict previous model on switch; false = keep all loaded in RAM

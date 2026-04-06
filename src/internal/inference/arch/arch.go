@@ -335,6 +335,27 @@ func Validate(def *ArchDef) []ValidationError {
 		}
 	}
 
+	// SharedKV producer check: every non-KV block referencing a shared_kv_group
+	// must have at least one KV block (has attn_k) that produces for that group.
+	kvGroups := make(map[string]bool)
+	for _, blk := range def.Blocks {
+		if _, hasK := blk.Weights["attn_k"]; hasK {
+			if group, _ := blk.Config["shared_kv_group"].(string); group != "" {
+				kvGroups[group] = true
+			}
+		}
+	}
+	for name, blk := range def.Blocks {
+		if _, hasK := blk.Weights["attn_k"]; !hasK {
+			if group, _ := blk.Config["shared_kv_group"].(string); group != "" {
+				if !kvGroups[group] {
+					add(fmt.Sprintf("blocks.%s.config.shared_kv_group", name),
+						fmt.Sprintf("no KV-producing block (with attn_k) found for group %q", group))
+				}
+			}
+		}
+	}
+
 	return errs
 }
 

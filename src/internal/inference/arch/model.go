@@ -20,9 +20,10 @@ type GenericModel struct {
 	Params          *ResolvedParams
 	Weights         *ResolvedWeights
 	Store           *WeightStore   // immutable weight storage (read-only after load)
-	LayerBlockNames []string       // which block each layer uses
-	BlockBuilders   []BlockBuilder // per-layer block builder
-	FFNBuilders     []FFNBuilder   // per-layer FFN builder
+	LayerBlockNames []string          // which block each layer uses
+	BlockBuilders   []BlockBuilder    // per-layer block builder
+	FFNBuilders     []FFNBuilder      // per-layer FFN builder
+	FFNConfigs      []map[string]any  // per-layer FFN config (from [ffn.config] / [ffn_alt.config])
 
 	// Canonical module map and tensor dims for visualization.
 	CanonicalModuleMap *ModuleMap
@@ -371,12 +372,15 @@ func NewGenericModel(archName, modelPath, archDir string) (*GenericModel, error)
 		}
 	}
 	m.FFNBuilders = make([]FFNBuilder, nLayers)
+	m.FFNConfigs = make([]map[string]any, nLayers)
 	for i, lw := range weights.Layers {
 		// Use alt FFN if this layer has alt weights in the GGUF
 		if fbAlt != nil && len(lw.FFNAlt) > 0 && layerHasAltFFN(store, lw) {
 			m.FFNBuilders[i] = fbAlt
+			m.FFNConfigs[i] = def.FFNAlt.Config
 		} else {
 			m.FFNBuilders[i] = fb
+			m.FFNConfigs[i] = def.FFN.Config
 		}
 	}
 
@@ -442,9 +446,26 @@ func ResolveWeightLayout(archName, modelPath, archDir string) (*ResolvedWeights,
 }
 
 // layerHasAltFFN checks if the alt FFN weights actually exist in the GGUF for this layer.
+// Skips alt weights whose GGUF tensor name also appears in standard FFN, block, or common
+// weights — those exist in both dense and MoE models and can't distinguish them.
 func layerHasAltFFN(store *WeightStore, lw ResolvedLayerWeights) bool {
+	// Collect GGUF tensor names used by non-alt weight sources.
+	shared := make(map[string]struct{})
+	for _, tn := range lw.Common {
+		shared[tn] = struct{}{}
+	}
+	for _, tn := range lw.Block {
+		shared[tn] = struct{}{}
+	}
+	for _, tn := range lw.FFN {
+		shared[tn] = struct{}{}
+	}
+
 	lt := store.layers[lw.Index]
-	for logicalName := range lw.FFNAlt {
+	for logicalName, tensorName := range lw.FFNAlt {
+		if _, ok := shared[tensorName]; ok {
+			continue
+		}
 		if t := lt["ffn_"+logicalName]; !t.IsNil() {
 			return true
 		}

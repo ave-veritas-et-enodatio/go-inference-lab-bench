@@ -70,11 +70,50 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 	// Generate module-map layers diagram if layer count is known
 	if svgLayers > 0 {
 		weights := arch.ResolveWeightsFromDef(def, svgLayers)
+		// Strip FFNAlt so the standard layers diagram shows dense FFN only.
+		if def.FFNAlt != nil {
+			for i := range weights.Layers {
+				weights.Layers[i].FFNAlt = nil
+			}
+		}
 		mm := arch.BuildModuleMap(weights)
 		layersPath := filepath.Join(filepath.Dir(outputPath), def.Architecture.Name+".layers.svg")
 		if err := arch.RenderModuleMapDiagram(mm, layersPath, strings.Title(def.Architecture.Name)+" Layers", nil); err != nil {
 			log.Fatalf("generating layers SVG: %v", err)
 		}
 		fmt.Fprintf(os.Stderr, "wrote %s\n", layersPath)
+	}
+
+	// Generate alt FFN variant diagram if the arch has [ffn_alt]
+	if def.FFNAlt != nil {
+		altSuffix := "-" + def.FFNAlt.Builder
+		altBase := strings.TrimSuffix(inputPath, ".arch.toml")
+		altArchPath := altBase + altSuffix + ".arch.svg"
+
+		af, err := os.Create(altArchPath)
+		if err != nil {
+			log.Fatalf("creating %s: %v", altArchPath, err)
+		}
+		defer af.Close()
+
+		altOpts := arch.ArchDiagramOptions{LayerCount: svgLayers, UseFFNAlt: true}
+		if err := arch.RenderArchDiagram(def, svgBlockSVGDir, af, altOpts); err != nil {
+			os.Remove(altArchPath)
+			log.Fatalf("generating alt FFN SVG: %v", err)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", altArchPath)
+
+		// Alt layers diagram (with FFNAlt → MoE modules)
+		if svgLayers > 0 {
+			altWeights := arch.ResolveWeightsFromDef(def, svgLayers)
+			altMM := arch.BuildModuleMap(altWeights)
+			altLayersPath := filepath.Join(filepath.Dir(outputPath),
+				def.Architecture.Name+altSuffix+".layers.svg")
+			if err := arch.RenderModuleMapDiagram(altMM, altLayersPath,
+				strings.Title(def.Architecture.Name)+" Layers ("+def.FFNAlt.Builder+" variant)", nil); err != nil {
+				log.Fatalf("generating alt layers SVG: %v", err)
+			}
+			fmt.Fprintf(os.Stderr, "wrote %s\n", altLayersPath)
+		}
 	}
 }

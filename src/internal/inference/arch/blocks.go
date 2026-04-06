@@ -68,7 +68,7 @@ type FFNBuilder interface {
 	Contract() BuilderContract
 
 	BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor, weights map[string]ggml.Tensor,
-		params *ResolvedParams) ggml.Tensor
+		params *ResolvedParams, config map[string]any) ggml.Tensor
 }
 
 // Builder registries
@@ -82,7 +82,7 @@ func init() {
 	blockBuilders["gated_delta_net"] = &GatedDeltaNetBuilder{}
 	ffnBuilders["swiglu"] = &SwiGLUBuilder{}
 	ffnBuilders["geglu"] = &GeGLUBuilder{}
-	ffnBuilders["moe_with_shared"] = &MoEWithSharedBuilder{}
+	ffnBuilders["moe"] = &MoEBuilder{}
 }
 
 // GetBlockBuilder returns a registered block builder by name.

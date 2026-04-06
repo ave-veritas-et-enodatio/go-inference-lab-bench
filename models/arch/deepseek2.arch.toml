@@ -89,7 +89,7 @@ builder = "swiglu"
 # --- MoE FFN (remaining layers) ---
 
 [ffn_alt]
-builder = "moe_with_shared"
+builder = "moe"
 
   [ffn_alt.weights]
   gate_inp   = "ffn_gate_inp.weight"
