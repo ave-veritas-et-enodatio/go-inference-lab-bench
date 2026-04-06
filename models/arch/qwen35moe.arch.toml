@@ -120,7 +120,10 @@ builder = "gated_delta_net"
 # --- MoE FFN (replaces dense SwiGLU) ---
 
 [ffn]
-builder = "moe_with_shared"
+builder = "moe"
+
+  [ffn.config]
+  activation = "silu"
 
   [ffn.weights]
   # Router

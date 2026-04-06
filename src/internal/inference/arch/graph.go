@@ -104,8 +104,20 @@ func (m *GenericModel) buildFFNBlock(ctx *ggml.GraphContext, x ggml.Tensor,
 		}
 	}
 	if anyNonNil(ffnWeights) {
+		ffnConfig := m.FFNConfigs[il]
+		// Self-normed builders manage their own pre/post norms internally
+		// (e.g. MoE with parallel shared+expert paths that need separate norms).
+		if configStr(ffnConfig, "self_normed") == "true" {
+			ffnOut := m.FFNBuilders[il].BuildFFN(ctx, x, ffnWeights, m.Params, ffnConfig)
+			// Self-normed builders handle internal pre/post norms for each path,
+			// but the common post-FFN norm still wraps the combined output.
+			if !lt["ffn_post_norm"].IsNil() {
+				ffnOut = rmsNormApply(ctx, ffnOut, lt["ffn_post_norm"], rmsEps)
+			}
+			return ggml.Add(ctx, ffnInp, ffnOut)
+		}
 		xn2 := rmsNormApply(ctx, x, ffnNorm(lt), rmsEps)
-		ffnOut := m.FFNBuilders[il].BuildFFN(ctx, xn2, ffnWeights, m.Params)
+		ffnOut := m.FFNBuilders[il].BuildFFN(ctx, xn2, ffnWeights, m.Params, ffnConfig)
 		// Optional post-FFN norm
 		if !lt["ffn_post_norm"].IsNil() {
 			ffnOut = rmsNormApply(ctx, ffnOut, lt["ffn_post_norm"], rmsEps)

@@ -2,19 +2,19 @@
 <!-- color: #e65100 (orange) -->
 <g>
   <rect width="660" height="200" rx="6" fill="url(#ffnGrad)" stroke="#e65100" stroke-width="1.2" filter="url(#shadow)"/>
-  <text x="330" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#bf360c">MoE FFN + Shared Expert</text>
+  <text x="330" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#bf360c">Unified MoE FFN</text>
 
   <!-- Routed experts -->
   <g transform="translate(15, 35)">
     <rect width="120" height="56" rx="4" fill="#fff" stroke="#ff9800" stroke-width="0.8" opacity="0.9"/>
     <text x="60" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#e65100">Router</text>
-    <text x="60" y="31" text-anchor="middle" font-size="9" fill="#777">gate_inp.weight</text>
+    <text x="60" y="31" text-anchor="middle" font-size="9" fill="#777">gate_inp</text>
     <text x="60" y="43" text-anchor="middle" font-size="9" fill="#777">softmax -> top-k</text>
   </g>
   <g transform="translate(150, 35)">
     <rect width="200" height="56" rx="4" fill="#fff" stroke="#ff9800" stroke-width="0.8" opacity="0.9"/>
-    <text x="100" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#e65100">Expert SwiGLU</text>
-    <text x="100" y="31" text-anchor="middle" font-size="9" fill="#777">gate_exps / up_exps / down_exps</text>
+    <text x="100" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#e65100">Expert Projections</text>
+    <text x="100" y="31" text-anchor="middle" font-size="9" fill="#777">gate_up_exps or gate/up/down_exps</text>
     <text x="100" y="43" text-anchor="middle" font-size="9" fill="#777">mul_mat_id (indexed dispatch)</text>
   </g>
   <g transform="translate(365, 35)">
@@ -24,16 +24,11 @@
     <text x="70" y="43" text-anchor="middle" font-size="9" fill="#777">sum across experts</text>
   </g>
 
-  <!-- Shared expert -->
+  <!-- Shared expert (optional) -->
   <g transform="translate(15, 110)">
-    <rect width="380" height="44" rx="4" fill="#fff" stroke="#ff9800" stroke-width="0.8" opacity="0.9"/>
-    <text x="190" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#e65100">Shared Expert (SwiGLU)</text>
-    <text x="190" y="31" text-anchor="middle" font-size="9" fill="#777">gate_shexp / up_shexp / down_shexp</text>
-  </g>
-  <g transform="translate(410, 110)">
-    <rect width="120" height="44" rx="4" fill="#fff" stroke="#ff9800" stroke-width="0.8" opacity="0.9"/>
-    <text x="60" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#e65100">Sigmoid Gate</text>
-    <text x="60" y="31" text-anchor="middle" font-size="9" fill="#777">gate_inp_shexp</text>
+    <rect width="510" height="44" rx="4" fill="#fff" stroke="#ff9800" stroke-width="0.8" opacity="0.9" stroke-dasharray="4,2"/>
+    <text x="255" y="17" text-anchor="middle" font-size="11" font-weight="600" fill="#e65100">Shared Expert (optional)</text>
+    <text x="255" y="31" text-anchor="middle" font-size="9" fill="#777">Qwen: SwiGLU + sigmoid gate | Gemma4: plain FFN (same activation)</text>
   </g>
 
   <!-- Combine label -->
