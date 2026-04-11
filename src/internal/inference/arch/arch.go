@@ -23,11 +23,20 @@ type ArchDef struct {
 	FFN          FFNDef                 `toml:"ffn"`
 	FFNAlt       *FFNDef                `toml:"ffn_alt"` // optional: layers that have these weights use this FFN instead
 	Tokens       TokensDef              `toml:"tokens"`
+	Example      ExampleDef             `toml:"example"`
+}
+
+// ExampleDef provides diagram-only example values for SVG generation.
+// Has no effect on inference. Used when no GGUF model is loaded.
+type ExampleDef struct {
+	NLayers       int `toml:"n_layers"`        // example layer count for layer-pattern strip
+	FullAttnEvery int `toml:"full_attn_every"` // interval: layer (i+1) % N == 0 is full/global attention
 }
 
 type TokensDef struct {
-	ThinkOpen  string `toml:"think_open"`  // e.g. "<think>"
-	ThinkClose string `toml:"think_close"` // e.g. "</think>"
+	ThinkOpen  string   `toml:"think_open"`   // e.g. "<think>"
+	ThinkClose string   `toml:"think_close"`  // e.g. "</think>"
+	ExtraEOS []string `toml:"extra_eos"`
 }
 
 type ArchMeta struct {

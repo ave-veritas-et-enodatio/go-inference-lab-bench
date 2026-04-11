@@ -361,16 +361,15 @@ output   = down @ (gate_out * up_out)     # [n_embd, n_tokens]
 
 ---
 
-## Builder: `moe`
+## Builder: `moe_with_shared`
 
-Unified Mixture-of-Experts FFN. Handles Qwen3.5 MoE, Gemma4 MoE, and DeepSeek2 hybrid via config and weight detection.
+Mixture-of-Experts FFN with optional shared expert and optional expert selection bias.
 
 **Required weights:** `gate_inp`, `gate_exps`, `up_exps`, `down_exps`
-**Optional weights:** `gate_inp_shexp`, `gate_shexp`, `up_shexp`, `down_shexp`, `exp_probs_b`, `gate_up_exps`, `down_exps_s`
+**Optional weights:** `gate_inp_shexp`, `gate_shexp`, `up_shexp`, `down_shexp`, `exp_probs_b`
 **Required params:** `n_expert`, `n_expert_used`
-**Config keys:** `act` (activation: `silu` default, `gelu`), `norm_w` (weight normalization), `norm_router` (normalized router: `rms`), `self_normed` (builder manages internal norms), `shared_kv_group`
 
-Expert routing: softmax (or normalized router) → optional bias (`exp_probs_b` for selection only) → top-k → mul_mat_id → activation → aggregate. Optional weight normalization (sum_rows → clamp → div). Optional shared expert with optional sigmoid gate. Fused `gate_up_exps` detected from weights. Per-expert output scaling via `down_exps_s`.
+Expert routing: softmax → optional bias (`exp_probs_b` for selection only) → top-k → mul_mat_id → SwiGLU → aggregate. Weight normalization (sum_rows → clamp → div). Optional shared expert added with optional sigmoid gate.
 
 ---
 
@@ -406,15 +405,30 @@ Example: DeepSeek2 uses dense SwiGLU for the first layer and MoE for the rest.
 
 ---
 
+## Example (`[example]`)
+
+Diagram-only example values used by `gen-arch-diagram` when no GGUF model is loaded. Has no effect on inference.
+
+```toml
+[example]
+n_layers       = 32   # example layer count for the layer-pattern strip
+full_attn_every = 4   # interval: layer (i+1) % N == 0 → full/global attention
+```
+
+`n_layers` seeds the layer-pattern strip width. `full_attn_every` overrides the default interval (4) used to generate the example routing pattern. Omit `full_attn_every` for architectures with no routing distinction between layers (e.g. Llama, DeepSeek2).
+
+---
+
 ## Tokens (`[tokens]`)
 
 Declares model-specific thinking control tokens:
 
 ```toml
 [tokens]
-think_open  = "<think>"
-think_close = "</think>"
-no_think    = "/nothink"    # or "/no_think" for Qwen
+think_open   = "<think>"
+think_close  = "</think>"
+no_think     = "/nothink"                 # or "/no_think" for Qwen
+extra_eos    = ["<end_of_turn>"]          # optional; non-standard EOS tokens (EOS from GGUF always included automatically)
 ```
 
 Used by the server to filter thinking content and inject no-think instructions. Auto-detected from vocab as fallback if not specified.

@@ -1,0 +1,34 @@
+[
+  {
+    "adapter": "Delve",
+    "label": "bench serve-api",
+    "request": "launch",
+    "mode": "debug",
+    "program": ".",
+    "cwd": "${ZED_WORKTREE_ROOT}/src/bench",
+    "args": [
+      "serve-api"
+    ],
+    "buildFlags": [],
+    "_comment_00": "debugging workaround. program must be . and cwd must be ${ZED_WORKTREE_ROOT}/src/bench",
+    "env": {
+      "BENCH_EXE_DIR": "${ZED_WORKTREE_ROOT}/bin"
+    }
+  },
+  {
+    "adapter": "Delve",
+    "label": "bench chat",
+    "request": "launch",
+    "mode": "debug",
+    "program": ".",
+    "cwd": "${ZED_WORKTREE_ROOT}/src/bench",
+    "args": [
+      "chat"
+    ],
+    "buildFlags": [],
+    "_comment_00": "debugging workaround. program must be . and cwd must be ${ZED_WORKTREE_ROOT}/src/bench",
+    "env": {
+      "BENCH_EXE_DIR": "${ZED_WORKTREE_ROOT}/bin"
+    }
+  }
+]

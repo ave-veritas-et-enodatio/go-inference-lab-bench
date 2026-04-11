@@ -1,9 +1,9 @@
 package ggml
 
 /*
-#cgo CFLAGS: -std=c17 -I${SRCDIR}/../../../ggml_lib/src
-#cgo LDFLAGS: ${SRCDIR}/../../../ggml_lib/build/lib/libggml_lib.a
-#cgo LDFLAGS: -L${SRCDIR}/../../../third_party/ggml/build/src -L${SRCDIR}/../../../third_party/ggml/build/src/ggml-metal
+#cgo CFLAGS: -std=c17 -I${SRCDIR}/../../ggml_lib/src
+#cgo LDFLAGS: ${SRCDIR}/../../ggml_lib/build/lib/libggml_lib.a
+#cgo LDFLAGS: -L${SRCDIR}/../../third_party/ggml/build/src -L${SRCDIR}/../../third_party/ggml/build/src/ggml-metal
 #cgo LDFLAGS: -lggml-metal -lggml-cpu -lggml-base -lggml
 #cgo LDFLAGS: -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders -framework Accelerate -lstdc++
 #include "ggml_ops.h"
@@ -19,7 +19,6 @@ func cBackend(p unsafe.Pointer) C.ggml_go_backend  { return C.ggml_go_backend(p)
 func cBuffer(p unsafe.Pointer) C.ggml_go_buffer   { return C.ggml_go_buffer(p) }
 func cBufType(p unsafe.Pointer) C.ggml_go_buf_type { return C.ggml_go_buf_type(p) }
 func cSched(p unsafe.Pointer) C.ggml_go_sched     { return C.ggml_go_sched(p) }
-func cGguf(p unsafe.Pointer) C.ggml_go_gguf       { return C.ggml_go_gguf(p) }
 func goPtr(p C.ggml_go_tensor) unsafe.Pointer      { return unsafe.Pointer(p) }
 
 // Tensor is an opaque handle to a ggml_tensor in a ggml context.

@@ -8,7 +8,7 @@ import (
 // TensorDims holds the shape and size of a weight tensor.
 // Ne0 is the fastest dimension (input width); Ne1 is the output dimension (NHeads*HeadDim or NFF).
 // Nbytes is the tensor's GPU memory footprint (quantized size, not logical element count).
-// A special "_head_dim" entry per block type stores HeadDim in Ne0.
+// A special "_head_dim" entry per block type stores HeadDim in Ne0 for head-trim fraction computation.
 type TensorDims struct {
 	Ne0    int64
 	Ne1    int64
@@ -102,7 +102,8 @@ func BuildTensorDimsMap(weights *ResolvedWeights, dimLookup func(string) (int64,
 //
 // Common weights are split by purpose: attn_norm belongs to block_L (it normalizes
 // the block's input); all other common weights (ffn_norm) belong
-// to ffn_L because they normalize the FFN's input.
+// to ffn_L because they normalize the FFN's input. This ensures culling block_L does
+// not silence the FFN's pre-normalization step.
 func BuildModuleMap(weights *ResolvedWeights) *ModuleMap {
 	mm := &ModuleMap{}
 
@@ -126,10 +127,10 @@ func BuildModuleMap(weights *ResolvedWeights) *ModuleMap {
 		ffn := Module{ID: nextID, Name: fmt.Sprintf("ffn_%d", L), WeightContext: ctx}
 		nextID++
 
-		// Route common weights by purpose: attention-related norms go to the
-		// block module; everything else goes to the FFN module.
+		// Route common weights by purpose: attn_norm is the block's pre-norm;
+		// ffn_norm (or any other non-attn_norm common weight) is the FFN's pre-norm.
 		for logicalName, ggufName := range lw.Common {
-			if logicalName == "attn_norm" || logicalName == "attn_post_norm" {
+			if logicalName == "attn_norm" {
 				addCompact(&block, ctx, ggufName)
 			} else {
 				addCompact(&ffn, ctx, ggufName)

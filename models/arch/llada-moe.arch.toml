@@ -1,13 +1,8 @@
 # LLaDA-MoE architecture definition.
 #
-# NYI: the model will load but inference produces garbage
-#      because currently Generate() only supports autoregression
-#      this model requires text diffusion generation.
-#
 # Diffusion-based decoder with bidirectional (non-causal) attention.
 # Standard multi-head attention with QK-norm, standard RoPE, MoE FFN.
 # No shared expert, no gated attention output.
-#
 #
 # Known model sizes:
 #   16 layers → 7B total / 1B active (64 experts, top-8)
@@ -73,7 +68,7 @@ builder = "attention"
   v = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
 
 [ffn]
-builder = "moe_with_shared"
+builder = "moe"
 
   [ffn.weights]
   # Router
@@ -86,3 +81,7 @@ builder = "moe_with_shared"
 
 # [tokens]
 # LLaDA-MoE is not a thinking model — no think tokens defined
+
+# Diagram-only example values; no effect on inference.
+[example]
+n_layers = 32

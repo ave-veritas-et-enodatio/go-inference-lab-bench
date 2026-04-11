@@ -2,6 +2,7 @@ package arch
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -10,13 +11,14 @@ import (
 
 // tensorSlot describes the bounding box of one tensor sub-rect within a symbol.
 // Coordinates are relative to the symbol's top-left origin (0, 0 = cell top-left).
+// Used to position per-layer trim overlays on top of placed <use> instances.
 type tensorSlot struct {
 	x, y, w, h int
 	shortName   string
 }
 
 // symbolDef holds a pre-rendered SVG symbol body and the tensor slot geometry
-// for each tensor sub-rect within the symbol.
+// needed to overlay per-layer trim annotations on placed <use> elements.
 type symbolDef struct {
 	id    string
 	slots []tensorSlot
@@ -29,15 +31,30 @@ type symbolDef struct {
 // data flow within each cell); legend + summary column on the right.
 //
 // Block and FFN cell types are defined once as SVG <symbol> elements in <defs> and
-// instantiated with <use transform="translate(x,y)"> per layer. This eliminates
-// duplicate definitions and makes the output efficient for live HTTP delivery.
+// instantiated with <use transform="translate(x,y)"> per layer. Per-layer trim overlays
+// are drawn as separate <rect> elements on top of each <use>, using the slot geometry
+// stored in each symbolDef. This eliminates duplicate definitions and makes the output
+// efficient for live HTTP delivery.
 //
 // Each symbol includes its residual contribution arrow (the dashed path back to the
 // residual spine). Symbol coordinates are relative to the cell top-left (0,0), with
 // overflow="visible" allowing arrows to extend outside the cell boundary.
 //
 // Output path: moduleMapPath + ".svg"
-func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, dims TensorDimsMap) error {
+// engageOpacity maps engagement (1 - cosSim) to overlay opacity using sqrt scale.
+// sqrt gives good discrimination at both the low end (where near-zero engagement
+// maps to near-zero opacity) and the high end (where 0.7 vs 0.95 are visually
+// distinguishable). Returns 0 for sub-threshold values, up to 0.8 for full engagement.
+func engageOpacity(engagement float64) float64 {
+	const minThresh = 0.001
+	const maxOpacity = 0.8
+	if engagement < minThresh {
+		return 0
+	}
+	return math.Sqrt(engagement) * maxOpacity
+}
+
+func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, dims TensorDimsMap, engagement *EngagementData) error {
 	svgPath := moduleMapPath
 	if !strings.HasSuffix(moduleMapPath, ".svg") {
 		svgPath = svgPath + ".svg"
@@ -45,6 +62,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	pal := diagramPalette()
 
 	// --- Parse module structure ---
+
 	type layerEntry struct {
 		blockID, ffnID   int
 		hasBlock, hasFfn bool
@@ -91,10 +109,28 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 
 	// --- Stats ---
 	nTotal := len(mm.Modules)
-	totalTensors, totalWeights := 0, 0
+	totalTensors := 0
+	totalWeights := 0
 	for _, m := range mm.Modules {
-		totalTensors += len(m.Weights) + len(m.Params)
-		totalWeights += len(m.Weights)
+		n := len(m.Weights) + len(m.Params)
+		nw := len(m.Weights)
+		totalTensors += n
+		totalWeights += nw
+	}
+	nCulled, culledTensors, elidedWeights, culledBytes, culledParams := 0, 0, 0, int64(0), int64(0)
+	for _, cs := range mm.CulledByType {
+		nCulled += cs.Count
+		culledTensors += cs.Tensors
+		elidedWeights += cs.Weights
+		culledParams += cs.Parameters
+		culledBytes += cs.Bytes
+	}
+	culledMB := float64(culledBytes) / (1024 * 1024)
+	pct := func(n, total int) int {
+		if total == 0 {
+			return 0
+		}
+		return n * 100 / total
 	}
 
 	// VRAM stats
@@ -141,6 +177,8 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	}
 	fullMB := float64(fullBytes) / (1024 * 1024)
 	hasVRAM := fullBytes > 0
+
+	inactiveParams := culledParams
 
 	// title is used in SVG header rendering below
 
@@ -252,6 +290,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		return "dense"
 	}
 	// --- drawBaseRect: render one tensor sub-rect + label into a builder; return its slot.
+	// Draws the active (full-color) version only — trim overlays are applied separately.
 	drawBaseRect := func(sb *strings.Builder, x, y, w, h int, blockType, shortName string) tensorSlot {
 		var prefix string
 		if isNormWeight(shortName) {
@@ -525,7 +564,10 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 						fmt.Fprintf(&sb, "  <text class=\"tlbl\" x=\"%d\" y=\"%d\">%s</text>\n",
 							bX+bs/2, bY+bs/2, lbl)
 					}
-					}
+					// TODO: trim shading for 3D tensor box lid — shade near/far fractions
+					// of the parallelogram lid to represent expert-axis trim. Deferred
+					// until an MoE model is available for testing.
+				}
 			}
 			if ns := len(sharedWts); ns > 0 {
 				ne := len(expertWts)
@@ -600,14 +642,19 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	legBoxX := legendX - 4
 	legBoxW := canvasW - legBoxX - 4
 	legItemCount := len(blockTypes) + 3 // block types + FFN + global + norm
-	legBoxH := 10 + legItemCount*16 + 10 // top pad + items + bottom pad
+	hasEngagement := engagement != nil && len(engagement.BlockCosSim) > 0
+	engageLegH := 0
+	if hasEngagement {
+		engageLegH = 50 // gap + header + gradient bar + labels
+	}
+	legBoxH := 10 + legItemCount*16 + engageLegH + 10 // top pad + items + engagement + bottom pad
 	hasParams := totalParams > 0
-	statsBoxH := 75
+	statsBoxH := 96
 	if hasParams {
-		statsBoxH += 20
+		statsBoxH += 30
 	}
 	if hasVRAM {
-		statsBoxH += 20
+		statsBoxH += 38
 	}
 
 	// --- Build row-chrome symbol (spine dot + connectors + arrowhead) ---
@@ -686,6 +733,18 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		legItem("url(#zm_ffn)", pal["ffn.stroke"], "FFN (dense)")
 		legItem("url(#zm_global)", pal["global.stroke"], "global")
 		legItem(pal["norm.fill"], pal["norm.stroke"], "RMS norm")
+
+		// Engagement legend (only when engagement data is provided)
+		if hasEngagement {
+			ly += legSz + 10
+			fmt.Fprintf(&legendSVG, "  <text class=\"shdr\" x=\"%d\" y=\"%d\">engagement (1-cos):</text>\n", legPad, ly)
+			ly += 14
+			gradW := legBoxW - 2*legPad
+			fmt.Fprintf(&legendSVG, "  <rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"url(#engage-grad)\" stroke=\"%s\" stroke-width=\"0.5\" rx=\"1\"/>\n",
+				legPad, ly, gradW, legSz, pal["ui.box_border"])
+			fmt.Fprintf(&legendSVG, "  <text class=\"ltxt\" x=\"%d\" y=\"%d\">0</text>\n", legPad+2, ly+legSz+9)
+			fmt.Fprintf(&legendSVG, "  <text class=\"ltxt\" x=\"%d\" y=\"%d\" text-anchor=\"end\">1</text>\n", legPad+gradW-2, ly+legSz+9)
+		}
 	}
 
 	// --- Build summary symbol ---
@@ -696,6 +755,10 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		legBoxW, statsBoxH, pal["ui.box_bg"], pal["ui.box_border"])
 	{
 		sy := 11
+		subLine := func(text string) {
+			fmt.Fprintf(&summarySVG, "  <text class=\"ltxt\" x=\"%d\" y=\"%d\">  %s</text>\n", legPad, sy, text)
+			sy += 12
+		}
 		sectionHeader := func(text string) {
 			fmt.Fprintf(&summarySVG, "  <text class=\"shdr\" x=\"%d\" y=\"%d\">%s</text>\n", legPad, sy, text)
 			sy += 13
@@ -703,10 +766,13 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		sectionGap := func() { sy += 5 }
 
 		sectionHeader(fmt.Sprintf("%d modules", nTotal))
+		subLine(fmt.Sprintf("%d culled (%d%%)", nCulled, pct(nCulled, nTotal)))
 		sectionGap()
 		sectionHeader(fmt.Sprintf("%d tensors", totalTensors))
+		subLine(fmt.Sprintf("%d culled (%d%%)", culledTensors, pct(culledTensors, totalTensors)))
 		sectionGap()
 		sectionHeader(fmt.Sprintf("%d weights", totalWeights))
+		subLine(fmt.Sprintf("%d elided (%d%%)", elidedWeights, pct(elidedWeights, totalWeights)))
 
 		if totalParams > 0 {
 			sectionGap()
@@ -721,11 +787,15 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 				}
 			}
 			sectionHeader(fmt.Sprintf("%s parameters", fmtParams(totalParams)))
+			subLine(fmt.Sprintf("%s inactive (%d%%)", fmtParams(inactiveParams), pct(int(inactiveParams), int(totalParams))))
 		}
 
 		if hasVRAM {
+			usedMB := fullMB - culledMB
 			sectionGap()
 			sectionHeader(fmt.Sprintf("%.1f MB vram", fullMB))
+			subLine(fmt.Sprintf("%.1f MB used (%d%%)", usedMB, pct(int(usedMB*10), int(fullMB*10))))
+			subLine(fmt.Sprintf("%.1f MB culled (%d%%)", culledMB, pct(int(culledMB*10), int(fullMB*10))))
 		}
 	}
 
@@ -746,7 +816,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 
 	const rightColOffset = 290 // horizontal offset for right column
 
-	// Vertical layout (headroom for 20px title)
+	// Vertical layout
 	spineY1 := 54
 	firstRowCY := spineY1 + 10
 	colRows := leftCount // left column always has >= right column rows
@@ -785,6 +855,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
   .gtxt  { font-size: 9px; text-anchor: middle; dominant-baseline: middle; }
   .ltxt  { font-size: 8px; fill: %s; dominant-baseline: middle; }
   .shdr  { font-size: 8px; font-weight: bold; fill: %s; dominant-baseline: middle; }
+  .etxt  { font-size: 6px; fill: %s; text-anchor: middle; dominant-baseline: hanging; }
 </style>
 <defs>
 `, canvasW2, canvasH,
@@ -794,13 +865,20 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		pal["ui.text_tensor"],
 		pal["ui.dot"],
 		pal["ui.text_body"],
-		pal["ui.text_head"])
+		pal["ui.text_head"],
+		pal["ui.text_hint"])
 
 	// Gradients
 	for _, name := range []string{"full_attention", "swa", "recurrent", "ffn", "global"} {
 		fmt.Fprintf(&b, "  <linearGradient id=\"zm_%s\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n", name)
 		fmt.Fprintf(&b, "    <stop offset=\"0%%%%\" stop-color=\"%s\"/><stop offset=\"100%%%%\" stop-color=\"%s\"/>\n",
 			pal[name+".grad_top"], pal[name+".grad_bottom"])
+		fmt.Fprintf(&b, "  </linearGradient>\n")
+	}
+	if hasEngagement {
+		fmt.Fprintf(&b, "  <linearGradient id=\"engage-grad\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\">\n")
+		fmt.Fprintf(&b, "    <stop offset=\"0\" stop-color=\"%s\" stop-opacity=\"0\"/><stop offset=\"1\" stop-color=\"%s\" stop-opacity=\"0.7\"/>\n",
+			pal["engage.hot"], pal["engage.hot"])
 		fmt.Fprintf(&b, "  </linearGradient>\n")
 	}
 
@@ -842,7 +920,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 
 	fmt.Fprintf(&b, "</defs>\n")
 
-  // Background
+	// Background
 	fmt.Fprintf(&b, "  <rect width=\"%d\" height=\"%d\" fill=\"%s\" rx=\"8\"/>\n\n", canvasW2, canvasH, pal["ui.canvas_bg"])
 
 	// Title (centered over the U)
@@ -871,6 +949,15 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		rightSpineX, rightSpineBottom, rightSpineX, rightSpineTop, pal["ui.spine"])
 
 	// --- Left column layers (descending) ---
+	// engageLabel formats an engagement value for the SVG annotation.
+	engageLabel := func(cosSim float32) string {
+		e := 1 - cosSim
+		if e >= 0.01 {
+			return fmt.Sprintf("%.2f", e)
+		}
+		return fmt.Sprintf("%.4f", e)
+	}
+
 	emitLayerRow := func(l int, lr *layerEntry, cy, xOff int) {
 		rowY := cy - cellH/2
 		fmt.Fprintf(&b, "  <use href=\"#row-chrome\" transform=\"translate(%d,%d)\"/>\n", xOff, cy)
@@ -880,6 +967,20 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 			m := moduleByID[lr.blockID]
 			sym := blockSymbols[m.BlockName]
 			fmt.Fprintf(&b, "  <use href=\"#%s\" transform=\"translate(%d,%d)\"/>\n", sym.id, xOff+cellX1, rowY)
+			if hasEngagement && l < len(engagement.BlockCosSim) {
+				e := float64(1 - engagement.BlockCosSim[l])
+				if !math.IsNaN(e) {
+					if op := engageOpacity(e); op > 0 {
+						for _, slot := range sym.slots {
+							fmt.Fprintf(&b, "  <rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"%s\" fill-opacity=\"%.3f\" rx=\"1\" pointer-events=\"none\"/>\n",
+								xOff+cellX1+slot.x, rowY+slot.y, slot.w, slot.h, pal["engage.hot"], op)
+						}
+					}
+					// Engagement value annotation below cell
+					fmt.Fprintf(&b, "  <text class=\"etxt\" x=\"%d\" y=\"%d\">%s</text>\n",
+						xOff+cellX1+blockCellW/2, rowY+cellH+8, engageLabel(engagement.BlockCosSim[l]))
+				}
+			}
 		}
 
 		if lr.hasFfn {
@@ -887,6 +988,20 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 			sk := ffnSymKey(m)
 			sym := ffnSymbols[sk]
 			fmt.Fprintf(&b, "  <use href=\"#%s\" transform=\"translate(%d,%d)\"/>\n", sym.id, xOff+cellX2, rowY)
+			if hasEngagement && l < len(engagement.FFNCosSim) {
+				e := float64(1 - engagement.FFNCosSim[l])
+				if !math.IsNaN(e) {
+					if op := engageOpacity(e); op > 0 {
+						for _, slot := range sym.slots {
+							fmt.Fprintf(&b, "  <rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"%s\" fill-opacity=\"%.3f\" rx=\"1\" pointer-events=\"none\"/>\n",
+								xOff+cellX2+slot.x, rowY+slot.y, slot.w, slot.h, pal["engage.hot"], op)
+						}
+					}
+					// Engagement value annotation below cell
+					fmt.Fprintf(&b, "  <text class=\"etxt\" x=\"%d\" y=\"%d\">%s</text>\n",
+						xOff+cellX2+ffnCellW/2, rowY+cellH+8, engageLabel(engagement.FFNCosSim[l]))
+				}
+			}
 		}
 	}
 

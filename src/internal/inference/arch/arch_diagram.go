@@ -512,9 +512,13 @@ func emitLayerPattern(w *bufio.Writer, def *ArchDef, nLayers, x, y, width, heigh
 	pal := diagramPalette()
 	fmt.Fprintf(w, "  <g transform=\"translate(%d, %d)\">\n", x, y)
 	fmt.Fprintf(w, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"%s\" stroke=\"%s\" stroke-width=\"1\" filter=\"url(#shadow)\"/>\n", width, height, pal["ui.box_bg"], pal["ui.box_border"])
+	interval := diagramFallbackInterval
+	if def.Example.FullAttnEvery > 0 {
+		interval = def.Example.FullAttnEvery
+	}
 	title := fmt.Sprintf("Layer Pattern (example: %d layers", nLayers)
 	if def.Layers.Routing.IfTrue != def.Layers.Routing.IfFalse {
-		title += fmt.Sprintf(", full attention every %d", diagramFallbackInterval)
+		title += fmt.Sprintf(", full attention every %d", interval)
 	}
 	title += ")"
 	fmt.Fprintf(w, "    <text x=\"%d\" y=\"19\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"600\" fill=\"%s\">%s</text>\n", width/2, pal["ui.text_head"], title)
@@ -564,19 +568,24 @@ const diagramFallbackInterval = 4
 // Covers both rule-based routing (Qwen3.5: full_attn_interval) and pattern-based
 // routing (Gemma4: swa_pattern as every-Nth-layer example).
 func diagramFallbackParams(def *ArchDef, nLayers int) *ResolvedParams {
+	interval := diagramFallbackInterval
+	if def.Example.FullAttnEvery > 0 {
+		interval = def.Example.FullAttnEvery
+	}
 	rp := &ResolvedParams{
-		Ints:    map[string]int{"full_attn_interval": diagramFallbackInterval},
+		Ints:    map[string]int{"full_attn_interval": interval},
 		Floats:  map[string]float32{},
 		Strings: map[string]string{},
 		IntArr:  map[string][]int{},
 	}
 	// For pattern routing, generate a representative pattern.
-	// Use every-Nth-layer as if_true, rest as if_false (matching the convention
-	// in BuildModuleMapFromDef).
+	// Use every-Nth-layer (1-based: (i+1) % interval == 0) as if_true, rest as if_false.
+	// Matches Gemma4's convention (global at layers 4,9,14... in 0-based = every 5th in 1-based)
+	// and Qwen's routing rule (@{layer_idx} + 1) % full_attn_interval != 0.
 	if def.Layers.Routing.Pattern != "" {
 		pattern := make([]int, nLayers)
 		for i := range pattern {
-			if i%diagramFallbackInterval == 0 {
+			if (i+1)%interval == 0 {
 				pattern[i] = 1
 			}
 		}

@@ -6,10 +6,10 @@ import (
 	"strings"
 
 	log "inference-lab-bench/internal/log"
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
 
-// GenericCache holds per-layer cache tensors allocated on Metal.
+// GenericCache holds per-layer cache tensors allocated on GPU.
 type GenericCache struct {
 	Model     *GenericModel
 	SeqPos    int
@@ -17,6 +17,10 @@ type GenericCache struct {
 	Layers    []LayerCache // one per model layer
 	cacheCtx  *ggml.GraphContext
 	cacheBuf  *ggml.Buffer
+
+	// Pre-allocated mask buffers for the hot decode path (ForwardCached).
+	maskBuf    []float32 // causal mask; sized to maxSeqLen (nQuery=1 during decode)
+	swaMaskBuf []float32 // SWA mask; same size; nil if architecture has no SWA
 }
 
 // NewGenericCache creates a cache from the architecture definition.
@@ -133,6 +137,8 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 
 	gc.cacheCtx = cacheCtx
 	gc.cacheBuf = cacheBuf
+	gc.maskBuf = make([]float32, maxSeqLen)
+	gc.swaMaskBuf = make([]float32, maxSeqLen)
 	gc.Clear()
 
 	log.Info("cache: %d seq max, %.1f MB GPU VRAM",

@@ -3,7 +3,7 @@ package arch
 import (
 	"math"
 
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
 
 // MoEBuilder implements a unified Mixture of Experts FFN that handles multiple
