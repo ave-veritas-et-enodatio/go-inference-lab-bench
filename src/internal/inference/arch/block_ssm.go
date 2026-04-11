@@ -1,7 +1,7 @@
 package arch
 
 import (
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
 
 // newZeroFilledInput creates a tensor, marks it as input, and appends it to the zero-fill list.
@@ -113,9 +113,9 @@ func (b *GatedDeltaNetBuilder) BuildStateless(
 }
 
 func (b *GatedDeltaNetBuilder) BuildCached(
-	ctx *ggml.GraphContext, cur ggml.Tensor, weights map[string]ggml.Tensor,
+	ctx *ggml.GraphContext, gf *ggml.Graph, cur ggml.Tensor, weights map[string]ggml.Tensor,
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
-	cache *LayerCache, writebacks *[]CacheWriteback) ggml.Tensor {
+	cache *LayerCache) ggml.Tensor {
 
 	nNew := inputs.NTokens
 	rmsEps := params.Floats["rms_eps"]
@@ -143,17 +143,12 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 	qkvT := ggml.Transpose(ctx, qkvMixed)
 	convInput := ggml.Concat(ctx, convSt3d, qkvT, 0)
 
-	// Conv state writeback
+	// Conv state writeback: copy new tail of convInput into cache (in-graph GPU copy).
 	newConvSt := ggml.View3D(ctx, convInput, dConv-1, cc, nSeqs,
 		convInput.Nb(1), convInput.Nb(2),
 		int(convInput.Ne(0)-(dConv-1))*convInput.ElementSize())
 	newConvStCont := ggml.Cont(ctx, newConvSt)
-	ggml.SetOutput(newConvStCont)
-	convBytes := int((dConv - 1) * cc * nSeqs * 4)
-	*writebacks = append(*writebacks, CacheWriteback{
-		Src: newConvStCont, Dst: cache.Tensors[CacheConvState],
-		NHeads: 1, HeadSrc: convBytes, HeadDst: convBytes, HeadOffset: 0, HeadBytes: convBytes,
-	})
+	gf.BuildForwardExpand(ggml.Cpy(ctx, newConvStCont, cache.Tensors[CacheConvState]))
 
 	convOut := ggml.Silu(ctx, ggml.SSMConv(ctx, convInput, weights["ssm_conv1d"]))
 
@@ -186,18 +181,13 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 		ggml.RowSize(ggml.TypeF32, hvDim), ggml.RowSize(ggml.TypeF32, hvDim*dtRank),
 		ggml.RowSize(ggml.TypeF32, hvDim*dtRank*nNew), 0)
 
-	// SSM state writeback
+	// SSM state writeback: copy updated state back to cache (in-graph GPU copy).
 	newSSMSt := ggml.View4D(ctx, deltaOut, hvDim, hvDim, dtRank, nSeqs,
 		ggml.RowSize(ggml.TypeF32, hvDim), ggml.RowSize(ggml.TypeF32, hvDim*hvDim),
 		ggml.RowSize(ggml.TypeF32, hvDim*hvDim*dtRank),
 		ggml.RowSize(ggml.TypeF32, hvDim*dtRank*nNew*nSeqs))
 	newSSMCont := ggml.Cont(ctx, newSSMSt)
-	ggml.SetOutput(newSSMCont)
-	ssmBytes := int(hvDim * hvDim * dtRank * nSeqs * 4)
-	*writebacks = append(*writebacks, CacheWriteback{
-		Src: newSSMCont, Dst: cache.Tensors[CacheSSMState],
-		NHeads: 1, HeadSrc: ssmBytes, HeadDst: ssmBytes, HeadOffset: 0, HeadBytes: ssmBytes,
-	})
+	gf.BuildForwardExpand(ggml.Cpy(ctx, newSSMCont, cache.Tensors[CacheSSMState]))
 
 	// Gated normalization
 	z4d := ggml.Reshape4D(ctx, z, hvDim, dtRank, nNew, nSeqs)

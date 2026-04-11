@@ -1,80 +1,51 @@
 # Go Inference Lab Bench
 
-A from-scratch Go language LLM inference lab bench for doing R&D related to the mechanics of inference.
-Provides local multi-model inference server, multiple ways of testing inference, data-driven model architecture (definition, loading, and visualization), and general utilities.
+From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-model API server, data-driven architecture definition via TOML DSL, KV-cached and stateless inference, weight culling infrastructure, and visualization tooling.
 
 ## Project Priorities
-- Focus 
-  - this is an R&D tool. No optimizing for production concerns at the expense of clarity & tinkerability.
-  - this is meant to be a fairly general tool, don't make choices that close lots of doors
-- Consistency - naming patterns, data patterns, conventions - surprises are bad. R&D work means focusing on the problem, not keeping the tooling's mess straight in your head or token window
-  - the static data language of choice is TOML, when not constrained by requirements, (e.g. json for OpenAPI payloads)
-  - discipline-specific terminology is adhered to for names where high-consensus terms exist (e.g. 'module' for portion of a layer)
-- Preserve data-driven model architecture support purity - model-specific code is BAD and subverts the design
-  - A great deal of effort has been expended in making the modular block system & toml-based DSL mechanism work. 
-  - It has repeatedly demonstrated its value
-    - at the bootstrapping of this project getting qwen3.5 model working in pure C++ took 2 days of solid work.
-    - adding the last 2 architectures (so far), one of which was deepseek2, took 2 hours for both.
-- Cleanliness & Consision
-  - DRY adherence is top priority
-    - For all its advantages, go is verbose language
-    - Code reuse is paramount to prevent wasting token window space on redundancy
-  - any functionality needed two or more times needs to get refactored into a utility function.
-    - if it is a general utility it goes into a project-wide utility file (`src/internal/util/project_util.go`)
-    - if it is package-specific and utilization spans multiple files it goes into `src/internal/[package]/[package]_util.go`
-    - if it is specific to a single file, put the util function implementation in that file
-  - Complex code must be reserved for complex needs. A 100 line algorithm for O(1) efficiency over a 64 element data set is a waste when O(n) is 5 lines and will never make a noticeable difference
-  - Separation of Concerns
-    - systems should maintain ignorance of other system internals
-    - one function or system 'pre-digesting' data for consumption by another function or system in a way only useful to the callee is a sign of violation of this principle.
-- Currently only macOS supported but ports to Linux and Windows are coming
-  - Do not accummulate tech debt related to portability
-  - The only platform-specific debt at this time are around the ggml binding layer
-    - ggml 3rd party C++ project build options provided to cmake
-    - ggml_lib C project compiler flags
-    - binding layer functions for other platforms need wiring (only mac/metal exposed right now)
+
+- **R&D focus** — clarity and tinkerability over production concerns; don't make choices that close doors
+- **Consistency** — naming, data patterns, conventions. Surprises are expensive in R&D. TOML is the static data language except where constrained (e.g. JSON for OpenAPI payloads). Use discipline-specific terminology where high-consensus terms exist.
+- **Data-driven architecture purity** — model-specific Go code subverts the design. The TOML DSL + block builder system is the whole point; adding architectures should be a data-writing operation, not a coding one.
+- **DRY** — any functionality used in ≥2 places gets refactored into a utility:
+  - project-wide → `src/internal/util/project_util.go`
+  - package-internal, multi-file → `src/internal/[pkg]/[pkg]_util.go`
+  - single-file → define in that file
+- **Separation of Concerns**
+  - systems should maintain ignorance of other system internals
+  - one function or system 'pre-digesting' data for consumption by another function or system in a way only useful to the callee is a sign of violation of this principle. 
+- **Complexity budget** — complex code for complex needs only. O(n) over 64 elements beats a 100-line O(1) every time.
+- **Portability** — macOS only now; Linux/Windows ports coming. Don't accumulate portability debt. Platform-specific surface area is limited to: ggml cmake build options, `ggml_lib` compiler flags, and Metal-specific binding wiring.
 
 ## Current Status
 
-Known working models (from huggingface.co, links in README.md):
-* Llama-3.2-3B-Instruct-f16.gguf, llama-3.2-3b-instruct-q4_k_m.gguf (dense, `llama` arch)
-* Qwen3.5-4B_Abliterated.f16.gguf (dense, `qwen35` arch)
-* Qwen3.5-9B-abliterated.f16.gguf (dense, `qwen35` arch)
-* Qwen3.5-35B-A3B MoE (`qwen35moe` arch)
-* DeepSeek2/GLM-4 4.7B (`deepseek2` arch)
-* gemma-4-E4B-it-Q4_K_M.gguf (dense, `gemma4` arch)
-* Gemma 4 MoE (`gemma4` arch, auto-detected via `[ffn_alt]` GGUF weights)
+Known working models (links in README.md):
+- Llama-3.2-3B-Instruct-f16.gguf, llama-3.2-3b-instruct-q4_k_m.gguf (`llama` arch)
+- qwen35-9b-opus46-mix-i1-Q4_K_M.gguf (`qwen35` arch)
+- DeepSeek-V2-Lite-Chat.Q4_K_M.gguf (`deepseek2` arch)
+- gemma-4-E4B-it-Q4_K_M.gguf (dense, `gemma4` arch)
+- Gemma 4 MoE (`gemma4` arch, auto-detected via `[ffn_alt]` GGUF weights)
 
-- **Inference** KV cached and stateless inference. Model architectures are defined via a TOML DSL (`models/arch/*.arch.toml`) that drives GGUF loading, graph construction, and cache allocation. Block builders implement the graph-level ops in Go. The only C code is a thin, model-agnostic ggml op wrapper layer (`ggml_ops.h/.c`). Zero C++ in the project.
-- HTTP server with Bearer auth, model listing, streaming SSE + non-streaming completions, logprobs
-- **TOML DSL-driven model loading**: architecture definitions in `models/arch/*.arch.toml` declare params, layer routing, weight bindings, cache specs, and FFN type
-- **Block builder registry**: `attention` (standard, with config-based param overrides, optional K/V, SharedKV, V-norm, SWA mask, RoPE freq factors), `full_attention_gated` (Qwen3.5), `mla_attention` (DeepSeek2/GLM-4), `gated_delta_net`, `swiglu`, `geglu`, `moe` — pluggable graph construction
-- **Qwen3.5 dense**: hybrid forward pass (attention + delta-net SSM), logit-perfect vs reference
-- **Qwen3.5 MoE**: softmax router, top-k expert dispatch via `ggml_mul_mat_id`, sigmoid-gated shared expert, weight normalization
-- **Llama 3.2**: standard attention with GQA, standard RoPE, SwiGLU FFN
-- **DeepSeek2/GLM-4**: MLA attention (low-rank Q/KV, Q-nope absorption), hybrid dense/MoE FFN, expert bias
-- **Gemma 4 dense**: ISWA (full+SWA attention), GeGLU FFN, V-norm, per-layer embeddings, embed_scale, logit_softcapping
-- **Gemma 4 MoE**: same `gemma4` arch name, auto-detected via `[ffn_alt]` GGUF weights; 128 experts top-8, shared expert, MXFP4, fused gate_up_exps, per-expert output scaling, GELU activation, normalized router
-- GGUF loading entirely in Go (metadata parsing, weight loading to Metal VRAM)
-- Unsupported architectures auto-filtered at scan time
-- **Zero model-specific code**: chat templates executed from GGUF `tokenizer.chat_template` via gonja; BOS/EOS from GGUF metadata; no per-architecture tokenizer branches. Thinking mode controlled entirely by template `enable_thinking` variable — no post-render prompt manipulation.
-- BPE tokenizer loaded from GGUF metadata (Qwen3.5/tiktoken-compatible, 248K vocab)
-- Greedy + top-p sampling; logprob computation via stable log-softmax
-- KV cache + SSM state persistence: prefill in one pass, decode one token at a time
-- Stateless fallback via `"stateless": true`
-- Default model resolution from config, `"model": "default"` supported
-- **SVG architecture visualizer**: `bench gen-arch-diagram` generates architecture diagrams (`*.arch.svg`) and per-layer module map diagrams (`*.layers.svg`) from TOML definitions
+In-progress architectures:
+- LLaDA-MoE (`llada-moe` arch) — diffusion-based bidirectional decoder; arch TOML + builder support complete; diffusion inference loop (iterative masked denoising) not yet implemented
+
+- KV-cached and stateless inference; TOML DSL drives GGUF loading, graph construction, and cache allocation. Only C code is a thin model-agnostic ggml op wrapper. Zero C++.
+- HTTP server: Bearer auth, model listing, streaming SSE + non-streaming completions, logprobs, timing/throughput in `usage` response.
+- **Zero model-specific code**: chat templates executed from GGUF `tokenizer.chat_template` via gonja; BOS/EOS from GGUF metadata. Thinking mode controlled entirely by template `enable_thinking` variable — no post-render prompt manipulation.
+- BPE tokenizer: dual mode — GPT-2 byte-level (Llama, Qwen) + SentencePiece (Gemma); greedy + top-p sampling; logprob computation via stable log-softmax
+- KV cache + SSM state: prefill in one pass, decode one token at a time
+- Stateless mode (`"stateless": true`) — only mode supporting `ForwardCaptures`. Data collection and KV-cache optimization are intentionally separated; do not add capture to `ForwardCached`.
+- SVG architecture visualizer: `bench gen-arch-diagram` generates `*.arch.svg` and `*.layers.svg` from TOML
 
 ## Architecture
-- **Language**: Go (all model logic + HTTP server) + pure C via CGO (ggml op wrappers only)
-- **Model definition**: TOML DSL (`models/arch/*.arch.toml`) — declares params, layer routing, weight bindings, cache specs
-- **Inference backend**: ggml (git submodule), Metal-accelerated
-- **Model format**: GGUF (files in `models/`)
-- **Target models**: Llama 3.2 (3B), Qwen3.5 dense (4B, 9B), Qwen3.5 MoE (35B-A3B), DeepSeek2/GLM-4 (4.7B), Gemma 4 (dense E4B + MoE)
-- **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"enable_thinking"`, `"elide_thinking"`, `"logprobs"`, `"top_logprobs"`, `"model":"default"`. Legacy `/v1/*` also supported. Diagnostic browser at `/diag/`. Control endpoint at `/ctl` (graceful shutdown via `?quit` or immediate via `?quit&now`).
-- **Diagnostics**: `/diag/` serves files from `bin/diag/` — a useful location for dumping R&D diagnostic output (SVGs, data files, etc.) that can be viewed in-browser while the server is running. The directory is auto-created at startup.
-- **Config**: `api_config.toml` — server, models, inference settings (`max_seq_len`, `enable_thinking_default`, `elide_thinking_default`, `log_thinking`, `single_resident_model`)
-- **Logging**: leveled structured logging via `internal/log` (DEBUG/INFO/WARN/ERROR/NONE). Dual stderr+file output via `--log <path>`. Level controlled via `--log-level`. ggml C logs routed through Go logger via callback bridge in `ggml/logging.go`.
+
+- **Language**: Go + pure C via CGo (ggml op wrappers only)
+- **Model definition**: TOML DSL (`models/arch/*.arch.toml`)
+- **Inference backend**: ggml (git submodule), gpu-accelerated
+- **Model format**: GGUF (`models/`)
+- **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"cull_method"`, `"enable_thinking"`, `"elide_thinking"`, `"logprobs"`, `"top_logprobs"`, `"model":"default"`. Legacy `/v1/*` also supported. Diagnostic browser at `/diag/`. Control endpoint at `/ctl/` (`?memstats` = memory stats; `?quit` = graceful shutdown; `?quit&now` = immediate). Request-level overrides of server config defaults logged as `[req] param overrides: ...`.
+- **Diagnostics**: `/diag/` serves files from `bin/diag/` — a useful location for dumping R&D diagnostic output (SVGs, culling maps, etc.) that can be viewed in-browser while the server is running.
+- **Config**: `config/api_config.toml` — `[server]` (host, port, auth_token), `[models]` (directory, default), `[inference]` (max_seq_len, enable_thinking_default, elide_thinking_default, log_thinking, cull_method_default, single_resident_model, max_request_seq_len, strict_mode)
 - **Default listen**: `0.0.0.0:11116`
 
 ## Source Layout
@@ -86,91 +57,96 @@ config/
   chat_config.toml              Chat client config (base_url=auto, model, system_prompt)
 models/
   *.gguf                        Model files (not committed)
-  arch/                         Architecture TOML definitions (*.arch.toml) + generated SVGs (*.arch.svg, *.layers.svg)
-    MODEL_ARCH_TOML_DSL_SPEC.md               DSL specification
+  arch/                         Architecture TOML definitions + generated SVGs
+    MODEL_ARCH_TOML_DSL_SPEC.md DSL specification
     block_svg/                  Hand-crafted SVG fragments per block builder
-    editor/                     Web-based TOML editor (HTML/JS/CSS)
 src/
   Makefile                      Go build, ggml build, test
   go.mod / go.sum               Module: inference-lab-bench
-  bench/                        CLI entry point (cobra subcommands — thin wrappers that dispatch to internal/)
-    main.go                     Root command (cobra)
-    serve_api.go                serve-api: dispatches to apiserver
-    chat.go                     chat: dispatches to chatclient
-    gen_arch_diagram.go         gen-arch-diagram: SVG from TOML (+ alt FFN variant diagrams when [ffn_alt] present)
-    arch_editor.go              arch-editor: dispatches to archeditor
+  bench/                        CLI entry point (cobra subcommands — thin wrappers)
+    main.go                     Root command
+    serve_api.go                serve-api
+    chat.go                     chat
+    gen_arch_diagram.go         gen-arch-diagram: SVG from TOML
+    gen_cull_metadata.go        gen-cull-metadata: writes .cullmeta sidecar
   internal/
-    log/                        Leveled logger (DEBUG/INFO/WARN/ERROR), dual stderr+file, ggml log bridge
+    log/                        Structured leveled logger (Debug/Info/Warn/Error/Fatal); see ### Internal Logging
     util/                       Project-wide utilities (LoadTOML, WriteJSON, BenchPaths, extension constants)
-    apiserver/                  HTTP handlers (OpenAI-compatible: /api/v1/*), /ctl endpoint, single_resident_model eviction
-    chatclient/                 Interactive chat client implementation
+    apiserver/                  HTTP handlers (OpenAI-compatible: /api/v1/*), /ctl endpoint
+    chatclient/                 Interactive chat client
     model/                      GGUF scanning + metadata
-    archeditor/                 Arch editor web server
     inference/
       engine.go                 Generation loop (tokenize → forward → sample)
-      metrics.go                InferenceMetrics (timing, throughput), TokenLogProb, ByteArray
+      metrics.go                InferenceMetrics (timing, throughput, cull ratio, FinishReason, optional Diagnostic)
+      diagnostic.go             Post-generation diagnostic runners (additional forward passes, analysis)
       sampler.go                Greedy and top-p sampling, ComputeTopLogProbs (stable log-softmax)
-      tokenizer.go              BPE tokenizer; chat template executed from GGUF via gonja (no model-specific code)
+      tokenizer.go              BPE tokenizer (GPT-2 byte-level + SentencePiece dual mode); chat template from GGUF via gonja; readGGUFTokensRaw direct GGUF binary reader
       arch/
         arch.go                 ArchDef, TOML parser, Validate() with builder contracts
-        arch_util.go            Shared tensor-op helpers (rmsNormApply, projectReshape3D, attentionScale), cache key constants (CacheK, CacheV, ...)
-        block_attention_util.go Shared attention helpers (scaledDotProductAttention, writeCacheKV, selectCachedKV, selectSharedKV, applyRoPEPair)
+        arch_util.go            Shared tensor-op helpers, cache key constants, configIntOr/configFloatOr/configStr, attentionScale
+        block_attention_util.go Shared attention helpers (scaledDotProductAttention, RoPE, KV cache)
         params.go               Param resolver + routing expression eval
         weights.go              Weight resolver (template expansion, layer routing)
-        blocks.go               BlockBuilder/FFNBuilder interfaces, registry
+        blocks.go               BlockBuilder/FFNBuilder interfaces, ForwardCaptures, SharedKVState, GraphInputs, LayerCache, registry
+        engagement.go           EngagementData: per-layer cosine similarity (block + FFN residual stream; populated by ForwardStateless)
         block_attention.go      full_attention_gated (Qwen3.5)
-        block_attention_std.go  attention (standard MHA+GQA+RoPE; prepareQKV pipeline, selectMask, KV/SharedKV)
+        block_attention_std.go  attention (Llama, Gemma4 SWA/global; supports sliding_window config, shared KV)
         block_attention_mla.go  mla_attention (DeepSeek2/GLM-4)
         block_ssm.go            gated_delta_net (Qwen3.5 SSM)
         block_ffn.go            swiglu
-        block_ffn_geglu.go      geglu (GELU-gated FFN, Gemma 4)
-        block_ffn_moe.go        moe (unified MoE: shared expert, expert bias, fused gate_up, normalized router)
+        block_ffn_geglu.go      geglu (GeGLU FFN: gelu(gate*x) * up * x → down)
+        block_ffn_moe.go        moe (MoE + shared expert + expert bias)
+        mask.go                 CullingMask (whole-tensor zeroing)
         modules.go              Module, ModuleMap
         module_map.go           BuildModuleMap, BuildTensorDimsMap
-        weight_store.go         WeightStore: immutable weight storage
+        weight_store.go         WeightStore: immutable GPU-resident tensor storage
         model.go                GenericModel: GGUF loading, per-layer FFN routing
         cache.go                Cache allocation (NewCache, GenericCache)
-        graph.go                Forward pass (ForwardStateless, ForwardCached, runLayers, buildCausalMaskData, buildSWAMaskData)
-        validate_lines.go       ResolveErrorLines (TOML key path → source line mapping)
-        diagram_util.go         Shared diagram palette (diagramPalette, palPrefix, palPrefixBuilder)
-        arch_diagram.go         Architecture overview SVG renderer (gen-arch-diagram)
-        module_map_diagram.go   Module map SVG renderer (per-layer tensor details)
-      ggml/                     Go wrappers for ggml ops (~36 functions), logging.go (ggml C log callback bridge)
+        graph.go                Forward pass (ForwardStateless, ForwardCached, runLayers)
+        validate_lines.go       ResolveErrorLines (TOML key path → source line)
+        diagram_util.go         Shared diagram palette (diagramPalette)
+        arch_diagram.go         Architecture overview SVG renderer
+        module_map_diagram.go   Module map SVG renderer (cull overlays)
+      culling/
+        culling.go              ApplyCulling dispatch
+        culling_meta.go         CullingMeta, LoadCullingMeta (auto-detects binary formats + TOML)
+        culling_util.go         WriteCullDiagnostics
+        method_inattention.go   Inattention culling: (empty shell) prompt meta, block engagement
+        method_random.go        Random test pattern culling
+      ggml/                     Go wrappers for ggml ops (~43 functions)
   ggml_lib/                     C op wrappers + ggml build
   third_party/ggml/             ggml git submodule
-test_inference.sh               Test harness
+test_inference.sh               Test harness (works with bench or llama-server via IS_LLAMA)
+test_equiv.sh                   Logprob equivalence test: bench vs llama-server, stateless vs non-stateless, flash vs standard
 ```
 
-### Diagram Style System
-All SVG diagram renderers (`arch_diagram.go`, `module_map_diagram.go`) share a unified color palette defined in `diagram_util.go:diagramPalette()`. Block-type colors (attention, recurrent, FFN, global, norm), gradient definitions, and UI chrome colors (text hierarchy, borders, backgrounds, arrows) are sourced exclusively from this palette. To change a color, update the single palette map — both diagram types will reflect the change.
+All SVG renderers share a single palette from `diagram_util.go:diagramPalette()`. To change any color, update that map only.
 
 ## Build & Run
 
+**Do not use `go build` directly.** Always use `make` targets — the Makefile handles ggml C compilation, cgo flags, symlinks, and output placement.
+
 ```bash
-make                    # builds bench binary, symlinks config+models into bin/
-make serve              # build + start API server (stderr to bin/bench.log)
+make                    # build bench binary, symlink config+models into bin/
+make serve              # build + start API server (--log bin/bench.log --log-level INFO)
 make chat               # build + start interactive chat client
-make arch-diagrams      # (re)builds SVG architecture diagrams from models/arch/*.arch.toml
+make arch-diagrams      # rebuild SVG diagrams from models/arch/*.arch.toml
+make test               # run go unit tests
+make integration-test   # test inference end to end for all models
 
-# CLI subcommands (all support --log <path> --log-level DEBUG|INFO|WARN|ERROR|NONE)
-./bin/bench serve-api           # run inference API server
-./bin/bench chat                # interactive chat client
-./bin/bench gen-arch-diagram    # generate SVG from TOML definition
-./bin/bench arch-editor         # launch web-based TOML editor
+# CLI subcommands
+./bin/bench serve-api
+./bin/bench chat
+./bin/bench gen-arch-diagram [--layers] [--blocks] <input.toml> [output.svg]
+./bin/bench gen-cull-metadata --cull-method <method> [--cpu] <model.gguf>
 
-# Test - by default assumes server is already running; set FORCE_NEW_SERVER=true to kill+restart
-bash test_inference.sh "What is 2+2?"           # one-shot
-bash test_inference.sh --loop                   # interactive (help/stateless/think/quit)
-
-# Environment overrides for test_inference.sh
+# Test harness (assumes server running; FORCE_NEW_SERVER=true to kill+restart)
+bash test_inference.sh "What is 2+2?"
+bash test_inference.sh --loop
 FORCE_NEW_SERVER=true bash test_inference.sh "Hi"
 MODEL=Qwen3.5-4B_abliterated.Q4_K_M MAX_TOKENS=100 bash test_inference.sh "Hi"
-THINK=true ELIDE_THINK=false bash test_inference.sh "Hi" # enable thinking and show <think> content (for thinking models) 
-ALL_MODELS=true bash test_inference.sh "Hi"     # applies the same query to each loaded model sequentially in one invocation
-
-# In --loop mode: /all-models toggles ALL_MODELS mode; /model [n] selects a specific model
-# IMPORTANT: always test with ALL_MODELS=true before considering a change complete.
-# Llama is easy mode — Qwen3.5, Qwen3.5-MoE, DeepSeek2/GLM4, and Gemma4 (dense + MoE) are where issues surface.
+THINK=true ELIDE_THINK=false bash test_inference.sh "Hi"
+ALL_MODELS=true bash test_inference.sh "Hi"   # test every loaded model in sequence
 
 # API
 curl localhost:11116/api/v1/models
@@ -181,39 +157,112 @@ curl -X POST localhost:11116/api/v1/chat/completions \
 
 **Validating Changes**
 * `make test && make integration-test` must pass.
-* When adding new model architectures or changing inference code, `make equiv-test` must also pass — it compares top-1 logprobs against `llama-server` (Homebrew) to verify inference correctness within Metal floating-point variance.
+* When adding new model architectures or changing inference code, `make equiv-test` must also pass — it compares top-1 logprobs against `llama-server` (Homebrew) (among other checks) to verify inference correctness within GPU floating-point variance.
+* Run `ALL_MODELS=true bash test_inference.sh "..."` before declaring any inference change complete. Llama is easy mode — edge cases surface on Qwen3.5, Qwen3.5-MoE, DeepSeek2, and Gemma4.
 
 ## Key Technical Details
 
 ### TOML Model DSL
 
-Model architectures are declared in TOML files (`models/arch/*.arch.toml`). The DSL captures:
-- **Params**: GGUF metadata key mappings + derived arithmetic expressions
-- **Layer routing**: expression-based rules determining which block type each layer uses. `@{name}` references builtins (`@{layer_idx}` = 0-based layer index), `${name}` dereferences a resolved GGUF param. Evaluated at model load time to determine the static layer structure.
+`models/arch/*.arch.toml` declares:
+- **Params**: GGUF metadata key mappings + derived arithmetic expressions + `[params.defaults]` fallbacks
+- **Layer routing**: expression rules → block type per layer. `@{layer_idx}` = builtin; `${name}` = resolved GGUF param. Evaluated at load time.
 - **Weight bindings**: GGUF tensor name templates with `blk.@{layer_idx}.` prefix expansion
-- **Cache specs**: per-block-type cache tensor dimensions and dtypes
-- **FFN type**: which feed-forward builder to use. Optional `[ffn_alt]` for per-layer FFN routing (e.g., dense SwiGLU for first N layers, MoE for the rest — auto-detected from GGUF weights).
-- **Tokens**: `[tokens]` section declares `think_open`, `think_close` per architecture.
-- **Param defaults**: `[params.defaults]` provides fallback values when GGUF params resolve to 0.
+- **Cache specs**: per-block-type tensor dimensions and dtypes; `shared` group name for layers that reuse a single cache tensor (e.g. non-KV layers in Gemma4)
+- **FFN type**: `[ffn]` / `[ffn_alt]` for per-layer routing (e.g. dense for first N layers, MoE for rest — auto-detected from weights)
+- **Layer routing**: `layers.routing.rule` (expression) OR `layers.routing.pattern` (array param name — nonzero → if_true)
+- **Architecture flags**: `embed_scale` (multiply embeddings by sqrt(n_embd)); `non_causal` (bidirectional attention)
+- **Tokens**: `[tokens]` — `think_open`, `think_close`, `stop_tokens` (string array; each entry added to the generation stop set alongside EOS)
 
-Block builders (`full_attention`, `full_attention_gated`, `mla_attention`, `gated_delta_net`, `swiglu`, `geglu`, `moe`) implement the ggml graph construction. Adding a new model that uses existing block types requires only a new `.arch.toml` file. A genuinely new block type requires a new builder implementation. Optional GGUF params use `?` suffix (e.g., `"arch.key?"` — silently skipped if missing).
-
-See `models/arch/MODEL_ARCH_TOML_DSL_SPEC.md` for the full DSL spec.
+Optional GGUF params use `?` suffix (silently skipped if missing). Full spec: `models/arch/MODEL_ARCH_TOML_DSL_SPEC.md` — **read before writing or modifying any `.arch.toml`**.
 
 ### ggml Semantics (verified)
-- `ggml_permute(ctx, a, ax0, ax1, ax2, ax3)`: input dim i goes to output position ax_i. `ne[ax_i] = a->ne[i]`.
-- `ggml_mul_mat(A, B)`: contracts over `A->ne[0] == B->ne[0]`. Result shape `[A->ne[1], B->ne[1], ...]`. Supports GQA broadcasting when `B->ne[2] % A->ne[2] == 0`.
-- `ggml_rms_norm`: normalizes over ne[0] independently for each slice.
-- `ggml_soft_max_ext(a, mask, scale, max_bias)`: computes `softmax(scale * a + mask)` over ne[0].
+- `ggml_permute(ctx, a, ax0..ax3)`: input dim i → output position ax_i. `ne[ax_i] = a->ne[i]`.
+- `ggml_mul_mat(A, B)`: contracts over `A->ne[0] == B->ne[0]`; result `[A->ne[1], B->ne[1], ...]`; GQA broadcasting when `B->ne[2] % A->ne[2] == 0`.
+- `ggml_rms_norm`: normalizes over `ne[0]` per slice.
+- `ggml_soft_max_ext(a, mask, scale, max_bias)`: `softmax(scale * a + mask)` over `ne[0]`.
 - Quantized matmul (Q4_K, Q6_K) dequantizes on the fly — verified correct via isolated test.
 
 ### Qwen3.5 Architecture
-- **Hybrid**: 32 layers — every 4th layer (3,7,11,...,31) is full softmax attention, rest are delta-net SSM
-- **Full attention layers**: joint Q+gate projection, separate K/V, QK-norm, MRoPE (sections [11,11,10,0]), GQA (16Q/4KV heads, head_dim=256), gated output (sigmoid gate)
-- **Delta-net layers**: combined QKV projection, conv1d, L2-normalized Q/K, gated delta net (fused ggml op), gated normalization (rms_norm × silu(z))
-- **Common**: RMSNorm (eps=1e-6), SwiGLU FFN, post-attention norm before FFN
-- Tied embeddings: LM head reuses `token_embd.weight`
-- Exact param values: see `models/arch/qwen35.arch.toml`
+- **Hybrid**: 32 layers — every 4th (3,7,11,...,31) is full softmax attention; rest are delta-net SSM
+- **Full attention**: joint Q+gate projection, separate K/V, QK-norm, MRoPE ([11,11,10,0]), GQA (16Q/4KV heads, head_dim=256), sigmoid-gated output
+- **Delta-net**: combined QKV projection, conv1d, L2-normalized Q/K, fused gated delta net op, rms_norm × silu(z) output gate
+- **Common**: RMSNorm (eps=1e-6), SwiGLU FFN, post-attention norm; tied embeddings
+- Exact params: `models/arch/qwen35.arch.toml`
+
+### Gemma4 Architecture
+- **ISWA**: layers alternate between sliding-window attention (SWA) and global attention; pattern-based routing via `layers.routing.pattern` (array param `swa_pattern`)
+- **SWA**: `attention` builder with `sliding_window = "true"` config; SWA mask built from `sliding_window` GGUF param
+- **Shared KV cache**: non-KV layers (SWA layers) reuse the K/V cache of the nearest global-attention layer via `n_kv_shared_layers` param; `CacheDef.Shared` group name for TOML-declared sharing
+- **`SharedKVState`**: `{K, V map[string]Tensor}` — in-graph K/V propagated from KV layers to non-KV layers within the same forward pass; keyed by `shared_kv_group` config string
+- **GeGLU FFN**: `geglu` builder — `gelu(gate * x) * (up * x) → down`; uses `ggml.Gelu`
+- **Embed scaling**: `architecture.embed_scale = true` → multiply token embeddings by `sqrt(n_embd)` before first layer
+- **Logit softcapping**: `logit_softcapping` param → `cap * tanh(logits / cap)` applied after final norm; uses `ggml.Tanh`
+- **Per-layer embeddings**: `pe_inp_gate` weight per layer (injected into residual stream after FFN); handled by `perLayerEmbedInject` in `graph.go`
+- **Post-attention/FFN norms**: `attn_post_norm`, `ffn_post_norm` common weights; applied after block output before residual add
+- **Layer output scaling**: `layer_output_scale` weight; multiplied into residual stream after FFN + post-norm
+- **`MulMatSetPrecF32`**: forces F32 accumulation on a matmul op (required for correct Gemma4 attention scores)
+- Exact params: `models/arch/gemma4.arch.toml`
+
+### Culling Metadata Generation
+Hollow system for user exploration/implementation
+
+### Internal Logging
+
+**Package**: `inference-lab-bench/internal/log` — replaces all prior `log.Printf` / `fmt.Fprintf(os.Stderr, ...)` usage.
+
+**Call-site API** (use these everywhere):
+```go
+log.Debug(format string, args ...any)
+log.Info(format string, args ...any)
+log.Warn(format string, args ...any)
+log.Error(format string, args ...any)
+log.Fatal(format string, args ...any)  // Error + os.Exit(1)
+```
+
+**Output format**: `<HH:MM:SS>[LEVEL] message` — compact, no key-value spam.
+
+**Level type**: `log.Level` (own type, not `slog`). Constants: `LevelDebug`, `LevelInfo`, `LevelWarn`, `LevelError`, `LevelNone`. `ValidLevelNames []string` is exported — CLI flag descriptions must reference it (DRY, not a hardcoded string).
+
+**Initialization** — call once per CLI entry point, before any goroutines start:
+```go
+level, ok := log.ParseLevel(flagValue)  // (log.Level, bool)
+log.InitLogger(logPath string, stderrLevel log.Level, logFileLine bool) error
+```
+On unrecognized input, `ParseLevel` returns `(LevelInfo, false)` — always check `ok`; ignoring it silently defaults to INFO.
+- `logPath` empty → stderr only at `stderrLevel`
+- `logPath` non-empty → stderr at `stderrLevel` + file at DEBUG (always full). File opens with a session boundary marker line.
+- Pre-init default: stderr at INFO, no panic.
+
+**CLI flags** (on `serve-api`, `chat`):
+- `--log <path>` — log file path
+- `--log-level <level>` — stderr level (`DEBUG|INFO|WARN|ERROR|NONE`), default `INFO`
+- --log-file-line — enables logging of source file names and line numbers 
+- `make serve` passes `--log bin/bench.log --log-level INFO`
+- Batch commands (`gen-arch-diagram`, `gen-cull-metadata`) do not expose these flags
+
+**ggml C library log routing** (`src/internal/inference/ggml/logging.go`):
+
+`ggml.InitLogging()` registers a CGo callback via `ggml_log_set` that routes all ggml C library diagnostic output through the Go logger (DEBUG for most levels; WARN/ERROR for ggml levels 3/4). Call it once in `serve_api.go` and `chat.go` immediately after `log.InitLogger`. This eliminates all uncontrolled stderr output — `--log-level NONE` fully suppresses everything including ggml noise.
+
+**CGo export constraint** — do not violate:
+
+`ggmlGoLogCallback` in `logging.go` carries the `//export` directive. CGo auto-generates its C declaration in `_cgo_export.h`. A forward declaration for this symbol must NOT appear in `ggml_ops.h`. If it does, the CGo auto-generated declaration and the hand-written one will conflict at compile time. The symbol's C declaration is local to `ggml_ops.c` only.
+
+**Constraints** (enforce these):
+- `log.Fatal` is only permitted in `bench/` cobra entry points. Never call it from `internal/apiserver/` or `internal/inference/`.
+- Never pass user-controlled values in the format string position — always use `%s`/`%v` args.
+- Think content must be capped at 500 chars before logging; request string fields at 64 chars.
+- `LOG_LEVEL` env var does not exist — level comes only from `--log-level`.
+- No slog dependency; no third-party logging dependency.
+- `ModuleMap.CullLog []string` in the culling package is a data structure, not a logger — do not confuse it with this package.
+
+### Shell Scripting Style
+- Shebang: `#!/usr/bin/env bash`
+- Indent: 2 spaces
+- Variables: always `${VAR}` not `$VAR`
+- Tests: `[[ ]]` not `[ ]`; equality: `==` not `=`
+- Functions: `function funcname() {` not bare `funcname() {`
 
 ## Adding a Model Architecture
 
@@ -271,14 +320,13 @@ Only needed if the architecture uses a computation pattern not covered by existi
 - `gated_delta_net` — delta net SSM (Qwen3.5 hybrid)
 - `swiglu` — SiLU-gated FFN
 - `geglu` — GELU-gated FFN (Gemma 4)
-- `moe` — unified mixture of experts (Qwen3.5 MoE, Gemma4 MoE, DeepSeek2 hybrid); shared experts, expert bias, fused gate_up_exps, normalized router — all via config/weight detection
+- `moe` — mixture of experts with optional shared expert and expert bias
 
 To add a new builder:
 1. `src/internal/inference/arch/block_<type>.go` — implement `BlockBuilder` or `FFNBuilder` (see interfaces in `blocks.go`). Must implement both `BuildStateless` and `BuildCached`.
 2. Register in `init()` in `blocks.go`
 3. Define `Contract()` — required/optional weights, required params, config schema with allowed values
 4. `models/arch/block_svg/<name>.svg` — SVG snippet for diagram rendering
-5. `models/arch/editor/editor.js` — `BUILDER_` table entries for the editor
 
 ### Phase 3: Extend the TOML DSL (if needed)
 
@@ -343,16 +391,8 @@ All must pass before the work is complete:
 ```bash
 make test && make integration-test
 ALL_MODELS=true bash test_inference.sh "Hello"   # test against every loaded model
-bash test_llama_equiv.sh                         # logprob equivalence vs llama-server (Homebrew)
+make equiv-test                                  # logprob equivalence vs llama-server (Homebrew)
 make arch-diagrams                               # regenerate SVGs; confirm new arch renders correctly
 ```
 
-The equivalence test (`test_llama_equiv.sh`) is the critical gate. It compares our stateless forward pass logprobs against llama.cpp's output on the same prompt. Threshold is ~0.01 logprob diff. Metal floating-point variance accounts for small differences; anything larger indicates a computation bug.
-
-### Shell Scripting Style
-- Shebang: `#!/usr/bin/env bash`
-- Indent: 2 spaces
-- Variable dereferencing: always use curly braces (`${VAR}`, not `$VAR`)
-- Test enclosure: `[[ ]]`, not `[ ]`
-- Equality: `==`, not `=`
-- define functions using keyword syntax `function funcname() {` not bare syntax `funcname() {`
+The equivalence test (`test_equiv.sh`) is the critical gate. It compares our forward pass logprobs against llama.cpp's output on the same prompt. Threshold is ~0.01 logprob diff. GPU floating-point variance accounts for small differences; anything larger indicates a computation bug.

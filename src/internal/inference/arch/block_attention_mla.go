@@ -1,7 +1,7 @@
 package arch
 
 import (
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
 
 // MLAAttentionBuilder implements Multi-head Latent Attention (DeepSeek V2 / GLM-4).
@@ -114,9 +114,9 @@ func (b *MLAAttentionBuilder) BuildStateless(
 }
 
 func (b *MLAAttentionBuilder) BuildCached(
-	ctx *ggml.GraphContext, cur ggml.Tensor, weights map[string]ggml.Tensor,
+	ctx *ggml.GraphContext, gf *ggml.Graph, cur ggml.Tensor, weights map[string]ggml.Tensor,
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
-	cache *LayerCache, writebacks *[]CacheWriteback) ggml.Tensor {
+	cache *LayerCache) ggml.Tensor {
 
 	nHeads := int64(params.Ints["n_heads"])
 	rmsEps := params.Floats["rms_eps"]
@@ -145,17 +145,13 @@ func (b *MLAAttentionBuilder) BuildCached(
 	kvCompressed3d := ggml.Reshape3D(ctx, kvCompressed, kvLoraRank, int64(1), nNew)
 	kNew := ggml.Concat(ctx, kvCompressed3d, kPeNew, 0) // [kDim, 1, nNew]
 
-	// Cache writeback: K only (MLA: V derived from K's compressed portion)
+	// Cache writeback: K only (MLA: V derived from K's compressed portion).
+	// Emit in-graph cpy into the cache buffer at seqPos.
 	kForCache := ggml.Cont(ctx, ggml.Permute(ctx, kNew, 0, 2, 1, 3)) // [kDim, nNew, 1]
-	ggml.SetOutput(kForCache)
-
-	perEntrySrc := int(kDim) * int(nNew) * 4
-	perEntryDst := int(kDim) * cache.MaxSeqLen * 4
-	posOffset := seqPos * int(kDim) * 4
-	*writebacks = append(*writebacks, CacheWriteback{
-		Src: kForCache, Dst: cache.Tensors[CacheK],
-		NHeads: 1, HeadSrc: perEntrySrc, HeadDst: perEntryDst, HeadOffset: posOffset, HeadBytes: perEntrySrc,
-	})
+	kc := cache.Tensors[CacheK]
+	const float32Size = 4
+	kView := ggml.View3D(ctx, kc, kDim, nNew, int64(1), kc.Nb(1), kc.Nb(2), seqPos*int(kDim)*float32Size)
+	gf.BuildForwardExpand(ggml.Cpy(ctx, kForCache, kView))
 
 	// For attention: build K and V from cache or inline
 	var kAttn, vAttn ggml.Tensor
@@ -167,7 +163,6 @@ func (b *MLAAttentionBuilder) BuildCached(
 		vAttn = ggml.Cont(ctx, ggml.Permute(ctx, vNew, 0, 2, 1, 3))
 	} else {
 		// Decode: read K from cache, derive V from K's compressed portion
-		kc := cache.Tensors[CacheK]
 		kAttn = ggml.View3D(ctx, kc, kDim, nKV, int64(1), kc.Nb(1), kc.Nb(2), 0)
 		// V = first kvLoraRank elements of each K entry
 		vAttn = ggml.View3D(ctx, kc, kvLoraRank, nKV, int64(1), kc.Nb(1), kc.Nb(2), 0)

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"sort"
@@ -13,6 +14,8 @@ import (
 	ggufparser "github.com/gpustack/gguf-parser-go"
 	"github.com/nikolalohinski/gonja/v2"
 	"github.com/nikolalohinski/gonja/v2/exec"
+
+	log "inference-lab-bench/internal/log"
 )
 
 func init() {
@@ -232,9 +235,22 @@ func (t *Tokenizer) VocabContains(s string) bool {
 	return ok
 }
 
-// StopID returns the EOS token ID (the generation stop token).
-func (t *Tokenizer) StopID() int32 {
-	return t.eos
+// BuildStopSet returns a set of token IDs that should halt generation.
+// EOS is always included (when ≥ 0). Additional stop token strings are looked
+// up in the vocabulary; missing entries are logged at WARN and skipped.
+func (t *Tokenizer) BuildStopSet(stopTokenStrings []string) map[int32]bool {
+	set := make(map[int32]bool)
+	if t.eos >= 0 {
+		set[t.eos] = true
+	}
+	for _, s := range stopTokenStrings {
+		if id, ok := t.tokenIDs[s]; ok {
+			set[id] = true
+		} else {
+			log.Error("extra_eos: %q not found in vocabulary — skipped", s)
+		}
+	}
+	return set
 }
 
 // TokenString returns the string for a token ID.
@@ -415,10 +431,10 @@ func readGGUFTokensRaw(path string) ([]string, error) {
 
 	// GGUF header: magic(4) + version(4) + n_tensors(8) + n_kv(8)
 	var header struct {
-		Magic     uint32
-		Version   uint32
-		NTensors  uint64
-		NKV       uint64
+		Magic    uint32
+		Version  uint32
+		NTensors uint64
+		NKV      uint64
 	}
 	if err := binary.Read(f, binary.LittleEndian, &header); err != nil {
 		return nil, fmt.Errorf("read GGUF header: %w", err)
@@ -428,6 +444,9 @@ func readGGUFTokensRaw(path string) ([]string, error) {
 		var length uint64
 		if err := binary.Read(f, binary.LittleEndian, &length); err != nil {
 			return "", err
+		}
+		if length > 1024 {
+			return "", fmt.Errorf("token string length %d exceeds maximum of 1024", length)
 		}
 		b := make([]byte, length)
 		if _, err := io.ReadFull(f, b); err != nil {
@@ -455,6 +474,9 @@ func readGGUFTokensRaw(path string) ([]string, error) {
 			var length uint64
 			if err := binary.Read(f, binary.LittleEndian, &length); err != nil {
 				return err
+			}
+			if length > uint64(math.MaxInt64) {
+				return fmt.Errorf("readGGUFTokensRaw: string value too long")
 			}
 			_, err := f.Seek(int64(length), io.SeekCurrent)
 			return err
@@ -487,6 +509,9 @@ func readGGUFTokensRaw(path string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read KV key %d: %w", i, err)
 		}
+		if len(key) > 256 {
+			return nil, fmt.Errorf("readGGUFTokensRaw: GGUF key name too long (%d bytes)", len(key))
+		}
 		var vtype uint32
 		if err := binary.Read(f, binary.LittleEndian, &vtype); err != nil {
 			return nil, fmt.Errorf("read KV type %d: %w", i, err)
@@ -503,6 +528,9 @@ func readGGUFTokensRaw(path string) ([]string, error) {
 			}
 			if err := binary.Read(f, binary.LittleEndian, &acount); err != nil {
 				return nil, err
+			}
+			if acount > 10_000_000 {
+				return nil, fmt.Errorf("token array count %d exceeds maximum of 10000000", acount)
 			}
 			tokens := make([]string, acount)
 			for j := uint64(0); j < acount; j++ {

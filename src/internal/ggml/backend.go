@@ -1,7 +1,7 @@
 package ggml
 
 /*
-#cgo CFLAGS: -std=c17 -I${SRCDIR}/../../../ggml_lib/src
+#cgo CFLAGS: -std=c17 -I${SRCDIR}/../../ggml_lib/src
 #include "ggml_ops.h"
 #include <stdlib.h>
 */
@@ -9,14 +9,17 @@ import "C"
 import "unsafe"
 
 // GraphContext wraps a ggml_context used for building computation graphs.
-type GraphContext struct{ ptr unsafe.Pointer }
+type GraphContext struct {
+	ptr     unsafe.Pointer
+	memSize int
+}
 
 func NewGraphContext(memSize int) *GraphContext {
 	p := C.ggml_go_init(C.size_t(memSize))
 	if p == nil {
 		return nil
 	}
-	return &GraphContext{ptr: unsafe.Pointer(p)}
+	return &GraphContext{ptr: unsafe.Pointer(p), memSize: memSize}
 }
 
 func (gc *GraphContext) Free() {
@@ -24,6 +27,11 @@ func (gc *GraphContext) Free() {
 		C.ggml_go_free(cCtx(gc.ptr))
 		gc.ptr = nil
 	}
+}
+
+func (gc *GraphContext) Reset() {
+	C.ggml_go_free(cCtx(gc.ptr))
+	gc.ptr = unsafe.Pointer(C.ggml_go_init(C.size_t(gc.memSize)))
 }
 
 func (gc *GraphContext) c() C.ggml_go_context { return cCtx(gc.ptr) }
@@ -97,6 +105,11 @@ func (buf *Buffer) Size() int {
 	return int(C.ggml_go_buffer_size(cBuffer(buf.ptr)))
 }
 
+// Clear writes value to every byte in the buffer (including alignment padding).
+func (buf *Buffer) Clear(value byte) {
+	C.ggml_go_buffer_clear(cBuffer(buf.ptr), C.uint8_t(value))
+}
+
 // Sched wraps a ggml multi-backend scheduler.
 type Sched struct{ ptr unsafe.Pointer }
 
@@ -116,11 +129,17 @@ func (s *Sched) Compute(g *Graph) int {
 	return int(C.ggml_go_sched_compute(cSched(s.ptr), cGraph(g.ptr)))
 }
 
+func (s *Sched) c() C.ggml_go_sched { return C.ggml_go_sched(s.ptr) }
+
 func (s *Sched) Free() {
 	if s.ptr != nil {
 		C.ggml_go_sched_free(cSched(s.ptr))
 		s.ptr = nil
 	}
+}
+
+func (s *Sched) Reset() {
+	C.ggml_go_sched_reset(cSched(s.ptr))
 }
 
 // --- Tensor I/O ---

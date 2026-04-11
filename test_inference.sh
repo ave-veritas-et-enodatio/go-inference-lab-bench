@@ -47,13 +47,19 @@ fi
 SERVER_BASE_URL=${SERVER_BASE_URL:-"http://localhost:${PORT}"}
 CTL_BASE_URL=${CTL_BASE_URL:-"${SERVER_BASE_URL}/ctl"}
 API_BASE_URL=${API_BASE_URL:-"${SERVER_BASE_URL}/api/v1"}
-STATELESS=${STATELESS:-false}
-THINK=${THINK:-false}
+STATELESS=${STATELESS:-null}
+# CULL_METHOD: null (no culling, use server config), "none", or "random".
+CULL_METHOD=${CULL_METHOD:-null}
+THINK=${THINK:-null}
 ELIDE_THINK=${ELIDE_THINK:-null}
+FLASH=${FLASH:-null}
 MAX_TOKENS=${MAX_TOKENS:-4096}
 TEMPERATURE=${TEMPERATURE:-0}
 MODEL=${MODEL:-default}
 STREAM=${STREAM:-false}
+DEBUG_POST=${DEBUG_POST:-false}
+DEBUG_RESPONSE=${DEBUG_RESPONSE:-false}
+
 
 (! [[ "${USE_LLAMA}" == "true" && "${MODEL}" == "default" && "${ALL_MODELS}" != "true" ]]) || { echo "ALL_MODELS must be true or a MODEL must be specified." 1>&2; exit 1; }
 
@@ -83,19 +89,33 @@ function parse_response() {
 
 # when streaming is true the response is a sequence of disjointed dictionaries (not comma separated)
 # needs handling implemented in the python snippet.
-  MODEL=${MODEL} "${PYTHON}" -c '
+  DEBUG_RESPONSE=${DEBUG_RESPONSE} MODEL=${MODEL} "${PYTHON}" -c '
 import os,sys,json
-resp = json.load(sys.stdin)
-if "choices" in resp:
-  resp = resp["choices"][0]
-  resp_text = resp["message"]["content"]
-  print(resp_text)
-  if "logprobs" in resp:
-    logprobs = json.dumps(resp["logprobs"]["content"][0]["top_logprobs"], sort_keys=True)
+resp_json = str(sys.stdin.read())
+try:
+  resp_all = json.loads(resp_json)
+except:
+  resp_all = {}
+printed = False
+if "choices" in resp_all:
+  resp_text = resp_all["choices"][0]
+  resp_text = resp_text["message"]["content"]
+  resp_text = resp_text if resp_text.strip() else "<NO-MODEL-RESPONSE>"
+  usage = resp_all.get("usage", {})
+  itps = usage.get("prompt_tokens_per_sec", 0.0)
+  otps = usage.get("completion_tokens_per_sec", 0.0)
+  ttps = usage.get("total_tokens_per_sec", 0.0)
+  secs = usage.get("total_seconds", 0.0)
+  print(f"{resp_text} {{itps:{itps:.2f}, otps:{otps:.2f}, ttps:{ttps:.2f}, s:{secs:.2f}}}")
+  printed = True
+  logprobs = resp_all.get("choices", [])
+  if logprobs := (logprobs[0] if logprobs else {}).get("logprobs", {}):
+    logprobs = json.dumps(logprobs["content"][0]["top_logprobs"], sort_keys=True)
     model = os.getenv("MODEL")
     print(f"{model}|{logprobs}|{resp_text}")
-else:
-  print(resp)
+
+if (not printed) or (os.getenv("DEBUG_RESPONSE", "false") in ["true", "1"]):
+  print(json.dumps(resp_all, indent=2) if resp_all else resp_json if resp_json.strip() else "<NO-API-RESPONSE>")
 ' 2> /dev/null
 }
 
@@ -112,11 +132,15 @@ function query_one() {
     ext_params=$(printf '
       "enable_thinking": %s,
       "stateless": %s,
+      "cull_method": %s,
       "elide_thinking": %s,
+      "flash_attention": %s,
     ' \
     "${THINK}" \
     "${STATELESS}" \
+    "${CULL_METHOD}" \
     "${ELIDE_THINK}" \
+    "${FLASH}" \
     )
   fi
 
@@ -140,7 +164,7 @@ function query_one() {
     "${STREAM}" \
     )
   local completions_url=${COMPLETIONS_URL:-"${API_BASE_URL}/chat/completions"}
-  ${DEBUG_POST:-false} && echo "[DBG] ${completions_url} POST payload: ${payload}" || true
+  ${DEBUG_POST} && echo "[DBG] ${completions_url} POST payload: ${payload}" || true
   local resp=$(curl -s -X POST "${completions_url}" \
     -H 'Content-Type: application/json' \
     -d "${payload}")
@@ -153,6 +177,11 @@ function query() {
     for model in ${MODEL_LIST%default}; do
       echo "${model} <-- \"${*}\""
       MODEL=${model} query_one "${@}"
+      # llama server tries to hold all models in memory and fails
+      # there's a ggml or metal driver bug that causes cummulative state resets.
+      # this issue was investigated exhaustively and was proven to reside outside of this code base.
+      # to produce incorrect results; cycle server to ensure a clean metal context.
+      cycle_server
     done
   else
     query_one "${@}"
@@ -167,7 +196,11 @@ Acontextual Loop Mode
 =====================
 /help: show this help message
 /all-models: toggle all-models mode (currently: ${ALL_MODELS})
+/debug-post: toggle display of post json (currently: ${DEBUG_POST})
+/debug-response: toggle display of response json (currently: ${DEBUG_RESPONSE})
+/flash: toggle flash attention mode (currently: ${FLASH})
 /stateless: toggle stateless mode (currently: ${STATELESS})
+/cull [method]: set cull method (currently: ${CULL_METHOD}); "random", "none", or null
 /think: toggle think mode (currently: ${THINK})
 /elide-think; toggle elision of thinking output (currently: ${ELIDE_THINK})
 /max-tokens [token_count]: show or set MAX_TOKENS (currently: ${MAX_TOKENS})
@@ -216,12 +249,35 @@ function loop_mode() {
         ALL_MODELS=$(toggle "${ALL_MODELS}")
         echo "ALL_MODELS=${ALL_MODELS}"
         continue;;
+      /flash)
+        FLASH=$(rotate "${FLASH}")
+        echo "FLASH=${FLASH}"
+        continue;;
       /stateless)
-        STATELESS=$(toggle "${STATELESS}")
+        STATELESS=$(rotate "${STATELESS}")
         echo "STATELESS=${STATELESS}"
         continue;;
+      /cull*)
+        local CM=$(set ${line}; echo ${2})
+        if [[ -n "${CM}" ]]; then
+          if [[ "${CM}" == "null" || "${CM}" == "none" ]]; then
+            CULL_METHOD=null
+          else
+            CULL_METHOD="\"${CM}\""
+          fi
+        fi
+        echo "CULL_METHOD=${CULL_METHOD}"
+        continue;;
+      /debug-post)
+        DEBUG_POST=$(toggle "${DEBUG_POST}")
+        echo "DEBUG_POST=${DEBUG_POST}"
+        continue;;
+      /debug-response)
+        DEBUG_RESPONSE=$(toggle "${DEBUG_RESPONSE}")
+        echo "DEBUG_RESPONSE=${DEBUG_RESPONSE}"
+        continue;;
       /stream-NYI)
-        STREAM=$(toggle "${STREAM}")
+        STREAM=$(rotate "${STREAM}")
         echo "STREAM=${STREAM}"
         continue;;
       /think)
@@ -281,19 +337,6 @@ function show_models() {
   echo ""
 }
 
-function quit_servers() {
-  if [[ -n "${SERVER_PID}" ]]; then
-    curl -s "${CTL_BASE_URL}?quit&now" > /dev/null || {
-      ps aux | grep "bin/bench" | awk '!/grep/ { print $2; }' | xargs kill  sleep 1
-    }
-  fi
-
-  if [[ -n "${LLAMA_PID}" ]]; then
-    # blunt instrument
-    ps aux | grep "llama-server" | awk '!/grep/ { print $2; }' | xargs kill
-  fi
-}
-
 function wait_for_starting_server() {
   # Wait for server to be ready (up to 30s)
   for _i in $(seq 1 60); do
@@ -306,51 +349,67 @@ function wait_for_starting_server() {
   return 1
 }
 
-function start_new_api_server() {
+function start_api_server() {
   [[ -x "./bin/bench" ]] || { echo "./bin/bench binary missing. 'make all' first." 1>&2; exit 1; }
-
-  ps aux | grep "bin/bench" | awk '!/grep/ { print $2; }' | xargs kill
-  sleep 1
   ./bin/bench serve-api serve-api --log ${LOG:-"bin/test_inference.log"} --log-level NONE &
   SERVER_PID=$!
-
   wait_for_starting_server
 }
-
-LLAMA_PORT=${LLAMA_PORT:-8080}
-LLAMA_BASE_URL="http://localhost:${LLAMA_PORT}"
 
 function run_llama_server() {
   llama-server --models-dir "$(pwd)/models" --port ${LLAMA_PORT} --ctx-size 8192 2>&1
 }
 
 function start_llama_server() {
-  (which llama-server 1>&2) > /dev/null || { echo "llama-server not installed." 1>&2; exit 1; }
-
-  ps aux | grep llama-server | awk '!/grep/ { print $2; }' | xargs kill
-  sleep 1
-  run_llama_server >> bin/llama-server.log &
+  (which llama-server 2>&1) > /dev/null || { echo "llama-server not installed." 1>&2; exit 1; }
+  run_llama_server >> ${LOG:-"bin/test_inference_llama.log"} &
   LLAMA_PID=$!
-
   API_BASE_URL=${LLAMA_BASE_URL}/v1
   SERVER_BASE_URL=${LLAMA_BASE_URL}
   PORT=${LLAMA_PORT}
-
   wait_for_starting_server
 }
 
-trap quit_servers EXIT
+function quit_api_server() {
+  (curl -s "${CTL_BASE_URL}/?quit&now" > /dev/null && sleep 1) || {
+    ps aux | grep "bin/bench" | awk '!/grep/ { print $2; }' | xargs kill
+  }
+}
 
-if [[ "${USE_LLAMA}" == "true" ]]; then
-  start_llama_server
-elif [[ "${FORCE_NEW_SERVER:-false}" == "true" ]]; then
-  start_new_api_server
+function quit_llama_server() {
+  # blunt instrument
+  ps aux | grep "llama-server" | awk '!/grep/ { print $2; }' | xargs kill
+}
+
+function quit_server() {
+  [[ -n "${SERVER_PID}" ]] && quit_api_server || true
+  [[ -n "${LLAMA_PID}" ]] && quit_llama_server || true
+}
+
+LLAMA_PORT=${LLAMA_PORT:-8080}
+LLAMA_BASE_URL="http://localhost:${LLAMA_PORT}"
+
+function cycle_server() {
+    quit_server
+    if ${USE_LLAMA}; then start_llama_server; else start_api_server; fi
+}
+
+trap quit_server EXIT
+
+if ${FORCE_NEW_SERVER:-false}; then
+  if ${USE_LLAMA}; then
+    quit_llama_server
+    start_llama_server
+  else
+    quit_api_server
+    start_api_server
+  fi
 fi
 
-show_models || { echo "inference server not running. 'make serve' or use envar param FORCE_NEW_SERVER=true" 1>&2; exit 1; }
-
-if [[ "${LOOP_MODE}" == true ]]; then
+if ${LOOP_MODE}; then
+  show_models || { echo "inference server not running. 'make serve' or use envar param FORCE_NEW_SERVER=true" 1>&2; exit 1; }
   loop_mode
 else
+  show_models > /dev/null || { echo "inference server not running. 'make serve' or use envar param FORCE_NEW_SERVER=true" 1>&2; exit 1; }
   query "${MSG}"
 fi

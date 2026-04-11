@@ -5,6 +5,8 @@ import (
 	"io"
 	"math"
 	"os"
+	"path"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,6 +62,10 @@ type Logger interface {
 	Warn(format string, args ...any)
 	Error(format string, args ...any)
 	Fatal(format string, args ...any) // logs at Error level then os.Exit(1)
+	SetLevel(level Level)
+	GetLevel() Level
+	SetShowFileAndLine(show bool)
+	GetShowFileAndLine() bool
 }
 
 // compactLogger writes <HH:MM:SS>[LEVEL] message lines.
@@ -69,6 +75,8 @@ type compactLogger struct {
 	stderrW     io.Writer
 	stderrLevel Level
 	fileW       *os.File // nil if no log file
+	pathPrefixLen int
+	showFileLine bool
 }
 
 func (c *compactLogger) emit(level Level, format string, args ...any) {
@@ -77,8 +85,14 @@ func (c *compactLogger) emit(level Level, format string, args ...any) {
 	if !toStderr && !toFile {
 		return
 	}
+	_, fileName, lineNum, _ := runtime.Caller(3)
+	fileName = fileName[c.pathPrefixLen:]
+	fileLine := ""
+	if c.showFileLine {
+		fileLine = fmt.Sprintf("%s(%d): ", fileName, lineNum)
+	}
 	msg := fmt.Sprintf(format, args...)
-	line := fmt.Sprintf("<%s>[%s] %s\n", time.Now().Format("15:04:05"), level.String(), msg)
+	line := fmt.Sprintf("<%s>[%s] %s%s\n", time.Now().Format("15:04:05"), level.String(), fileLine, msg)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if toStderr {
@@ -89,6 +103,10 @@ func (c *compactLogger) emit(level Level, format string, args ...any) {
 	}
 }
 
+func (c *compactLogger) GetLevel() Level { return c.stderrLevel }
+func (c *compactLogger) GetShowFileAndLine() bool { return c.showFileLine }
+func (c *compactLogger) SetLevel(level Level) { c.stderrLevel = level }
+func (c *compactLogger) SetShowFileAndLine(show bool) { c.showFileLine = show }
 func (c *compactLogger) Debug(format string, args ...any) { c.emit(LevelDebug, format, args...) }
 func (c *compactLogger) Info(format string, args ...any)  { c.emit(LevelInfo, format, args...) }
 func (c *compactLogger) Warn(format string, args ...any)  { c.emit(LevelWarn, format, args...) }
@@ -110,12 +128,16 @@ func init() {
 // goroutines start; subsequent calls are no-ops (sync.Once).
 // logPath: if non-empty, all levels are written to this file (created/appended, mode 0644).
 // stderrLevel: minimum level emitted to stderr. Use LevelNone to suppress stderr.
-func InitLogger(logPath string, stderrLevel Level) error {
+func InitLogger(logPath string, stderrLevel Level, logFileLine bool) error {
 	var initErr error
 	initOnce.Do(func() {
+		_, logGoPath, _, _ := runtime.Caller(0)
+		logGoPath = path.Dir(path.Dir(path.Dir(logGoPath)))
 		cl := &compactLogger{
 			stderrW:     os.Stderr,
 			stderrLevel: stderrLevel,
+			pathPrefixLen: len(logGoPath) + 1,
+			showFileLine: logFileLine,
 		}
 		if logPath != "" {
 			f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
@@ -139,3 +161,8 @@ func Info(format string, args ...any)  { (*global.Load()).Info(format, args...) 
 func Warn(format string, args ...any)  { (*global.Load()).Warn(format, args...) }
 func Error(format string, args ...any) { (*global.Load()).Error(format, args...) }
 func Fatal(format string, args ...any) { (*global.Load()).Fatal(format, args...) }
+
+func SetLevel(level Level) { (*global.Load()).SetLevel(level) }
+func GetLevel() Level { return (*global.Load()).GetLevel() }
+func SetShowFileAndLine(show bool) { (*global.Load()).SetShowFileAndLine(show) }
+func GetShowFileAndLine() bool { return (*global.Load()).GetShowFileAndLine() }
