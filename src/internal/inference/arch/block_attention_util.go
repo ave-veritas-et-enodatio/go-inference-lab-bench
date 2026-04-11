@@ -1,48 +1,87 @@
 package arch
 
 import (
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
+
+// flashAttnHeadDims is the set of head dimensions supported by the GPU FA2 kernel.
+var flashAttnHeadDims = map[int64]bool{
+	32: true, 40: true, 48: true, 64: true, 72: true, 80: true,
+	96: true, 112: true, 128: true, 192: true, 256: true,
+	320: true, 512: true, 576: true,
+}
+
+// FlashAttnSupported reports whether headDim is in the GPU FA2 supported set.
+func FlashAttnSupported(headDim int) bool {
+	return flashAttnHeadDims[int64(headDim)]
+}
 
 // scaledDotProductAttention computes scaled dot-product attention on pre-permuted Q, K, V.
 // Q, K, V must already be in [dim, nTokens/nKV, nHeads/nKVHeads] layout (post-permute).
 // Returns merged heads: [headDim*nHeads, nTokens].
+//
+// When flashAttn is true and the head dimension is in the GPU FA2 supported set,
+// uses ggml_flash_attn_ext (fused online softmax). Otherwise falls back to the
+// standard explicit KQ→softmax→V matmul path.
+//
+// Capture (caps) is skipped when FA2 is active — the fused op has no intermediate
+// kq tensor to extract.
 func scaledDotProductAttention(ctx *ggml.GraphContext, q, k, v, mask ggml.Tensor,
-	kqScale float32, nHeads, nTokens int64) ggml.Tensor {
+	kqScale float32, nHeads, nTokens int64, caps *ForwardCaptures, flashAttn bool) ggml.Tensor {
+	if flashAttn && flashAttnHeadDims[q.Ne(0)] {
+		// FA2: V is already in [headDim, nKV, nKVHeads] — no transpose needed.
+		// Cast mask to F16 as required by ggml_flash_attn_ext.
+		// Output shape: [headDim, nHeads, nTokens] — merged by Cont2D.
+		maskF16 := ggml.Cast(ctx, mask, ggml.TypeF16)
+		cur := ggml.FlashAttnExt(ctx, q, k, v, maskF16, kqScale, 0.0, 0.0)
+		ggml.FlashAttnExtSetPrec(cur, ggml.PrecF32)
+		return ggml.Cont2D(ctx, cur, cur.Ne(0)*nHeads, nTokens)
+	}
+	// Standard path.
 	kq := ggml.MulMat(ctx, k, q)
 	ggml.MulMatSetPrecF32(kq)
 	kq = ggml.SoftMaxExt(ctx, kq, mask, kqScale, 0.0)
+	if caps != nil && caps.Flags&CaptureAttnWeights != 0 {
+		il := caps.currentLayer
+		if il >= 0 && il < len(caps.attnTensors) {
+			kqCap := ggml.Cont(ctx, kq)
+			ggml.SetOutput(kqCap)
+			caps.attnTensors[il] = kqCap
+		}
+	}
 	vT := ggml.Cont(ctx, ggml.Transpose(ctx, v))
 	kqv := ggml.MulMat(ctx, vT, kq)
 	return ggml.Cont2D(ctx, ggml.Permute(ctx, kqv, 0, 2, 1, 3), kqv.Ne(0)*nHeads, nTokens)
 }
 
-// writeCacheKV prepares K and V for cache writeback and appends CacheWriteback entries.
-func writeCacheKV(ctx *ggml.GraphContext, kNew, vNew ggml.Tensor,
-	cache *LayerCache, seqPos int, nKVHeads int64,
-	writebacks *[]CacheWriteback) {
+// writeCacheKV emits in-graph ggml_cpy ops that write K and V directly into the
+// persistent cache buffer on the GPU, with no CPU involvement.
+// kNew and vNew are in [headDim, nKVHeads, nNew] layout (pre-permute).
+func writeCacheKV(ctx *ggml.GraphContext, gf *ggml.Graph, kNew, vNew ggml.Tensor,
+	cache *LayerCache, seqPos int, nKVHeads int64) {
 
 	headDim := kNew.Ne(0)
 	nNew := kNew.Ne(2)
 
+	// Permute new K/V to [headDim, nNew, nKVHeads] — contiguous for cpy source.
 	kForCache := ggml.Cont(ctx, ggml.Permute(ctx, kNew, 0, 2, 1, 3))
-	ggml.SetOutput(kForCache)
 	vForCache := ggml.Cont(ctx, ggml.Permute(ctx, vNew, 0, 2, 1, 3))
-	ggml.SetOutput(vForCache)
 
-	// F32 is the one and only supported cache element type.
+	// Build a strided view into the cache at seqPos.
+	// Cache layout: [headDim, maxSeqLen, nKVHeads] (F32).
+	// nb1 = headDim * 4 (stride between sequence positions within one head).
+	// nb2 = kc.Nb(2) (stride between heads = headDim * maxSeqLen * 4).
+	// offset = seqPos * headDim * 4 (skip past already-written positions).
 	const float32Size = 4
-	perHeadSrc := int(headDim) * int(nNew) * float32Size
-	perHeadDst := int(headDim) * cache.MaxSeqLen * float32Size
-	posOffset := seqPos * int(headDim) * float32Size
-	*writebacks = append(*writebacks, CacheWriteback{
-		Src: kForCache, Dst: cache.Tensors[CacheK],
-		NHeads: int(nKVHeads), HeadSrc: perHeadSrc, HeadDst: perHeadDst, HeadOffset: posOffset, HeadBytes: perHeadSrc,
-	})
-	*writebacks = append(*writebacks, CacheWriteback{
-		Src: vForCache, Dst: cache.Tensors[CacheV],
-		NHeads: int(nKVHeads), HeadSrc: perHeadSrc, HeadDst: perHeadDst, HeadOffset: posOffset, HeadBytes: perHeadSrc,
-	})
+	offset := seqPos * int(headDim) * float32Size
+
+	kc := cache.Tensors[CacheK]
+	kView := ggml.View3D(ctx, kc, headDim, nNew, nKVHeads, kc.Nb(1), kc.Nb(2), offset)
+	gf.BuildForwardExpand(ggml.Cpy(ctx, kForCache, kView))
+
+	vc := cache.Tensors[CacheV]
+	vView := ggml.View3D(ctx, vc, headDim, nNew, nKVHeads, vc.Nb(1), vc.Nb(2), offset)
+	gf.BuildForwardExpand(ggml.Cpy(ctx, vForCache, vView))
 }
 
 // selectCachedKV returns K and V tensors for attention — inline for prefill, from cache for decode.

@@ -1,16 +1,23 @@
 package arch
 
 import (
+	"errors"
 	"math"
 
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
+
+// ErrComputeFailed is returned when the ggml GPU backend fails to execute a
+// graph compute. The GPU context sets an internal has_error flag that makes
+// every subsequent compute call fail immediately — the engine must be evicted
+// and re-created to recover.
+var ErrComputeFailed = errors.New("graph compute failed")
 
 // Cache tensor key names. These must match the key names used in
 // [blocks.*.cache] sections of the arch TOML definitions.
 const (
-	CacheK        = "k"
-	CacheV        = "v"
+	CacheK         = "k"
+	CacheV         = "v"
 	CacheConvState = "conv_state"
 	CacheSSMState  = "ssm_state"
 )
@@ -69,4 +76,21 @@ func configFloatOr(config map[string]any, key string, params *ResolvedParams) fl
 		}
 	}
 	return params.Floats[key]
+}
+
+// configStr returns a string config value or "".
+func configStr(config map[string]any, key string) string {
+	if config == nil {
+		return ""
+	}
+	if v, ok := config[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		// TOML booleans
+		if b, ok := v.(bool); ok && b {
+			return "true"
+		}
+	}
+	return ""
 }

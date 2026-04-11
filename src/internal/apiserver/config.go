@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/BurntSushi/toml"
+
+	log "inference-lab-bench/internal/log"
 )
 
 type Config struct {
@@ -27,9 +29,21 @@ type InferenceConfig struct {
 	NThreads              int    `toml:"n_threads"`
 	LogThinking           bool   `toml:"log_thinking"`
 	EnableThinkingDefault bool   `toml:"enable_thinking_default"`
-	MaxSeqLen             int    `toml:"max_seq_len"`             // KV cache size in tokens (default: 4096)
-	ElideThinkingDefault  *bool  `toml:"elide_thinking_default"`  // nil = default true; strip <think>...</think> from output
-	SingleResidentModel   *bool  `toml:"single_resident_model"`   // nil/true (default): evict previous model on switch; false: keep all loaded
+	MaxSeqLen             int    `toml:"max_seq_len"`            // KV cache size in tokens (default: 4096)
+	ElideThinkingDefault  *bool  `toml:"elide_thinking_default"` // nil = default true; strip <think>...</think> from output
+	CullMethodDefault     string `toml:"cull_method_default"`    // "" = no culling; "random", etc.
+	SingleResidentModel   *bool  `toml:"single_resident_model"`  // nil/true (default): evict previous model on switch; false: keep all loaded
+	MaxRequestSeqLen      int    `toml:"max_request_seq_len"`    // hard limit on request context + max_tokens (0 = disabled)
+	StrictMode            bool   `toml:"strict_mode"`            // true = reject requests exceeding limit; false = warn only
+	FlashAttention        *bool  `toml:"flash_attention"`        // nil = default true; use FA2 when head geometry allows
+}
+
+// UseFlashAttention returns true if Flash Attention 2 should be used by default (default: true).
+func (c *InferenceConfig) UseFlashAttention() bool {
+	if c.FlashAttention == nil {
+		return true
+	}
+	return *c.FlashAttention
 }
 
 // ShouldElideThink returns true if <think> content should be stripped from output (default: true).
@@ -50,6 +64,11 @@ func LoadConfig(path string) (*Config, error) {
 			Directory: "models",
 			Default:   "first",
 		},
+		Inference: InferenceConfig{
+			MaxSeqLen:        8192,
+			MaxRequestSeqLen: 16384,
+			StrictMode:       true,
+		},
 	}
 	md, err := toml.DecodeFile(path, cfg)
 	if err != nil {
@@ -59,7 +78,7 @@ func LoadConfig(path string) (*Config, error) {
 	// Warn on unknown keys
 	if undecoded := md.Undecoded(); len(undecoded) > 0 {
 		for _, key := range undecoded {
-			fmt.Printf("warning: unknown config key: %s\n", key)
+			log.Warn("unknown config key: %s", key)
 		}
 	}
 
@@ -86,6 +105,12 @@ func (c *Config) validate() error {
 	// inference
 	if c.Inference.NThreads < 0 {
 		return fmt.Errorf("inference.n_threads must be >= 0, got %d", c.Inference.NThreads)
+	}
+	if c.Inference.MaxSeqLen < 1 {
+		return fmt.Errorf("inference.max_seq_len must be >= 1, got %d", c.Inference.MaxSeqLen)
+	}
+	if c.Inference.MaxRequestSeqLen < 0 {
+		return fmt.Errorf("inference.max_request_seq_len must be >= 0, got %d", c.Inference.MaxRequestSeqLen)
 	}
 
 	return nil

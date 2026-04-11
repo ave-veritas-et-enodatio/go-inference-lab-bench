@@ -20,7 +20,7 @@ func TestBuilderRegistry(t *testing.T) {
 	}
 
 	// FFN builders
-	for _, name := range []string{"swiglu", "moe"} {
+	for _, name := range []string{"swiglu", "moe", "geglu"} {
 		b, ok := GetFFNBuilder(name)
 		if !ok || b == nil {
 			t.Errorf("GetFFNBuilder(%q) not found", name)

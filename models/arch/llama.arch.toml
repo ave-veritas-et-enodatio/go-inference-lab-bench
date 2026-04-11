@@ -78,3 +78,7 @@ builder = "swiglu"
 
 # [tokens]
 # Llama 3.2 3B-instruct is not a thinking model — no think tokens defined
+
+# Diagram-only example values; no effect on inference.
+[example]
+n_layers = 32

@@ -122,9 +122,6 @@ builder = "gated_delta_net"
 [ffn]
 builder = "moe"
 
-  [ffn.config]
-  activation = "silu"
-
   [ffn.weights]
   # Router
   gate_inp       = "ffn_gate_inp.weight"
@@ -141,3 +138,8 @@ builder = "moe"
 [tokens]
 think_open  = "<think>"
 think_close = "</think>"
+
+# Diagram-only example values; no effect on inference.
+[example]
+n_layers       = 32
+full_attn_every = 4

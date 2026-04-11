@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	log "inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/util"
 
 	"github.com/tmc/langchaingo/chains"
@@ -150,7 +151,7 @@ func Run(opts Options) error {
 		fmt.Print("> ")
 		input, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+			log.Error("Error reading input: %v", err)
 			continue
 		}
 		input = strings.TrimSpace(input)
@@ -165,7 +166,7 @@ func Run(opts Options) error {
 
 		out, err := chains.Run(ctx, llmChain, input)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error generating response: %v\n", err)
+			log.Error("Error generating response: %v", err)
 			continue
 		}
 

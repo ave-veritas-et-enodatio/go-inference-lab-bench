@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	log "inference-lab-bench/internal/log"
-	ggmlmod "inference-lab-bench/internal/inference/ggml"
+	ggmlmod "inference-lab-bench/internal/ggml"
 	"inference-lab-bench/internal/apiserver"
 	"inference-lab-bench/internal/model"
 	"inference-lab-bench/internal/util"
@@ -20,11 +20,12 @@ var serveAPICmd = &cobra.Command{
 }
 
 var (
-	apiConfigPath string
-	apiHost       string
-	apiPort       int
-	serveLogPath  string
-	serveLogLevel string
+	apiConfigPath  string
+	apiHost        string
+	apiPort        int
+	serveLogPath   string
+	serveLogLevel  string
+	serveLogFileLine bool
 )
 
 func init() {
@@ -34,6 +35,7 @@ func init() {
 	serveAPICmd.Flags().IntVar(&apiPort, "port", 0, "override listen port")
 	serveAPICmd.Flags().StringVar(&serveLogPath, "log", "", "path to log file (tee with stderr)")
 	serveAPICmd.Flags().StringVar(&serveLogLevel, "log-level", "INFO", "stderr log level ("+strings.Join(log.ValidLevelNames, "|")+")")
+	serveAPICmd.Flags().BoolVar(&serveLogFileLine, "log-file-line", false, "show file and line in log messages")
 	rootCmd.AddCommand(serveAPICmd)
 }
 
@@ -42,7 +44,7 @@ func runServeAPI(cmd *cobra.Command, args []string) {
 	if !ok {
 		log.Fatal("invalid --log-level %q: valid values: %s", serveLogLevel, strings.Join(log.ValidLevelNames, ", "))
 	}
-	if err := log.InitLogger(serveLogPath, level); err != nil {
+	if err := log.InitLogger(serveLogPath, level, serveLogFileLine); err != nil {
 		log.Fatal("init logger: %v", err)
 	}
 	ggmlmod.InitLogging()

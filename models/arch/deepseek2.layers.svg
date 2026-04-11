@@ -1,4 +1,4 @@
-<svg viewBox="0 0 580 1157" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 580 1053" xmlns="http://www.w3.org/2000/svg">
 <style>
   text { font-family: 'Courier New', monospace; }
   .title { font-size: 20px; font-weight: bold; fill: #333333; font-family: system-ui, -apple-system, sans-serif; }
@@ -9,6 +9,7 @@
   .gtxt  { font-size: 9px; text-anchor: middle; dominant-baseline: middle; }
   .ltxt  { font-size: 8px; fill: #555555; dominant-baseline: middle; }
   .shdr  { font-size: 8px; font-weight: bold; fill: #333333; dominant-baseline: middle; }
+  .etxt  { font-size: 6px; fill: #999999; text-anchor: middle; dominant-baseline: hanging; }
 </style>
 <defs>
   <linearGradient id="zm_full_attention" x1="0" y1="0" x2="0" y2="1">
@@ -102,20 +103,23 @@
   </symbol>
   <symbol id="summary" overflow="visible">
   <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Summary</text>
-  <rect width="178" height="75" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
-  <text class="shdr" x="4" y="11">65 modules</text>
-  <text class="shdr" x="4" y="29">419 tensors</text>
-  <text class="shdr" x="4" y="47">419 weights</text>
+  <rect width="178" height="96" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <text class="shdr" x="4" y="11">57 modules</text>
+  <text class="ltxt" x="4" y="24">  0 culled (0%)</text>
+  <text class="shdr" x="4" y="41">367 tensors</text>
+  <text class="ltxt" x="4" y="54">  0 culled (0%)</text>
+  <text class="shdr" x="4" y="71">367 weights</text>
+  <text class="ltxt" x="4" y="84">  0 elided (0%)</text>
   </symbol>
 </defs>
-  <rect width="580" height="1157" fill="#fafafa" rx="8"/>
+  <rect width="580" height="1053" fill="#fafafa" rx="8"/>
 
   <text class="title" x="275" y="32" text-anchor="middle">Deepseek2 Layers</text>
-  <line x1="26" y1="54" x2="26" y2="1006" stroke="#AAAAAA" stroke-width="1.5"/>
+  <line x1="26" y1="54" x2="26" y2="890" stroke="#AAAAAA" stroke-width="1.5"/>
   <text class="io" x="26" y="48">IN</text>
-  <path d="M 26,1006 L 26,1031 L 316,1031" fill="none" stroke="#AAAAAA" stroke-width="1.5"/>
-  <line x1="316" y1="1031" x2="316" y2="1006" stroke="#AAAAAA" stroke-width="1.5"/>
-  <line x1="316" y1="1006" x2="316" y2="122" stroke="#AAAAAA" stroke-width="1.5"/>
+  <path d="M 26,890 L 26,915 L 316,915" fill="none" stroke="#AAAAAA" stroke-width="1.5"/>
+  <line x1="316" y1="915" x2="316" y2="890" stroke="#AAAAAA" stroke-width="1.5"/>
+  <line x1="316" y1="890" x2="316" y2="122" stroke="#AAAAAA" stroke-width="1.5"/>
   <use href="#row-chrome" transform="translate(0,64)"/>
   <text class="lbl" x="21" y="64">0</text>
   <use href="#blk-mla" transform="translate(36,44)"/>
@@ -176,75 +180,59 @@
   <text class="lbl" x="21" y="876">14</text>
   <use href="#blk-mla" transform="translate(36,856)"/>
   <use href="#ffn-dense" transform="translate(152,856)"/>
-  <use href="#row-chrome" transform="translate(0,934)"/>
-  <text class="lbl" x="21" y="934">15</text>
-  <use href="#blk-mla" transform="translate(36,914)"/>
-  <use href="#ffn-dense" transform="translate(152,914)"/>
-  <use href="#row-chrome" transform="translate(0,992)"/>
-  <text class="lbl" x="21" y="992">16</text>
-  <use href="#blk-mla" transform="translate(36,972)"/>
-  <use href="#ffn-dense" transform="translate(152,972)"/>
-  <use href="#row-chrome" transform="translate(290,992)"/>
-  <text class="lbl" x="311" y="992">17</text>
-  <use href="#blk-mla" transform="translate(326,972)"/>
-  <use href="#ffn-dense" transform="translate(442,972)"/>
-  <use href="#row-chrome" transform="translate(290,934)"/>
-  <text class="lbl" x="311" y="934">18</text>
-  <use href="#blk-mla" transform="translate(326,914)"/>
-  <use href="#ffn-dense" transform="translate(442,914)"/>
   <use href="#row-chrome" transform="translate(290,876)"/>
-  <text class="lbl" x="311" y="876">19</text>
+  <text class="lbl" x="311" y="876">15</text>
   <use href="#blk-mla" transform="translate(326,856)"/>
   <use href="#ffn-dense" transform="translate(442,856)"/>
   <use href="#row-chrome" transform="translate(290,818)"/>
-  <text class="lbl" x="311" y="818">20</text>
+  <text class="lbl" x="311" y="818">16</text>
   <use href="#blk-mla" transform="translate(326,798)"/>
   <use href="#ffn-dense" transform="translate(442,798)"/>
   <use href="#row-chrome" transform="translate(290,760)"/>
-  <text class="lbl" x="311" y="760">21</text>
+  <text class="lbl" x="311" y="760">17</text>
   <use href="#blk-mla" transform="translate(326,740)"/>
   <use href="#ffn-dense" transform="translate(442,740)"/>
   <use href="#row-chrome" transform="translate(290,702)"/>
-  <text class="lbl" x="311" y="702">22</text>
+  <text class="lbl" x="311" y="702">18</text>
   <use href="#blk-mla" transform="translate(326,682)"/>
   <use href="#ffn-dense" transform="translate(442,682)"/>
   <use href="#row-chrome" transform="translate(290,644)"/>
-  <text class="lbl" x="311" y="644">23</text>
+  <text class="lbl" x="311" y="644">19</text>
   <use href="#blk-mla" transform="translate(326,624)"/>
   <use href="#ffn-dense" transform="translate(442,624)"/>
   <use href="#row-chrome" transform="translate(290,586)"/>
-  <text class="lbl" x="311" y="586">24</text>
+  <text class="lbl" x="311" y="586">20</text>
   <use href="#blk-mla" transform="translate(326,566)"/>
   <use href="#ffn-dense" transform="translate(442,566)"/>
   <use href="#row-chrome" transform="translate(290,528)"/>
-  <text class="lbl" x="311" y="528">25</text>
+  <text class="lbl" x="311" y="528">21</text>
   <use href="#blk-mla" transform="translate(326,508)"/>
   <use href="#ffn-dense" transform="translate(442,508)"/>
   <use href="#row-chrome" transform="translate(290,470)"/>
-  <text class="lbl" x="311" y="470">26</text>
+  <text class="lbl" x="311" y="470">22</text>
   <use href="#blk-mla" transform="translate(326,450)"/>
   <use href="#ffn-dense" transform="translate(442,450)"/>
   <use href="#row-chrome" transform="translate(290,412)"/>
-  <text class="lbl" x="311" y="412">27</text>
+  <text class="lbl" x="311" y="412">23</text>
   <use href="#blk-mla" transform="translate(326,392)"/>
   <use href="#ffn-dense" transform="translate(442,392)"/>
   <use href="#row-chrome" transform="translate(290,354)"/>
-  <text class="lbl" x="311" y="354">28</text>
+  <text class="lbl" x="311" y="354">24</text>
   <use href="#blk-mla" transform="translate(326,334)"/>
   <use href="#ffn-dense" transform="translate(442,334)"/>
   <use href="#row-chrome" transform="translate(290,296)"/>
-  <text class="lbl" x="311" y="296">29</text>
+  <text class="lbl" x="311" y="296">25</text>
   <use href="#blk-mla" transform="translate(326,276)"/>
   <use href="#ffn-dense" transform="translate(442,276)"/>
   <use href="#row-chrome" transform="translate(290,238)"/>
-  <text class="lbl" x="311" y="238">30</text>
+  <text class="lbl" x="311" y="238">26</text>
   <use href="#blk-mla" transform="translate(326,218)"/>
   <use href="#ffn-dense" transform="translate(442,218)"/>
   <use href="#row-chrome" transform="translate(290,180)"/>
-  <text class="lbl" x="311" y="180">31</text>
+  <text class="lbl" x="311" y="180">27</text>
   <use href="#blk-mla" transform="translate(326,160)"/>
   <use href="#ffn-dense" transform="translate(442,160)"/>
   <use href="#global-row" transform="translate(290,122)"/>
-  <use href="#legend" transform="translate(22,1061)"/>
-  <use href="#summary" transform="translate(312,1061)"/>
+  <use href="#legend" transform="translate(22,945)"/>
+  <use href="#summary" transform="translate(312,945)"/>
 </svg>

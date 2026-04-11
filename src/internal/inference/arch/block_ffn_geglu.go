@@ -1,7 +1,7 @@
 package arch
 
 import (
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
 
 // GeGLUBuilder implements the GeGLU feed-forward network.

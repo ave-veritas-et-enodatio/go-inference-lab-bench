@@ -122,3 +122,9 @@ builder = "swiglu"
 [tokens]
 think_open  = "<think>"
 think_close = "</think>"
+extra_eos   = ["<|endoftext|>"]
+
+# Diagram-only example values; no effect on inference.
+[example]
+n_layers       = 32
+full_attn_every = 4

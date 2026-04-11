@@ -1,7 +1,7 @@
 package arch
 
 import (
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
 
 // SwiGLUBuilder implements the SwiGLU feed-forward network.
