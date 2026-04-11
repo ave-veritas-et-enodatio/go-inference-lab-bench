@@ -21,8 +21,6 @@ typedef void* ggml_go_backend;
 typedef void* ggml_go_buffer;
 typedef void* ggml_go_buf_type;
 typedef void* ggml_go_sched;
-typedef void* ggml_go_gguf;
-
 /* --- Type constants (must match ggml.h enum ggml_type) --- */
 enum {
     GGML_GO_TYPE_F32  = 0,
@@ -32,18 +30,19 @@ enum {
 enum {
     GGML_GO_ROPE_NEOX = 2,
 };
-/* GGUF value types (must match gguf.h enum gguf_type) */
 enum {
-    GGML_GO_GGUF_TYPE_UINT32  = 4,
-    GGML_GO_GGUF_TYPE_INT32   = 5,
-    GGML_GO_GGUF_TYPE_FLOAT32 = 6,
-    GGML_GO_GGUF_TYPE_BOOL    = 7,
-    GGML_GO_GGUF_TYPE_ARRAY   = 9,
+    GGML_GO_PREC_F32 = 1, /* GGML_PREC_F32 */
 };
 enum {
     GGML_GO_STATUS_SUCCESS = 0,
 };
 
+enum {
+    GGML_GO_BACKEND_DEVICE_TYPE_CPU = 0,
+    GGML_GO_BACKEND_DEVICE_TYPE_GPU = 1,
+    GGML_GO_BACKEND_DEVICE_TYPE_IGPU = 2,
+    GGML_GO_BACKEND_DEVICE_TYPE_ACCEL = 3,
+};
 /* --- Tensor creation --- */
 ggml_go_tensor ggml_go_new_tensor_1d(ggml_go_context ctx, int type, int64_t ne0);
 ggml_go_tensor ggml_go_new_tensor_2d(ggml_go_context ctx, int type, int64_t ne0, int64_t ne1);
@@ -61,6 +60,7 @@ ggml_go_tensor ggml_go_reshape_3d(ggml_go_context ctx, ggml_go_tensor a, int64_t
 ggml_go_tensor ggml_go_reshape_4d(ggml_go_context ctx, ggml_go_tensor a, int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3);
 
 /* --- Layout ops --- */
+ggml_go_tensor ggml_go_cpy(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b);
 ggml_go_tensor ggml_go_permute(ggml_go_context ctx, ggml_go_tensor a, int ax0, int ax1, int ax2, int ax3);
 ggml_go_tensor ggml_go_transpose(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_cont(ggml_go_context ctx, ggml_go_tensor a);
@@ -75,6 +75,8 @@ ggml_go_tensor ggml_go_div(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor
 ggml_go_tensor ggml_go_scale(ggml_go_context ctx, ggml_go_tensor a, float s);
 ggml_go_tensor ggml_go_clamp(ggml_go_context ctx, ggml_go_tensor a, float min_val, float max_val);
 ggml_go_tensor ggml_go_sum_rows(ggml_go_context ctx, ggml_go_tensor a);
+ggml_go_tensor ggml_go_sum(ggml_go_context ctx, ggml_go_tensor a);
+ggml_go_tensor ggml_go_sqrt(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_mul_mat(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b);
 ggml_go_tensor ggml_go_mul_mat_id(ggml_go_context ctx, ggml_go_tensor as, ggml_go_tensor b, ggml_go_tensor ids);
 
@@ -109,6 +111,13 @@ ggml_go_tensor ggml_go_ssm_conv(ggml_go_context ctx, ggml_go_tensor sx, ggml_go_
 ggml_go_tensor ggml_go_gated_delta_net(ggml_go_context ctx, ggml_go_tensor q, ggml_go_tensor k, ggml_go_tensor v,
     ggml_go_tensor g, ggml_go_tensor beta, ggml_go_tensor state);
 
+/* --- Flash attention --- */
+ggml_go_tensor ggml_go_flash_attn_ext(ggml_go_context ctx,
+    ggml_go_tensor q, ggml_go_tensor k, ggml_go_tensor v, ggml_go_tensor mask,
+    float scale, float max_bias, float logit_softcap);
+void ggml_go_flash_attn_ext_set_prec(ggml_go_tensor t, int prec);
+ggml_go_tensor ggml_go_cast(ggml_go_context ctx, ggml_go_tensor a, int type);
+
 /* --- Precision --- */
 void ggml_go_mul_mat_set_prec_f32(ggml_go_tensor t);
 
@@ -142,6 +151,7 @@ ggml_go_buf_type ggml_go_backend_buf_type(ggml_go_backend backend);
 ggml_go_buffer   ggml_go_alloc_ctx_tensors(ggml_go_context ctx, ggml_go_backend backend);
 void             ggml_go_buffer_free(ggml_go_buffer buf);
 size_t           ggml_go_buffer_size(ggml_go_buffer buf);
+void             ggml_go_buffer_clear(ggml_go_buffer buf, uint8_t value);
 
 /* --- Backend tensor I/O --- */
 void ggml_go_tensor_set(ggml_go_tensor t, const void* data, size_t offset, size_t size);
@@ -154,27 +164,20 @@ ggml_go_sched ggml_go_sched_new(ggml_go_backend b0, ggml_go_buf_type bt0,
 int  ggml_go_sched_alloc_graph(ggml_go_sched sched, ggml_go_graph g);
 int  ggml_go_sched_compute(ggml_go_sched sched, ggml_go_graph g);
 void ggml_go_sched_free(ggml_go_sched sched);
-
-/* --- GGUF --- */
-ggml_go_gguf    ggml_go_gguf_init(const char* path, ggml_go_context* out_ctx);
-void            ggml_go_gguf_free(ggml_go_gguf gf);
-int64_t         ggml_go_gguf_find_key(ggml_go_gguf gf, const char* key);
-int             ggml_go_gguf_get_kv_type(ggml_go_gguf gf, int64_t idx);
-uint32_t        ggml_go_gguf_get_u32(ggml_go_gguf gf, int64_t idx);
-float           ggml_go_gguf_get_f32(ggml_go_gguf gf, int64_t idx);
-size_t          ggml_go_gguf_get_arr_n(ggml_go_gguf gf, int64_t idx);
-const void*     ggml_go_gguf_get_arr_data(ggml_go_gguf gf, int64_t idx);
-int             ggml_go_gguf_get_arr_type(ggml_go_gguf gf, int64_t idx);
-size_t          ggml_go_gguf_data_offset(ggml_go_gguf gf);
-int64_t         ggml_go_gguf_n_tensors(ggml_go_gguf gf);
-const char*     ggml_go_gguf_tensor_name(ggml_go_gguf gf, int64_t idx);
-size_t          ggml_go_gguf_tensor_offset(ggml_go_gguf gf, int64_t idx);
-size_t          ggml_go_gguf_tensor_size(ggml_go_gguf gf, int64_t idx);
+void ggml_go_sched_reset(ggml_go_sched sched);
 
 /* --- Context iteration --- */
 ggml_go_tensor ggml_go_get_first_tensor(ggml_go_context ctx);
 ggml_go_tensor ggml_go_get_next_tensor(ggml_go_context ctx, ggml_go_tensor t);
 const char*    ggml_go_tensor_name(ggml_go_tensor t);
+
+/* --- Memory tracking --- */
+size_t          ggml_go_backend_sched_get_buffer_size(ggml_go_sched sched, ggml_go_backend backend);
+void            ggml_go_dev_memory(ggml_go_backend backend, size_t *free, size_t *total);
+
+int             ggml_go_backend_dev_type(ggml_go_backend backend);
+int             ggml_go_backend_is_metal(ggml_go_backend backend);
+
 
 // ggml_go_register_log_callback installs the Go log callback as ggml's log handler.
 // The callback itself (ggmlGoLogCallback) is defined in logging.go via //export —

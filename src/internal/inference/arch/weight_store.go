@@ -1,7 +1,7 @@
 package arch
 
 import (
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
 
 // WeightStore holds immutable model weights in GPU VRAM.
@@ -10,7 +10,7 @@ type WeightStore struct {
 	global map[string]ggml.Tensor   // logical name → tensor (token_embd, output_norm, output)
 	layers []map[string]ggml.Tensor // per-layer: all weights (common + block + ffn)
 	ctx    *ggml.GraphContext       // allocation context (owns tensor metadata)
-	buf    *ggml.Buffer             // GPU VRAM buffer (owns tensor data)
+	Buffer *ggml.Buffer             // GPU VRAM buffer (owns tensor data)
 	GPU    *ggml.Backend
 	CPU    *ggml.Backend
 }
@@ -35,12 +35,21 @@ func (ws *WeightStore) NLayers() int {
 
 // Close releases all GPU VRAM and metadata.
 func (ws *WeightStore) Close() {
-	if ws.buf != nil {
-		ws.buf.Free()
-		ws.buf = nil
+	if ws.Buffer != nil {
+		ws.Buffer.Free()
+		ws.Buffer = nil
 	}
 	if ws.ctx != nil {
 		ws.ctx.Free()
 		ws.ctx = nil
+	}
+	// Backends must be freed last — the buffer depends on them.
+	if ws.GPU != nil {
+		ws.GPU.Free()
+		ws.GPU = nil
+	}
+	if ws.CPU != nil {
+		ws.CPU.Free()
+		ws.CPU = nil
 	}
 }

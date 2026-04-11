@@ -1,7 +1,7 @@
 package arch
 
 import (
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
 
 // FullAttentionGatedBuilder implements gated multi-head attention with QK-norm and MRoPE.
@@ -68,7 +68,7 @@ func (b *FullAttentionGatedBuilder) BuildStateless(
 	v = ggml.Permute(ctx, v, 0, 2, 1, 3)
 
 	// Scaled dot-product attention with GQA
-	cur = scaledDotProductAttention(ctx, q, k, v, inputs.InpMask, attentionScale(headDim), nHeads, nTokens)
+	cur = scaledDotProductAttention(ctx, q, k, v, inputs.InpMask, attentionScale(headDim), nHeads, nTokens, inputs.Captures, inputs.FlashAttn)
 
 	// Gate + output projection
 	cur = ggml.Mul(ctx, cur, ggml.Sigmoid(ctx, gate))
@@ -77,9 +77,9 @@ func (b *FullAttentionGatedBuilder) BuildStateless(
 }
 
 func (b *FullAttentionGatedBuilder) BuildCached(
-	ctx *ggml.GraphContext, cur ggml.Tensor, weights map[string]ggml.Tensor,
+	ctx *ggml.GraphContext, gf *ggml.Graph, cur ggml.Tensor, weights map[string]ggml.Tensor,
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
-	cache *LayerCache, writebacks *[]CacheWriteback) ggml.Tensor {
+	cache *LayerCache) ggml.Tensor {
 
 	headDim := int64(params.Ints["head_dim"])
 	nHeads := int64(params.Ints["n_heads"])
@@ -105,15 +105,15 @@ func (b *FullAttentionGatedBuilder) BuildCached(
 	freqBase := params.Floats["rope_freq_base"]
 	q, kNew = applyRoPEMultiPair(ctx, q, kNew, inputs.InpPos, nRot, sections, freqBase)
 
-	// KV cache writeback
-	writeCacheKV(ctx, kNew, vNew, cache, seqPos, nKVHeads, writebacks)
+	// KV cache writeback (in-graph GPU copy)
+	writeCacheKV(ctx, gf, kNew, vNew, cache, seqPos, nKVHeads)
 
 	// For attention: prefill uses inline K/V, decode reads from cache
 	kAttn, vAttn := selectCachedKV(ctx, cache, seqPos, kNew, vNew, headDim, nKV, nKVHeads)
 
 	q = ggml.Permute(ctx, q, 0, 2, 1, 3)
 
-	cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, inputs.InpMask, attentionScale(headDim), nHeads, nNew)
+	cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, inputs.InpMask, attentionScale(headDim), nHeads, nNew, inputs.Captures, inputs.FlashAttn)
 	cur = ggml.Mul(ctx, cur, ggml.Sigmoid(ctx, gate))
 	cur = ggml.MulMat(ctx, weights["attn_output"], cur)
 	return cur

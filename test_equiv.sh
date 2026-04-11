@@ -1,22 +1,10 @@
 #!/usr/bin/env bash
 THIS_SCRIPT=$(basename "$0")
 THIS_DIR=$(dirname "$0")
-set -e
 
 cd "${THIS_DIR}"
 
-USE_LLAMA=false
-STATELESS=false
 EQUIV=${1:-llama}
-
-case "${EQUIV}" in
-*llama) USE_LLAMA=true;;
-*stateless) STATELESS=true;;
-*)
-  echo "Usage: ${THIS_SCRIPT} [llama|stateless]" 1>&2
-  echo "unknown arg: ${EQUIV}" 1>&2
-  exit 1;;
-esac
 
 # iterate over all ggufs in models/
 [[ -n "${MODEL}" ]] || export ALL_MODELS=true
@@ -24,6 +12,8 @@ esac
 export MAX_TOKENS=250
 # no thinking, keep it quick
 export THINK=false
+# always fresh server
+export FORCE_NEW_SERVER=true
 # get the logits for comparison
 export TOP_LOGPROBS=1
 
@@ -33,6 +23,8 @@ export PROMPT=${PROMPT:-"in one numeral answer 3+1=?"}
 # override log file location
 export LOG="./bin/test_${EQUIV}_equiv.log"
 
+PASS_THRESH=${PASS_THRESH:-0.001}
+
 rm -f "${LOG}" 2> /dev/null
 
 PYTHON=$(which python3 2> /dev/null) || \
@@ -40,9 +32,10 @@ PYTHON=$(which python3 2> /dev/null) || \
   { echo "python not found." 1>&2; exit 1;}
 
 function compare_logprobs() {
+  local pass_thresh="${1}"
   "${PYTHON}" -c '
-import json,math
-pass_thresh = 0.00025
+import sys,json,math
+pass_thresh = float(sys.argv[1])
 ptable = {}
 while True:
     try:
@@ -62,34 +55,81 @@ for k, v in ptable.items():
     delta = check - ref
     result = "pass" if math.fabs(delta) <= pass_thresh else "FAIL"
     print(f"model:{k} ref:{ref:.5f} chk:{check:.5f} diff:{delta:.5f} result:{result}")
-'
+' "${pass_thresh}"
+}
+
+function collect_logprobs() {
+  local all_out=$(./test_inference.sh "${PROMPT}" 2>&1)
+  grep -v logprob 1>&2 <<< "${all_out}"
+  grep logprob <<< "${all_out}"
 }
 
 echo "Collecting reference ${EQUIV} results..."
-REF_PROBS=$(USE_LLAMA=${USE_LLAMA} STATELESS=${STATELESS} FORCE_NEW_SERVER=${STATELESS} \
-  ./test_inference.sh "${PROMPT}" 2> /dev/null | grep logprob)
 
-${USE_LLAMA} || {
-  STATELESS_CHECK0=$(grep 'stateless=true' "${LOG}")
-  [[ -n "${STATELESS_CHECK0}" ]] || {
-    echo "FAIL: stateless false when it should be true" 1>&2
-    exit 1
-  }
+case "${EQUIV}" in
+  llama)
+    REF_PROBS=$(USE_LLAMA=true collect_logprobs)
+    ;;
+  stateless)
+    REF_PROBS=$(STATELESS=true collect_logprobs)
+      STATELESS_CHECK0=$(grep 'stateless=true' "${LOG}")
+      [[ -n "${STATELESS_CHECK0}" ]] || {
+        echo "FAIL: stateless false when it should be true" 1>&2
+        exit 1
+      }
+    ;;
+  standard-attention)
+    REF_PROBS=$(ENABLE=false collect_logprobs)
+      FLASH_CHECK0=$(grep 'flash_attention_used=false' "${LOG}")
+      [[ -n "${FLASH_CHECK0}" ]] || {
+        echo "FAIL: flash_attention true when it should be false" 1>&2
+        exit 1
+      }
+    ;;
+    *)
+      echo "Usage: ${THIS_SCRIPT} [llama|stateless|standard-attention]" 1>&2
+      echo "unknown arg: ${EQUIV}" 1>&2
+      exit 1
+      ;;
+esac
+
+[[ -n "${REF_PROBS}" ]] || {
+  echo "FAIL: no reference results collected" 1>&2
+  exit 1
 }
 
 echo "Collecting lab-bench results..."
-BENCH_PROBS=$(FORCE_NEW_SERVER=true STATELESS=false \
-  ./test_inference.sh "${PROMPT}" | grep logprob)
 
-${USE_LLAMA} || {
-  STATELESS_CHECK1=$(grep 'stateless=true' "${LOG}")
-  # there should be no new stateless lines
-  [[ "${STATELESS_CHECK0}" == "${STATELESS_CHECK1}" ]] || {
-    echo "FAIL: stateless true when it should be false" 1>&2; exit 1;
-  }
+case "${EQUIV}" in
+  llama)
+    BENCH_PROBS=$(USE_LLAMA=false collect_logprobs)
+    ;;
+  stateless)
+    BENCH_PROBS=$(STATELESS=false collect_logprobs)
+    STATELESS_CHECK1=$(grep 'stateless=true' "${LOG}")
+    # there should be no new stateless lines
+    [[ "${STATELESS_CHECK1}" == "${STATELESS_CHECK0}" ]] || {
+      echo "FAIL: stateless true when it should be false" 1>&2; exit 1;
+    }
+    ;;
+  standard-attention)
+    BENCH_PROBS=$(FLASH=true collect_logprobs)
+    FLASH_CHECK1=$(grep 'flash_attention_used=false' "${LOG}")
+    [[ "${FLASH_CHECK1}" == "${FLASH_CHECK0}" ]] || {
+      echo "FAIL: flash false when it should be true" 1>&2; exit 1;
+    }
+    ;;
+    *)
+      echo "internal error. unhandled case: ${EQUIV}" 1>&2
+      exit 1;;
+esac
+
+[[ -n "${BENCH_PROBS}" ]] || {
+  echo "FAIL: no benchmark results collected" 1>&2
+  exit 1
 }
 
-RESULTS=$( (echo "${REF_PROBS}"; echo "${BENCH_PROBS}") | compare_logprobs)
+RESULTS=$( (echo "${REF_PROBS}"; echo "${BENCH_PROBS}") | compare_logprobs "${PASS_THRESH}")
 
 echo "RESULTS:"
 echo "${RESULTS}"

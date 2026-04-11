@@ -10,10 +10,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	log "inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/inference"
+	log "inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/model"
 	"inference-lab-bench/internal/util"
+)
+
+const (
+	apiRoot             = "/api/v1/"
+	diagRoot            = "/diag/"
+	ctlRoot             = "/ctl/"
+	modelsEndpoint      = apiRoot + "models"
+	completionsEndpoint = apiRoot + "chat/completions"
 )
 
 type Server struct {
@@ -22,7 +30,7 @@ type Server struct {
 	engines    map[string]*inference.Engine // model ID → loaded engine
 	archDir    string                       // absolute path to arch definitions
 	httpServer *http.Server                 // for graceful shutdown
-	pending    sync.WaitGroup              // tracks in-flight inference requests
+	pending    sync.WaitGroup               // tracks in-flight inference requests
 }
 
 func NewServer(cfg *Config, manager *model.Manager) *Server {
@@ -40,13 +48,25 @@ func NewServer(cfg *Config, manager *model.Manager) *Server {
 	}
 }
 
+// evictEngine closes and removes the engine for modelID. Safe to call if the
+// engine is not loaded. Used to recover from a poisoned Metal backend.
+func (s *Server) evictEngine(modelID string) {
+	if eng, ok := s.engines[modelID]; ok {
+		log.Warn("evicting poisoned engine for %s", modelID)
+		eng.Close()
+		delete(s.engines, modelID)
+	}
+}
+
 // Engine returns or lazily creates an inference engine for the given model ID.
+// Only one engine is kept resident at a time — switching models evicts the previous one.
 func (s *Server) Engine(modelID string) (*inference.Engine, error) {
 	if eng, ok := s.engines[modelID]; ok {
 		return eng, nil
 	}
 	info := s.manager.Get(modelID)
 	if info == nil {
+		log.Error("model not found: %s", modelID)
 		return nil, fmt.Errorf("model not found: %s", modelID)
 	}
 	// Evict previous engines unless configured to keep all loaded.
@@ -58,7 +78,7 @@ func (s *Server) Engine(modelID string) (*inference.Engine, error) {
 		}
 	}
 	log.Info("loading inference engine for %s ...", modelID)
-	eng, err := inference.NewEngine(info, s.archDir, s.cfg.Inference.MaxSeqLen)
+	eng, err := inference.NewEngine(info, s.archDir, s.cfg.Inference.MaxSeqLen, s.cfg.Inference.UseFlashAttention())
 	if err != nil {
 		return nil, fmt.Errorf("inference engine: %w", err)
 	}
@@ -72,24 +92,24 @@ func (s *Server) Run() error {
 	r.Use(middleware.Recoverer)
 	r.Use(s.authMiddleware)
 
-	r.Get("/api/v1/models", s.handleListModels)
-	r.Post("/api/v1/chat/completions", s.handleChatCompletions)
-	// Legacy routes for backward compatibility
-	r.Get("/v1/models", s.handleListModels)
-	r.Post("/v1/chat/completions", s.handleChatCompletions)
+	r.Get(modelsEndpoint, s.handleListModels)
+	r.Post(completionsEndpoint, s.handleChatCompletions)
 
-	r.Get("/ctl", s.handleCtl)
+	r.Get(ctlRoot, s.handleCtl)
 
 	// Diagnostic file explorer: serves contents of bin/diag/
 	paths := util.ResolvePaths()
 	diagFS := http.StripPrefix("/diag/", http.FileServer(http.Dir(paths.DiagDir)))
-	r.Get("/diag/*", diagFS.ServeHTTP)
-	r.Get("/diag/", diagFS.ServeHTTP)
+	r.Get(diagRoot+"*", diagFS.ServeHTTP)
+	r.Get(diagRoot, diagFS.ServeHTTP)
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)
+	protoAddr := "http://" + addr
 	s.httpServer = &http.Server{Addr: addr, Handler: r}
-	log.Info("listening on %s", addr)
-	log.Info("diagnostics: http://localhost:%d/diag/", s.cfg.Server.Port)
+	log.Info("api: %s%s", protoAddr, apiRoot)
+	log.Info("endpoints:\n    models: %s%s\n    completions: %s%s", protoAddr, modelsEndpoint, protoAddr, completionsEndpoint)
+	log.Info("diagnostics: %s%s", protoAddr, diagRoot)
+	log.Info("control: %s%s", protoAddr, ctlRoot)
 	if err := s.httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -98,6 +118,8 @@ func (s *Server) Run() error {
 
 // resolveDefaultModel returns the model ID based on the "default" config field.
 // "first" → first model in list, "last" → last, otherwise treated as explicit name.
+// If an explicit name is configured but the model file is not found, falls back to
+// first model and logs a warning.
 func (s *Server) resolveDefaultModel() string {
 	dflt := s.cfg.Models.Default
 	models := s.manager.List()
@@ -110,6 +132,12 @@ func (s *Server) resolveDefaultModel() string {
 	case "last":
 		return models[len(models)-1].ID
 	default:
+		// Check if the configured default model actually exists
+		info := s.manager.Get(dflt)
+		if info == nil {
+			log.Warn("configured default model %q not found; falling back to first available model", dflt)
+			return models[0].ID
+		}
 		return dflt
 	}
 }

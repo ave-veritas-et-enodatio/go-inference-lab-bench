@@ -1,7 +1,7 @@
 package arch
 
 import (
-	ggml "inference-lab-bench/internal/inference/ggml"
+	ggml "inference-lab-bench/internal/ggml"
 )
 
 // AttentionBuilder implements standard multi-head attention with GQA and RoPE.
@@ -149,14 +149,14 @@ func (b *AttentionBuilder) BuildStateless(
 	k := ggml.Permute(ctx, kv.K, 0, 2, 1, 3)
 	v := ggml.Permute(ctx, kv.V, 0, 2, 1, 3)
 
-	cur = scaledDotProductAttention(ctx, q, k, v, mask, kqScale, nHeads, inputs.NTokens)
+	cur = scaledDotProductAttention(ctx, q, k, v, mask, kqScale, nHeads, inputs.NTokens, inputs.Captures, inputs.FlashAttn)
 	return ggml.MulMat(ctx, weights["attn_output"], cur)
 }
 
 func (b *AttentionBuilder) BuildCached(
-	ctx *ggml.GraphContext, cur ggml.Tensor, weights map[string]ggml.Tensor,
+	ctx *ggml.GraphContext, gf *ggml.Graph, cur ggml.Tensor, weights map[string]ggml.Tensor,
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
-	cache *LayerCache, writebacks *[]CacheWriteback) ggml.Tensor {
+	cache *LayerCache) ggml.Tensor {
 
 	headDim, nHeads, nKVHeads, nRot, ropeMode, freqBase, kqScale := attnParams(params, config)
 	kv := b.prepareQKV(ctx, cur, weights, params, config, inputs,
@@ -166,31 +166,14 @@ func (b *AttentionBuilder) BuildCached(
 	q := ggml.Permute(ctx, kv.Q, 0, 2, 1, 3)
 	nKVHeadsActual := kv.NKVHeads
 	if kv.HasKV {
-		writeCacheKV(ctx, kv.K, kv.V, cache, inputs.SeqPos, nKVHeadsActual, writebacks)
+		writeCacheKV(ctx, gf, kv.K, kv.V, cache, inputs.SeqPos, nKVHeadsActual)
 		kAttn, vAttn := selectCachedKV(ctx, cache, inputs.SeqPos, kv.K, kv.V, headDim, inputs.NKV, nKVHeadsActual)
-		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens)
+		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens, inputs.Captures, inputs.FlashAttn)
 	} else {
 		group := configStr(config, "shared_kv_group")
 		kAttn, vAttn := selectSharedKV(ctx, cache, inputs.SeqPos, inputs.SharedKV, group, headDim, inputs.NKV, nKVHeadsActual)
-		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens)
+		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens, inputs.Captures, inputs.FlashAttn)
 	}
 
 	return ggml.MulMat(ctx, weights["attn_output"], cur)
-}
-
-// configStr returns a string config value or "".
-func configStr(config map[string]any, key string) string {
-	if config == nil {
-		return ""
-	}
-	if v, ok := config[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-		// TOML booleans
-		if b, ok := v.(bool); ok && b {
-			return "true"
-		}
-	}
-	return ""
 }

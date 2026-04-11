@@ -45,7 +45,7 @@ func TestTeeWritesToFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "out.log")
 
-	if err := InitLogger(path, LevelInfo); err != nil {
+	if err := InitLogger(path, LevelInfo, false); err != nil {
 		t.Fatalf("InitLogger: %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestLogFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "perms.log")
 
-	if err := InitLogger(path, LevelInfo); err != nil {
+	if err := InitLogger(path, LevelInfo, false); err != nil {
 		t.Fatalf("InitLogger: %v", err)
 	}
 	// Write something so the file definitely exists.
@@ -92,7 +92,7 @@ func TestLevelDebugShowsDebugOutput(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dbg.log")
 
-	if err := InitLogger(path, LevelDebug); err != nil {
+	if err := InitLogger(path, LevelDebug, false); err != nil {
 		t.Fatalf("InitLogger: %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestFileAlwaysGetsDebug(t *testing.T) {
 	path := filepath.Join(dir, "always-debug.log")
 
 	// stderrLevel=WARN: stderr suppresses INFO and DEBUG, but file must get both.
-	if err := InitLogger(path, LevelWarn); err != nil {
+	if err := InitLogger(path, LevelWarn, false); err != nil {
 		t.Fatalf("InitLogger: %v", err)
 	}
 
@@ -152,7 +152,7 @@ func TestDefaultLevelShowsInfoSuppressesDebug(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "default.log")
 
-	if err := InitLogger(path, LevelInfo); err != nil {
+	if err := InitLogger(path, LevelInfo, false); err != nil {
 		t.Fatalf("InitLogger: %v", err)
 	}
 
@@ -188,7 +188,7 @@ func TestSplitLevel(t *testing.T) {
 	f.Close()
 	t.Cleanup(func() { os.Remove(f.Name()) })
 
-	if err := InitLogger(f.Name(), LevelWarn); err != nil {
+	if err := InitLogger(f.Name(), LevelWarn, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -219,7 +219,7 @@ func TestLevelNoneSuppressesAllStderr(t *testing.T) {
 	}
 	f.Close()
 	t.Cleanup(func() { os.Remove(f.Name()) })
-	if err := InitLogger(f.Name(), LevelNone); err != nil {
+	if err := InitLogger(f.Name(), LevelNone, false); err != nil {
 		t.Fatal(err)
 	}
 	// All levels written — file should capture everything
@@ -299,7 +299,7 @@ func TestInvalidLogLevel(t *testing.T) {
 func TestInitLoggerBadPath(t *testing.T) {
 	defer restoreGlobal(t)()
 
-	err := InitLogger("/nonexistent-dir/bench-log-test.log", LevelInfo)
+	err := InitLogger("/nonexistent-dir/bench-log-test.log", LevelInfo, false)
 	if err == nil {
 		t.Fatal("expected error for bad path, got nil")
 	}

@@ -1,7 +1,7 @@
 package ggml
 
 /*
-#cgo CFLAGS: -std=c17 -I${SRCDIR}/../../../ggml_lib/src
+#cgo CFLAGS: -std=c17 -I${SRCDIR}/../../ggml_lib/src
 #include "ggml_ops.h"
 #include <stdlib.h>
 */
@@ -52,6 +52,9 @@ func Reshape4D(ctx *GraphContext, a Tensor, ne0, ne1, ne2, ne3 int64) Tensor {
 
 // --- Layout ops ---
 
+func Cpy(ctx *GraphContext, a, b Tensor) Tensor {
+	return t(C.ggml_go_cpy(ctx.c(), a.c(), b.c()))
+}
 func Permute(ctx *GraphContext, a Tensor, ax0, ax1, ax2, ax3 int) Tensor {
 	return t(C.ggml_go_permute(ctx.c(), a.c(), C.int(ax0), C.int(ax1), C.int(ax2), C.int(ax3)))
 }
@@ -83,6 +86,8 @@ func Clamp(ctx *GraphContext, a Tensor, minVal, maxVal float32) Tensor {
 	return t(C.ggml_go_clamp(ctx.c(), a.c(), C.float(minVal), C.float(maxVal)))
 }
 func SumRows(ctx *GraphContext, a Tensor) Tensor   { return t(C.ggml_go_sum_rows(ctx.c(), a.c())) }
+func Sum(ctx *GraphContext, a Tensor) Tensor       { return t(C.ggml_go_sum(ctx.c(), a.c())) }
+func Sqrt(ctx *GraphContext, a Tensor) Tensor      { return t(C.ggml_go_sqrt(ctx.c(), a.c())) }
 func MulMat(ctx *GraphContext, a, b Tensor) Tensor { return t(C.ggml_go_mul_mat(ctx.c(), a.c(), b.c())) }
 func MulMatId(ctx *GraphContext, as, b, ids Tensor) Tensor {
 	return t(C.ggml_go_mul_mat_id(ctx.c(), as.c(), b.c(), ids.c()))
@@ -150,6 +155,24 @@ func GatedDeltaNet(ctx *GraphContext, q, k, v, g, beta, state Tensor) Tensor {
 	return t(C.ggml_go_gated_delta_net(ctx.c(), q.c(), k.c(), v.c(), g.c(), beta.c(), state.c()))
 }
 
+// --- Flash attention ---
+
+// PrecF32 selects F32 accumulation precision for flash attention (GGML_PREC_F32).
+const PrecF32 = int(C.GGML_GO_PREC_F32)
+
+func FlashAttnExt(ctx *GraphContext, q, k, v, mask Tensor, scale, maxBias, logitSoftcap float32) Tensor {
+	return t(C.ggml_go_flash_attn_ext(ctx.c(), q.c(), k.c(), v.c(), mask.c(),
+		C.float(scale), C.float(maxBias), C.float(logitSoftcap)))
+}
+
+func FlashAttnExtSetPrec(tn Tensor, prec int) {
+	C.ggml_go_flash_attn_ext_set_prec(tn.c(), C.int(prec))
+}
+
+func Cast(ctx *GraphContext, a Tensor, typ int) Tensor {
+	return t(C.ggml_go_cast(ctx.c(), a.c(), C.int(typ)))
+}
+
 // --- Precision ---
 
 func MulMatSetPrecF32(t Tensor) { C.ggml_go_mul_mat_set_prec_f32(t.c()) }
@@ -163,3 +186,11 @@ func SetName(tn Tensor, name string) {
 	defer C.free(unsafe.Pointer(cname))
 	C.ggml_go_set_name(tn.c(), cname)
 }
+
+func backendPtr(b *Backend) C.ggml_go_backend {
+	if b == nil || b.ptr == nil {
+		return nil
+	}
+	return C.ggml_go_backend(b.ptr)
+}
+

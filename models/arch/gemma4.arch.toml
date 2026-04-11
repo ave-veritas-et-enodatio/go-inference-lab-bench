@@ -164,5 +164,11 @@ builder = "moe"
   post_norm_2  = "post_ffw_norm_2.weight"
 
 [tokens]
-think_open  = "<|channel>"
-think_close = "<channel|>"
+think_open   = "<|channel>"
+think_close  = "<channel|>"
+extra_eos    = ["<end_of_turn>"]
+
+# Diagram-only example values; no effect on inference.
+[example]
+n_layers       = 30
+full_attn_every = 5

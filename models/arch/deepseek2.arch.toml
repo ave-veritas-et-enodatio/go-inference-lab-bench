@@ -104,3 +104,7 @@ builder = "moe"
 [tokens]
 think_open  = "<think>"
 think_close = "</think>"
+
+# Diagram-only example values; no effect on inference.
+[example]
+n_layers = 28
