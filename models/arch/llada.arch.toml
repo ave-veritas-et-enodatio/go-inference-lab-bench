@@ -1,0 +1,80 @@
+# LLaDA architecture definition.
+#
+# Dense diffusion-based decoder with bidirectional (non-causal) attention.
+# Standard multi-head attention (MHA), standard (interleaved) RoPE, SwiGLU FFN.
+# No QK-norm (unlike LLaDA-MoE), no gated attention output.
+#
+# Known model sizes:
+#   32 layers → 8B
+
+[architecture]
+name = "llada"
+non_causal = true
+generation = "diffusion"
+
+[params]
+n_layers       = "llada.block_count"
+n_heads        = "llada.attention.head_count"
+n_kv_heads     = "llada.attention.head_count_kv?"
+n_embd         = "llada.embedding_length"
+n_ff           = "llada.feed_forward_length"
+rms_eps        = "llada.attention.layer_norm_rms_epsilon"
+rope_freq_base = "llada.rope.freq_base"
+
+[params.derived]
+n_vocab    = "token_embd.ne[1]"
+head_dim   = "n_embd / n_heads"
+rope_n_rot = "head_dim"
+
+[params.defaults]
+n_kv_heads = "n_heads"
+
+[weights.global]
+token_embd  = "token_embd.weight"
+output_norm = "output_norm.weight"
+output      = "output.weight"
+
+[layers]
+count  = "n_layers"
+prefix = "blk.@{layer_idx}."
+
+[layers.routing]
+# All layers use the same block type
+rule     = "1 == 1"
+if_true  = "attention"
+if_false = "attention"
+
+[layers.common_weights]
+attn_norm = "attn_norm.weight"
+ffn_norm  = "ffn_norm.weight"
+
+[blocks.attention]
+builder = "attention"
+
+  [blocks.attention.weights]
+  attn_q      = "attn_q.weight"
+  attn_k      = "attn_k.weight"
+  attn_v      = "attn_v.weight"
+  attn_output = "attn_output.weight"
+
+  [blocks.attention.config]
+  rope = "standard"
+
+  [blocks.attention.cache]
+  k = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+  v = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
+
+[ffn]
+builder = "swiglu"
+
+  [ffn.weights]
+  gate = "ffn_gate.weight"
+  up   = "ffn_up.weight"
+  down = "ffn_down.weight"
+
+[tokens]
+extra_eos = ["<|role_end|>", "<|eot_id|>"]
+
+# Diagram-only example values; no effect on inference.
+[example]
+n_layers = 32

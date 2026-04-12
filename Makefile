@@ -1,22 +1,9 @@
 MAKE           := /usr/bin/make
 GRAPH_TARGETS  := $(patsubst models/arch/%.arch.toml,models/arch/%.arch.svg,$(wildcard models/arch/*.arch.toml))
 
-.PHONY: all build test integration-test equiv-test update-dependencies serve chat arch-editor model-diagrams clean agents
+.PHONY: all build test integration-test equiv-test update-dependencies serve chat arch-editor model-diagrams clean
 
 all: build
-
-AGENTS_VERSION ?= v0.1.0
-AGENTS_REPO := git@github.com:ave-veritas-et-enodatio/agents.git
-AGENTS_MARKER := .claude/agents/.git/HEAD
-agents: $(AGENTS_MARKER)
-
-$(AGENTS_MARKER):
-	@cd .claude/ && \
-	git clone $(AGENTS_REPO) && \
-	cd agents && \
-	git checkout $(AGENTS_VERSION) && \
-	cd .. && \
-	ln -s agents/commands .
 
 build:
 	$(MAKE) -C src all

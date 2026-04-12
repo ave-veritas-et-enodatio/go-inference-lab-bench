@@ -102,19 +102,26 @@ type chatMessage struct {
 }
 
 type chatCompletionRequest struct {
-	Model          string        `json:"model"`
-	Messages       []chatMessage `json:"messages"`
-	Stream         bool          `json:"stream"`
-	MaxTokens      int           `json:"max_tokens"`
-	Temperature    float64       `json:"temperature"`
-	TopP           float64       `json:"top_p"`
-	LogProbs       bool          `json:"logprobs,omitempty"`        // include log-probabilities
-	TopLogProbs    int           `json:"top_logprobs,omitempty"`    // number of top alternatives (default 1)
-	Stateless      bool          `json:"stateless,omitempty"`       // bypass KV cache (for testing)
-	CullMethod     *string       `json:"cull_method,omitempty"`     // null = use server config; "none" = off; "random" = random
-	EnableThinking *bool         `json:"enable_thinking,omitempty"` // true/false/null; null = use server default
-	ElideThinking  *bool         `json:"elide_thinking,omitempty"`  // true/false/null; null = use server default
-	FlashAttention *bool         `json:"flash_attention,omitempty"` // true/false/null; null = use server default
+	Model             string        `json:"model"`
+	Messages          []chatMessage `json:"messages"`
+	Stream            bool          `json:"stream"`
+	MaxTokens         int           `json:"max_tokens"`
+	Temperature       float64       `json:"temperature"`
+	TopP              float64       `json:"top_p"`
+	LogProbs          bool          `json:"logprobs,omitempty"`           // include log-probabilities
+	TopLogProbs       int           `json:"top_logprobs,omitempty"`       // number of top alternatives (default 1)
+	Stateless         bool          `json:"stateless,omitempty"`          // bypass KV cache (for testing)
+	CullMethod        *string       `json:"cull_method,omitempty"`        // null = use server config; "none" = off; "random" = random
+	EnableThinking    *bool         `json:"enable_thinking,omitempty"`    // true/false/null; null = use server default
+	ElideThinking     *bool         `json:"elide_thinking,omitempty"`     // true/false/null; null = use server default
+	FlashAttention    *bool         `json:"flash_attention,omitempty"`    // true/false/null; null = use server default
+	Diffusion *diffusionRequestParams `json:"diffusion,omitempty"` // nil = no diffusion params; ignored for non-diffusion models
+}
+
+type diffusionRequestParams struct {
+	Steps       int    `json:"steps,omitempty"`
+	BlockLength int    `json:"block_length,omitempty"`
+	Algorithm   string `json:"algorithm,omitempty"`
 }
 
 // --- Non-streaming response types ---
@@ -223,7 +230,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if req.MaxTokens > 0 {
 		params.MaxTokens = req.MaxTokens
 	}
-	if req.Temperature > 0 {
+	if req.Temperature >= 0 {
 		params.Temperature = float32(req.Temperature)
 	}
 	if req.TopP > 0 {
@@ -286,6 +293,18 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if req.FlashAttention != nil {
 		params.FlashAttention = req.FlashAttention
 	}
+	if req.Diffusion != nil {
+		if !eng.IsDiffusion() {
+			log.Warn("diffusion params in request ignored: model is not a diffusion model")
+		} else {
+			params.Diffusion = &inference.DiffusionParams{
+				Steps:       req.Diffusion.Steps,
+				BlockLength: req.Diffusion.BlockLength,
+				Algorithm:   req.Diffusion.Algorithm,
+			}
+		}
+	}
+	params.Streaming = req.Stream
 
 	// Log any request-level parameter overrides of server config defaults.
 	{
@@ -390,11 +409,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// --- Non-streaming ---
 		var sb []byte
-		completionTokens := 0
 
 		metrics, genErr := eng.Generate(msgs, params, func(token string) bool {
 			sb = append(sb, token...)
-			completionTokens++
 			return true
 		})
 		if genErr != nil {
