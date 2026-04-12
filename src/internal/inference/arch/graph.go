@@ -192,6 +192,213 @@ func (m *GenericModel) buildLogits(gctx *ggml.GraphContext, x ggml.Tensor,
 	return logits
 }
 
+// buildAllLogits applies final norm and LM head projection to all token positions.
+// Returns logits shaped [nVocab, nTokens] — all positions, all marked as output.
+// Used by diffusion generation which needs per-position logits over the full sequence.
+func (m *GenericModel) buildAllLogits(gctx *ggml.GraphContext, x ggml.Tensor,
+	nEmbd int, rmsEps float32) ggml.Tensor {
+	xn := rmsNormApply(gctx, x, m.MaskedGlobal(gctx, "output_norm"), rmsEps)
+	logits := ggml.MulMat(gctx, m.MaskedGlobal(gctx, "output"), xn)
+
+	// Logit softcapping: cap * tanh(logits / cap)
+	if cap, ok := m.Params.Floats["logit_softcapping"]; ok && cap > 0 {
+		logits = ggml.Scale(gctx, logits, 1.0/cap)
+		logits = ggml.Tanh(gctx, logits)
+		logits = ggml.Scale(gctx, logits, cap)
+	}
+
+	ggml.SetOutput(logits)
+	return logits
+}
+
+// statelessCtx holds the live graph context and scheduler for a stateless forward pass.
+// Tensors returned by forwardStatelessCore live in gctx's arena — callers must not
+// call Free() until after all readback is complete. Call Free() via defer.
+// On error from forwardStatelessCore, do NOT call Free() — the helper frees its own resources.
+type statelessCtx struct {
+	gctx       *ggml.GraphContext
+	sched      *ggml.Sched
+	gf         *ggml.Graph
+	x          ggml.Tensor
+	inputs     *GraphInputs
+	inpTokens  ggml.Tensor  // input token ID tensor — needed for TensorSet after AllocGraph
+	nEmbd      int
+	rmsEps     float32
+	nVocab     int
+	nTokens    int64
+	hasSWA     bool
+	swaWindow  int
+	zeroFill   []ggml.Tensor
+	engagement *EngagementData // non-nil only when withEngagement=true
+}
+
+func (sc *statelessCtx) Free() {
+	sc.sched.Free()
+	sc.gctx.Free()
+}
+
+// forwardStatelessCore builds the graph context, scheduler, inputs, and runs all layers
+// for a stateless forward pass. Returns a populated *statelessCtx on success.
+//
+// Callers MUST defer sc.Free() after their readback calls complete —
+// tensors live in sc.gctx's arena.
+//
+// On error, the helper frees its own resources before returning nil — callers
+// must NOT call Free() on error.
+//
+//   withEngagement — allocates and wires EngagementData (ForwardStateless path only)
+//   caps           — ForwardCaptures or nil (ForwardStateless path only)
+func (m *GenericModel) forwardStatelessCore(
+	tokenIDs []int32,
+	mask *CullingMask,
+	flashAttn bool,
+	withEngagement bool,
+	caps *ForwardCaptures,
+) (*statelessCtx, error) {
+	nLayers := m.Params.Ints["n_layers"]
+	nEmbd := m.Params.Ints["n_embd"]
+	nVocab := m.Params.Ints["n_vocab"]
+	rmsEps := m.Params.Floats["rms_eps"]
+	nTokens := int64(len(tokenIDs))
+
+	gctx := ggml.NewGraphContext(graphCtxSize(nLayers))
+	if gctx == nil {
+		return nil, fmt.Errorf("failed to create graph context")
+	}
+
+	sched := ggml.NewSched(m.Store.GPU, m.Store.CPU, 16384)
+	if sched == nil {
+		gctx.Free()
+		return nil, fmt.Errorf("failed to create scheduler")
+	}
+
+	// Inputs
+	inpTokens := ggml.NewTensor1D(gctx, ggml.TypeI32, nTokens)
+	ggml.SetInput(inpTokens)
+	inpPos := ggml.NewTensor1D(gctx, ggml.TypeI32, nTokens)
+	ggml.SetInput(inpPos)
+	inpMask := ggml.NewTensor2D(gctx, ggml.TypeF32, nTokens, nTokens)
+	ggml.SetInput(inpMask)
+
+	x := ggml.GetRows(gctx, m.MaskedGlobal(gctx, "token_embd"), inpTokens)
+
+	if m.Def.Architecture.EmbedScale {
+		x = ggml.Scale(gctx, x, float32(math.Sqrt(float64(nEmbd))))
+	}
+
+	swaWindow, hasSWA := m.Params.Ints["sliding_window"]
+	var inpMaskSWA ggml.Tensor
+	if hasSWA && swaWindow > 0 {
+		inpMaskSWA = ggml.NewTensor2D(gctx, ggml.TypeF32, nTokens, nTokens)
+		ggml.SetInput(inpMaskSWA)
+	}
+
+	if caps != nil && caps.Flags&CaptureAttnWeights != 0 {
+		caps.attnTensors = make([]ggml.Tensor, nLayers)
+		caps.NHeads = int64(m.Params.Ints["n_heads"])
+		caps.NTokens = nTokens
+	}
+
+	effectiveFlashAttn := flashAttn && !m.Def.Architecture.NoFlashAttn
+	inputs := &GraphInputs{
+		InpPos:     inpPos,
+		InpMask:    inpMask,
+		InpMaskSWA: inpMaskSWA,
+		NTokens:    nTokens,
+		NKV:        nTokens,
+		SeqPos:     0,
+		Captures:   caps,
+		SharedKV:   &SharedKVState{K: make(map[string]ggml.Tensor), V: make(map[string]ggml.Tensor)},
+		FlashAttn:  effectiveFlashAttn,
+	}
+
+	perLayerEmbd := m.buildPerLayerEmbedSetup(gctx, inpTokens, x, nTokens, rmsEps)
+
+	var engagement *EngagementData
+	if withEngagement {
+		engagement = newEngagementData(nLayers)
+	}
+
+	var zeroFill []ggml.Tensor
+	blkFn := func(gctx *ggml.GraphContext, cur ggml.Tensor,
+		lt map[string]ggml.Tensor, il int, config map[string]any,
+		inputs *GraphInputs) ggml.Tensor {
+		if inputs.Captures != nil {
+			inputs.Captures.currentLayer = il
+		}
+		return m.BlockBuilders[il].BuildStateless(gctx, cur, lt, m.Params, config, inputs, &zeroFill)
+	}
+	x = m.runLayers(gctx, x, inputs, rmsEps, mask, blkFn, perLayerEmbd, engagement)
+
+	gf := ggml.NewGraph(gctx, 16384)
+
+	return &statelessCtx{
+		gctx:       gctx,
+		sched:      sched,
+		gf:         gf,
+		x:          x,
+		inputs:     inputs,
+		inpTokens:  inpTokens,
+		nEmbd:      nEmbd,
+		rmsEps:     rmsEps,
+		nVocab:     nVocab,
+		nTokens:    nTokens,
+		hasSWA:     hasSWA,
+		swaWindow:  swaWindow,
+		zeroFill:   zeroFill,
+		engagement: engagement,
+	}, nil
+}
+
+// ForwardStatelessAllLogits runs a full-sequence forward pass and returns logits for
+// all token positions. Returns a slice of length nVocab*nTokens, row-major by position:
+// position p occupies allLogits[p*nVocab : (p+1)*nVocab].
+// No engagement data or captures are collected — this is intended for diffusion generation.
+func (m *GenericModel) ForwardStatelessAllLogits(tokenIDs []int32, mask *CullingMask, flashAttn bool) ([]float32, error) {
+	sc, err := m.forwardStatelessCore(tokenIDs, mask, flashAttn, false, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer sc.Free()
+
+	logits := m.buildAllLogits(sc.gctx, sc.x, sc.nEmbd, sc.rmsEps)
+	sc.gf.BuildForwardExpand(logits)
+
+	if !sc.sched.AllocGraph(sc.gf) {
+		return nil, fmt.Errorf("failed to allocate graph")
+	}
+
+	for _, t := range sc.zeroFill {
+		zeros := make([]byte, t.Nbytes())
+		ggml.TensorSetBytes(t, zeros, 0)
+	}
+
+	ggml.TensorSet(sc.inpTokens, unsafe.Pointer(&tokenIDs[0]), 0, sc.inpTokens.Nbytes())
+
+	positions := make([]int32, sc.nTokens)
+	for i := range positions {
+		positions[i] = int32(i)
+	}
+	ggml.TensorSet(sc.inputs.InpPos, unsafe.Pointer(&positions[0]), 0, sc.inputs.InpPos.Nbytes())
+
+	maskData := buildCausalMaskData(nil, sc.nTokens, sc.nTokens, 0, m.Def.Architecture.NonCausal)
+	ggml.TensorSet(sc.inputs.InpMask, unsafe.Pointer(&maskData[0]), 0, sc.inputs.InpMask.Nbytes())
+
+	if sc.hasSWA && sc.swaWindow > 0 {
+		swaMaskData := buildSWAMaskData(nil, sc.nTokens, sc.nTokens, 0, sc.swaWindow)
+		ggml.TensorSet(sc.inputs.InpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, sc.inputs.InpMaskSWA.Nbytes())
+	}
+
+	status := sc.sched.Compute(sc.gf)
+	if status != ggml.StatusSuccess {
+		return nil, fmt.Errorf("%w (status=%d)", ErrComputeFailed, status)
+	}
+
+	result := make([]float32, sc.nVocab*int(sc.nTokens))
+	ggml.TensorGet(logits, unsafe.Pointer(&result[0]), 0, logits.Nbytes())
+	return result, nil
+}
+
 // readLogits copies the logits tensor from GPU to a newly allocated float32 slice.
 func readLogits(logits ggml.Tensor, nVocab int) []float32 {
 	result := make([]float32, nVocab)
@@ -212,142 +419,72 @@ func readLogitsInto(buf []float32, logits ggml.Tensor) []float32 {
 // intermediate tensors (e.g. attention weights) alongside the logits.
 // Always returns EngagementData (per-layer cosine similarity of the residual stream).
 func (m *GenericModel) ForwardStateless(tokenIDs []int32, mask *CullingMask, caps *ForwardCaptures, flashAttn bool) ([]float32, *EngagementData, error) {
-	nLayers := m.Params.Ints["n_layers"]
-	nEmbd := m.Params.Ints["n_embd"]
-	nVocab := m.Params.Ints["n_vocab"]
-	rmsEps := m.Params.Floats["rms_eps"]
-	nTokens := int64(len(tokenIDs))
-
-	gctx := ggml.NewGraphContext(graphCtxSize(nLayers))
-	if gctx == nil {
-		return nil, nil, fmt.Errorf("failed to create graph context")
+	sc, err := m.forwardStatelessCore(tokenIDs, mask, flashAttn, true, caps)
+	if err != nil {
+		return nil, nil, err
 	}
-	defer gctx.Free()
+	defer sc.Free()
 
-	sched := ggml.NewSched(m.Store.GPU, m.Store.CPU, 16384)
-	if sched == nil {
-		return nil, nil, fmt.Errorf("failed to create scheduler")
-	}
-	defer sched.Free()
-
-	// Inputs
-	inpTokens := ggml.NewTensor1D(gctx, ggml.TypeI32, nTokens)
-	ggml.SetInput(inpTokens)
-	inpPos := ggml.NewTensor1D(gctx, ggml.TypeI32, nTokens)
-	ggml.SetInput(inpPos)
-	inpMask := ggml.NewTensor2D(gctx, ggml.TypeF32, nTokens, nTokens)
-	ggml.SetInput(inpMask)
-
-	x := ggml.GetRows(gctx, m.MaskedGlobal(gctx, "token_embd"), inpTokens)
-
-	// Embedding scaling: multiply by sqrt(n_embd)
-	if m.Def.Architecture.EmbedScale {
-		x = ggml.Scale(gctx, x, float32(math.Sqrt(float64(nEmbd))))
-	}
-
-	// SWA mask (only if sliding_window param exists)
-	swaWindow, hasSWA := m.Params.Ints["sliding_window"]
-	var inpMaskSWA ggml.Tensor
-	if hasSWA && swaWindow > 0 {
-		inpMaskSWA = ggml.NewTensor2D(gctx, ggml.TypeF32, nTokens, nTokens)
-		ggml.SetInput(inpMaskSWA)
-	}
-
-	if caps != nil && caps.Flags&CaptureAttnWeights != 0 {
-		caps.attnTensors = make([]ggml.Tensor, nLayers)
-		caps.NHeads = int64(m.Params.Ints["n_heads"])
-		caps.NTokens = nTokens
-	}
-
-	inputs := &GraphInputs{
-		InpPos:     inpPos,
-		InpMask:    inpMask,
-		InpMaskSWA: inpMaskSWA,
-		NTokens:    nTokens,
-		NKV:        nTokens,
-		SeqPos:     0,
-		Captures:   caps,
-		SharedKV:   &SharedKVState{K: make(map[string]ggml.Tensor), V: make(map[string]ggml.Tensor)},
-		FlashAttn:  flashAttn,
-	}
-
-	// Per-layer embedding preparation
-	perLayerEmbd := m.buildPerLayerEmbedSetup(gctx, inpTokens, x, nTokens, rmsEps)
-
-	engagement := newEngagementData(nLayers)
-
-	var zeroFill []ggml.Tensor
-
-	blkFn := func(gctx *ggml.GraphContext, cur ggml.Tensor,
-		lt map[string]ggml.Tensor, il int, config map[string]any,
-		inputs *GraphInputs) ggml.Tensor {
-		if inputs.Captures != nil {
-			inputs.Captures.currentLayer = il
-		}
-		return m.BlockBuilders[il].BuildStateless(gctx, cur, lt, m.Params, config, inputs, &zeroFill)
-	}
-	x = m.runLayers(gctx, x, inputs, rmsEps, mask, blkFn, perLayerEmbd, engagement)
-
-	logits := m.buildLogits(gctx, x, nEmbd, nTokens, rmsEps)
+	logits := m.buildLogits(sc.gctx, sc.x, sc.nEmbd, sc.nTokens, sc.rmsEps)
 
 	// Build graph: logits first, then engagement outputs, then capture outputs
-	gf := ggml.NewGraph(gctx, 16384)
-	gf.BuildForwardExpand(logits)
-	for _, tn := range engagement.blockTensors {
+	sc.gf.BuildForwardExpand(logits)
+	for _, tn := range sc.engagement.blockTensors {
 		if !tn.IsNil() {
-			gf.BuildForwardExpand(tn)
+			sc.gf.BuildForwardExpand(tn)
 		}
 	}
-	for _, tn := range engagement.ffnTensors {
+	for _, tn := range sc.engagement.ffnTensors {
 		if !tn.IsNil() {
-			gf.BuildForwardExpand(tn)
+			sc.gf.BuildForwardExpand(tn)
 		}
 	}
 	if caps != nil {
 		for _, t := range caps.attnTensors {
 			if !t.IsNil() {
-				gf.BuildForwardExpand(t)
+				sc.gf.BuildForwardExpand(t)
 			}
 		}
 	}
 
-	if !sched.AllocGraph(gf) {
+	if !sc.sched.AllocGraph(sc.gf) {
 		return nil, nil, fmt.Errorf("failed to allocate graph")
 	}
 
 	// Zero-fill SSM state tensors (appended to zeroFill by the SSM block builder).
-	for _, t := range zeroFill {
+	for _, t := range sc.zeroFill {
 		zeros := make([]byte, t.Nbytes())
 		ggml.TensorSetBytes(t, zeros, 0)
 	}
 
 	// Set inputs
-	ggml.TensorSet(inpTokens, unsafe.Pointer(&tokenIDs[0]), 0, inpTokens.Nbytes())
+	ggml.TensorSet(sc.inpTokens, unsafe.Pointer(&tokenIDs[0]), 0, sc.inpTokens.Nbytes())
 
-	positions := make([]int32, nTokens)
+	positions := make([]int32, sc.nTokens)
 	for i := range positions {
 		positions[i] = int32(i)
 	}
-	ggml.TensorSet(inpPos, unsafe.Pointer(&positions[0]), 0, inpPos.Nbytes())
+	ggml.TensorSet(sc.inputs.InpPos, unsafe.Pointer(&positions[0]), 0, sc.inputs.InpPos.Nbytes())
 
-	maskData := buildCausalMaskData(nil, nTokens, nTokens, 0, m.Def.Architecture.NonCausal)
-	ggml.TensorSet(inpMask, unsafe.Pointer(&maskData[0]), 0, inpMask.Nbytes())
+	maskData := buildCausalMaskData(nil, sc.nTokens, sc.nTokens, 0, m.Def.Architecture.NonCausal)
+	ggml.TensorSet(sc.inputs.InpMask, unsafe.Pointer(&maskData[0]), 0, sc.inputs.InpMask.Nbytes())
 
-	if hasSWA && swaWindow > 0 {
-		swaMaskData := buildSWAMaskData(nil, nTokens, nTokens, 0, swaWindow)
-		ggml.TensorSet(inpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, inpMaskSWA.Nbytes())
+	if sc.hasSWA && sc.swaWindow > 0 {
+		swaMaskData := buildSWAMaskData(nil, sc.nTokens, sc.nTokens, 0, sc.swaWindow)
+		ggml.TensorSet(sc.inputs.InpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, sc.inputs.InpMaskSWA.Nbytes())
 	}
 
 	// Execute
-	status := sched.Compute(gf)
+	status := sc.sched.Compute(sc.gf)
 	if status != ggml.StatusSuccess {
 		return nil, nil, fmt.Errorf("%w (status=%d)", ErrComputeFailed, status)
 	}
 
 	// Read engagement scalars
-	engagement.readResults()
+	sc.engagement.readResults()
 
 	// Read captured attention weights before defers free the tensors.
+	nLayers := m.Params.Ints["n_layers"]
 	if caps != nil && caps.Flags&CaptureAttnWeights != 0 {
 		caps.AttnWeights = make([][]float32, nLayers)
 		for il, t := range caps.attnTensors {
@@ -361,7 +498,7 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32, mask *CullingMask, cap
 		}
 	}
 
-	return readLogits(logits, nVocab), engagement, nil
+	return readLogits(logits, sc.nVocab), sc.engagement, nil
 }
 
 // ForwardCached runs a cached forward pass, processing only new tokens.
@@ -411,6 +548,7 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, mask *C
 		ggml.SetInput(inpMaskSWA)
 	}
 
+	effectiveFlashAttn := flashAttn && !m.Def.Architecture.NoFlashAttn
 	inputs := &GraphInputs{
 		InpPos:     inpPos,
 		InpMask:    inpMask,
@@ -419,7 +557,7 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, mask *C
 		NKV:        nKV,
 		SeqPos:     seqPos,
 		SharedKV:   &SharedKVState{K: make(map[string]ggml.Tensor), V: make(map[string]ggml.Tensor)},
-		FlashAttn:  flashAttn,
+		FlashAttn:  effectiveFlashAttn,
 	}
 
 	// Per-layer embedding preparation

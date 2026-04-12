@@ -5,8 +5,7 @@ auth_token = ""        # optional; if set, validate Bearer header
 
 [models]
 directory = "models"
-default = "Llama-3.2-3B-Instruct-f16"     # if first/last, uses first/last model in list. if explicit model name uses that
-#default = "Qwen3.5-4B_Abliterated.f16"
+default = "llama-3.2-3b-instruct-q4_k_m"     # if first/last, uses first/last model in list. if explicit model name uses that
 
 [inference]
 n_threads = 0               # 0 = auto-detect (uses runtime.NumCPU)

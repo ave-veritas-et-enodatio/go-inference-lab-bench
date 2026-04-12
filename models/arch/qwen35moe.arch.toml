@@ -122,6 +122,9 @@ builder = "gated_delta_net"
 [ffn]
 builder = "moe"
 
+  [ffn.config]
+  norm_w = "true"
+
   [ffn.weights]
   # Router
   gate_inp       = "ffn_gate_inp.weight"

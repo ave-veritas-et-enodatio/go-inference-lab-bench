@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 THIS_SCRIPT=$(basename "$0")
 THIS_DIR=$(dirname "$0")
-set -e
 
 cd "${THIS_DIR}"
 
@@ -11,7 +10,8 @@ usage() {
 }
 
 LOOP_MODE=false
-ALL_MODELS=${ALL_MODELS:-false}
+ALL_MODELS_NO_DIFFUSION=${ALL_MODELS_NO_DIFFUSION:-false}
+${ALL_MODELS_NO_DIFFUSION} && ALL_MODELS=true || ALL_MODELS=${ALL_MODELS:-false}
 USE_LLAMA=${USE_LLAMA:-false}
 
 TOP_LOGPROBS=${TOP_LOGPROBS:-0}
@@ -56,16 +56,41 @@ FLASH=${FLASH:-null}
 MAX_TOKENS=${MAX_TOKENS:-4096}
 TEMPERATURE=${TEMPERATURE:-0}
 MODEL=${MODEL:-default}
+if [[ ${MODEL} == "default" && "${ALL_MODELS}" != "true" ]]; then
+  # parse the default model out of server config
+  MODEL=$(awk '
+    /^\[models\]/ { IN_MODELS = 1; next; }
+    /^[ \t]*default[ \t]*=/ {
+      if (IN_MODELS != 1) {
+        next;
+      }
+      gsub(/[=\""]/, " ");
+      print $2;
+      exit(0);
+    }
+    /^\[/ { if(IN_MODELS == 1) exit(0); }
+    ' config/api_config.toml)
+    #echo "MODEL=${MODEL}"
+fi
 STREAM=${STREAM:-false}
 DEBUG_POST=${DEBUG_POST:-false}
 DEBUG_RESPONSE=${DEBUG_RESPONSE:-false}
-
-
-(! [[ "${USE_LLAMA}" == "true" && "${MODEL}" == "default" && "${ALL_MODELS}" != "true" ]]) || { echo "ALL_MODELS must be true or a MODEL must be specified." 1>&2; exit 1; }
+DIFFUSION_STEPS=${DIFFUSION_STEPS:-32}
+DIFFUSION_BLOCK_LENGTH=${DIFFUSION_BLOCK_LENGTH:-64}
+# diffusion inference context size
+DIFFUSION_TOKENS=${DIFFUSION_TOKENS:-128}
+# value of 99 forces llama-diffusion-cli to do all computation on GPU
+LLAMA_DIFFUSION_NGL=${LLAMA_DIFUSE_NGL:-99}
+# llama-diffusion-cli microbatch size (we don't implement microbatching yet)
+LLAMA_DIFFUSION_UB=${LLAMA_DIFUSE_UB:-512}
+FORCE_DIFFUSION_CLI=${FORCE_DIFFUSION_CLI:-false}
+# Collect arch names that declare generation = "diffusion" from the arch TOMLs.
+DIFFUSION_ARCH_NAMES=$(grep -rl 'generation\s*=\s*"diffusion"' models/arch/*.arch.toml 2>/dev/null \
+  | sed 's|.*/||; s|\.arch\.toml||' | tr '\n' ' ')
 
 PYTHON=$(which python3 2> /dev/null) || \
   PYTHON=$(which python 2>/dev/null) || \
-  { echo "python not found. LLM responses will be raw JSON." 1>&2; }
+  { echo "neither python3 nor python found. python3 required (sorry)." 1>&2; exit 1; }
 
 
 function parse_models() {
@@ -110,18 +135,79 @@ if "choices" in resp_all:
   printed = True
   logprobs = resp_all.get("choices", [])
   if logprobs := (logprobs[0] if logprobs else {}).get("logprobs", {}):
+    model_type = "diffusion" if os.getenv("IS_DIFFUSION", "false") in ["true", "1"] else "autoregression"
     logprobs = json.dumps(logprobs["content"][0]["top_logprobs"], sort_keys=True)
-    model = os.getenv("MODEL")
-    print(f"{model}|{logprobs}|{resp_text}")
+    model = os.getenv("MODEL", "<NO-MODEL>")
+    print(f"{model}|{model_type}|{logprobs}|{resp_text}")
 
 if (not printed) or (os.getenv("DEBUG_RESPONSE", "false") in ["true", "1"]):
   print(json.dumps(resp_all, indent=2) if resp_all else resp_json if resp_json.strip() else "<NO-API-RESPONSE>")
 ' 2> /dev/null
 }
 
+function is_diffusion_model() {
+  # mac bash is too old to have ${var,,} tolower syntax
+  local model_name=$(awk "BEGIN{print tolower(\"${1}\"); exit(0);}")
+  if ${FORCE_DIFFUSION_CLI}; then
+    return 0
+  fi
+  local name
+  for name in ${DIFFUSION_ARCH_NAMES}; do
+    [[ "${model_name}" == *"${name}"* ]] && return 0;
+  done
+  return 1
+}
+
+function filter_diffusion_cli_output() {
+  ! ${DEBUG_RESPONSE} || { cat; return 0; }
+  awk '
+    /^load_backend\: loaded/,/^total time\: /  {next; }
+    /^~|^ggml_metal_free\: / { next; }
+    /^[ \t]*$/ { if(printing != 1) next; }
+    /.*/ { print $0; printing=1; }
+  '
+}
+
+function query_one_diffusion_cli() {
+  local msg="${1}"
+
+  local model_path="models/${MODEL}.gguf"
+  [[ -f "${model_path}" ]] || { echo "[ERR] model file not found: ${model_path}" 1>&2; return 1; }
+
+  local cli_args=(-m "${model_path}" -p "${msg}")
+  cli_args+=(-n "${DIFFUSION_TOKENS}")
+  cli_args+=(-ngl "${LLAMA_DIFFUSION_NGL}")
+  cli_args+=(-ub "${LLAMA_DIFFUSION_UB}")
+  # context size
+  cli_args+=(-c "${DIFFUSION_TOKENS}")
+  cli_args+=(--diffusion-steps "${DIFFUSION_STEPS}")
+  cli_args+=(--diffusion-block-length "${DIFFUSION_BLOCK_LENGTH}")
+  cli_args+=(--temp "${TEMPERATURE}")
+  [[ "${FLASH}" == "true" ]] && cli_args+=(-fa on) || cli_args+=(-fa off)
+
+  ${DEBUG_POST} && echo "[DBG] llama-diffusion-cli ${cli_args[*]}" || true
+  llama-diffusion-cli "${cli_args[@]}" 2>&1 | filter_diffusion_cli_output
+  if ${LOGPROBS}; then
+    local out=$(llama-diffusion-cli "${cli_args[@]}" 2>&1 | filter_diffusion_cli_output)
+    echo "${out}"
+    echo "${MODEL}|diffusion|<logprob not supported>|${out}"
+  else
+    llama-diffusion-cli "${cli_args[@]}" 2>&1 | filter_diffusion_cli_output
+  fi
+}
+
 function query_one() {
   local msg="${1}"
   local ext_params
+  local is_diffusion=false
+  # alias global locally so we can change it for diffusion models
+  local MAX_TOKENS=${MAX_TOKENS}
+  is_diffusion_model "${MODEL}" && is_diffusion=true || true
+
+  if ${USE_LLAMA} && ${is_diffusion}; then
+    query_one_diffusion_cli "${msg}"
+    return
+  fi
 
   if ${USE_LLAMA}; then
     ext_params=$(printf '
@@ -134,41 +220,53 @@ function query_one() {
       "stateless": %s,
       "cull_method": %s,
       "elide_thinking": %s,
-      "flash_attention": %s,
-    ' \
+      "flash_attention": %s,' \
     "${THINK}" \
     "${STATELESS}" \
     "${CULL_METHOD}" \
     "${ELIDE_THINK}" \
     "${FLASH}" \
     )
+
+    if ${is_diffusion}; then
+      local diffusion_inner
+      diffusion_inner+="\"steps\": ${DIFFUSION_STEPS},"
+      diffusion_inner+="\"block_length\": ${DIFFUSION_BLOCK_LENGTH},"
+      # trim trailing comma
+      ext_params+="\"diffusion\": {${diffusion_inner%,}},"
+      # local alias only
+      MAX_TOKENS=${DIFFUSION_TOKENS}
+    fi
+  fi
+
+  if ${LOGPROBS}; then
+    ext_params+=$(printf '
+      "logprobs": true,
+      "top_logprobs": %s,' \
+    "${TOP_LOGPROBS}" \
+    )
   fi
 
   local payload=$(printf '{
-      %s
       "messages": [{"role":"user","content":"%s"}],
       "model": "%s",
       "max_tokens": %s,
       "temperature": %s,
-      "logprobs": %s,
-      "top_logprobs": %s,
-      "stream": %s
+      "stream": %s,%s
     }' \
-    "${ext_params}" \
     "${msg}" \
     "${MODEL}" \
     "${MAX_TOKENS}" \
     "${TEMPERATURE}" \
-    "${LOGPROBS}" \
-    "${TOP_LOGPROBS}" \
     "${STREAM}" \
+    "${ext_params%,}" \
     )
   local completions_url=${COMPLETIONS_URL:-"${API_BASE_URL}/chat/completions"}
   ${DEBUG_POST} && echo "[DBG] ${completions_url} POST payload: ${payload}" || true
   local resp=$(curl -s -X POST "${completions_url}" \
     -H 'Content-Type: application/json' \
     -d "${payload}")
-  echo "${resp}" | parse_response || echo "${resp}"
+  echo "${resp}" | IS_DIFFUSION=${is_diffusion} parse_response || echo "${resp}"
 }
 
 function query() {
@@ -181,7 +279,7 @@ function query() {
       # there's a ggml or metal driver bug that causes cummulative state resets.
       # this issue was investigated exhaustively and was proven to reside outside of this code base.
       # to produce incorrect results; cycle server to ensure a clean metal context.
-      cycle_server
+      ! ${FORCE_NEW_SERVER} || cycle_server
     done
   else
     query_one "${@}"
@@ -204,9 +302,15 @@ Acontextual Loop Mode
 /think: toggle think mode (currently: ${THINK})
 /elide-think; toggle elision of thinking output (currently: ${ELIDE_THINK})
 /max-tokens [token_count]: show or set MAX_TOKENS (currently: ${MAX_TOKENS})
+/diffusion-steps [steps]: show or set DIFFUSION_STEPS (currently: ${DIFFUSION_STEPS})
+/diffusion-block-length [length]: show or set DIFFUSION_BLOCK_LENGTH (currently: ${DIFFUSION_BLOCK_LENGTH})
+/diffusion-tokens [count]: show or set DIFFUSION_TOKENS (currently: ${DIFFUSION_TOKENS})
 /model [index]: show or set current model (currently: ${MODEL})
 /temperature [temperature]: show or set TEMPERATURE (currently: ${TEMPERATURE})
 /quit or /exit: exit loop mode
+
+Note: with USE_LLAMA=true, diffusion models (${DIFFUSION_ARCH_NAMES}) invoke llama-diffusion-cli
+fresh for each prompt — no persistent server, so each query loads the model from scratch.
 __EOF
 }
 
@@ -241,6 +345,7 @@ function loop_mode() {
         if [[ "${MI:-0}" -gt 0 ]]; then
           MODEL=$(set ${MODEL_LIST}; eval "echo \$${MI}")
         else
+          detect_models
           show_models
         fi
         echo "MODEL=${MODEL}"
@@ -288,6 +393,27 @@ function loop_mode() {
         ELIDE_THINK=$(rotate "${ELIDE_THINK}")
         echo "ELIDE_THINK=${ELIDE_THINK}"
         continue;;
+      /diffusion-steps*)
+          local DS=$(set ${line}; echo ${2})
+          if [[ "${DS:-0}" -gt 0 ]]; then
+            DIFFUSION_STEPS=${DS}
+          fi
+          echo "DIFFUSION_STEPS=${DIFFUSION_STEPS}"
+          continue;;
+      /diffusion-block-length*)
+          local DBL=$(set ${line}; echo ${2})
+          if [[ "${DBL:-0}" -gt 0 ]]; then
+            DIFFUSION_BLOCK_LENGTH=${DBL}
+          fi
+          echo "DIFFUSION_BLOCK_LENGTH=${DIFFUSION_BLOCK_LENGTH}"
+          continue;;
+      /diffusion-tokens*)
+          local DT=$(set ${line}; echo ${2})
+          if [[ "${DT:-0}" -gt 0 ]]; then
+            DIFFUSION_TOKENS=${DT}
+          fi
+          echo "DIFFUSION_TOKENS=${DIFFUSION_TOKENS}"
+          continue;;
       /max-tokens*)
         local MC=$(set ${line}; echo ${2})
         if [[ "${MC:-0}" -gt 0 ]]; then
@@ -313,20 +439,41 @@ function loop_mode() {
   done
 }
 
-function show_models() {
+function detect_models() {
   local model
   local models
-  local i
-  models=$(curl -sf "${API_BASE_URL}/models") || return 1
-  models=$(parse_models <<< "${models}")
-  MODEL_LIST="${models} default"
+  local use_api=false
+
+  (${LOGPROBS} || ${USE_LLAMA}) || use_api=true
+  ! ${FORCE_USE_API:-false} || use_api=true
 
   # if using llama (which publishes models besides our ggufs
   # or trying to pull logits for comparison, ensure consistent model order
-  ! (${LOGPROBS} || ${USE_LLAMA}) || {
+  ${use_api} && {
+    models=$(curl -sf "${API_BASE_URL}/models") || return 1
+    models=$(parse_models <<< "${models}")
+    MODEL_LIST="${models} default"
+  } || {
     MODEL_LIST=$(cd models; ls *.gguf | sort)
     MODEL_LIST=${MODEL_LIST//\.gguf/}
   }
+
+  models=""
+  if ${ALL_MODELS_NO_DIFFUSION}; then
+    for model in ${MODEL_LIST}; do
+      is_diffusion_model "${model}" || models+=" ${model}"
+    done
+  else
+    for model in ${MODEL_LIST}; do
+      models+=" ${model}"
+    done
+  fi
+  MODEL_LIST="${models/ /}"
+}
+
+function show_models() {
+  local model
+  local i
   echo "models"
   echo "======"
   i=1
@@ -340,7 +487,7 @@ function show_models() {
 function wait_for_starting_server() {
   # Wait for server to be ready (up to 30s)
   for _i in $(seq 1 60); do
-    if show_models > /dev/null 2>&1; then
+    if FORCE_USE_API=true detect_models; then
       return 0
     fi
     sleep 0.5
@@ -372,13 +519,13 @@ function start_llama_server() {
 
 function quit_api_server() {
   (curl -s "${CTL_BASE_URL}/?quit&now" > /dev/null && sleep 1) || {
-    ps aux | grep "bin/bench" | awk '!/grep/ { print $2; }' | xargs kill
+    ps aux | awk '/awk/ { next; } /bin\/bench/{ print $2; }' | xargs kill
   }
 }
 
 function quit_llama_server() {
   # blunt instrument
-  ps aux | grep "llama-server" | awk '!/grep/ { print $2; }' | xargs kill
+  ps aux | awk '/awk/ { next; } /llama-server/ { print $2; }' | xargs kill
 }
 
 function quit_server() {
@@ -404,12 +551,12 @@ if ${FORCE_NEW_SERVER:-false}; then
     quit_api_server
     start_api_server
   fi
+else
+  detect_models
 fi
 
 if ${LOOP_MODE}; then
-  show_models || { echo "inference server not running. 'make serve' or use envar param FORCE_NEW_SERVER=true" 1>&2; exit 1; }
   loop_mode
 else
-  show_models > /dev/null || { echo "inference server not running. 'make serve' or use envar param FORCE_NEW_SERVER=true" 1>&2; exit 1; }
   query "${MSG}"
 fi
