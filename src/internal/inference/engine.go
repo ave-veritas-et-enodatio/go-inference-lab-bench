@@ -123,6 +123,11 @@ func validateArchTokens(tokens arch.TokensDef, tok *Tokenizer) {
 	}
 }
 
+// IsDiffusion reports whether the loaded model uses diffusion generation.
+func (e *Engine) IsDiffusion() bool {
+	return e.model != nil && e.model.Def.Architecture.Generation == "diffusion"
+}
+
 // ThinkOpen returns the TOML-defined think opening tag, or "".
 func (e *Engine) ThinkOpen() string { return e.model.Def.Tokens.ThinkOpen }
 
@@ -145,24 +150,34 @@ func (e *Engine) WeightStore() *arch.WeightStore {
 	return e.model.Store
 }
 
+// DiffusionParams groups diffusion-model-specific generation parameters.
+// Ignored for autoregressive models.
+type DiffusionParams struct {
+	Steps       int    // 0 = use default (64)
+	BlockLength int    // 0 = single block (global); >0 = block-based left-to-right
+	Algorithm   string // "" or "confidence" = max-softmax; stub for future variants
+}
+
 // GenerateParams controls the generation loop.
 type GenerateParams struct {
 	MaxTokens       int
 	Temperature     float32
 	TopP            float32
 	Stateless       bool   // bypass KV cache (for testing/comparison)
+	Streaming       bool   // true if the caller is using SSE streaming
 	CullMethod      string // "" or "none" = no culling; "random" = random test pattern
 	ThinkingEnabled bool   // if false, strip think_open prefix the GGUF template may append
 	LogProbs        bool   // include log-probabilities in response
 	TopLogProbs     int    // number of top log-probabilities per token (0 = just the chosen token)
 	FlashAttention  *bool  // nil = use server default; true/false = per-request override
+	Diffusion       *DiffusionParams // nil = not diffusion (ignored for autoregressive models)
 }
 
 // DefaultParams returns sensible defaults.
 func DefaultParams() GenerateParams {
 	return GenerateParams{
 		MaxTokens:       512,
-		Temperature:     0.7,
+		Temperature:     0,
 		TopP:            0.9,
 		ThinkingEnabled: true,
 	}
@@ -229,7 +244,16 @@ func (e *Engine) Generate(
 	start := time.Now()
 
 	var genErr error
-	if params.Stateless {
+	if e.IsDiffusion() {
+		if params.Streaming {
+			T := 64
+			if params.Diffusion != nil && params.Diffusion.Steps > 0 {
+				T = params.Diffusion.Steps
+			}
+			log.Warn("streaming request on diffusion model; response will be returned as a burst after %d denoising steps", T)
+		}
+		genErr = e.generateDiffusion(promptIDs, maxTokens, stopSet, params, mask, onToken, metrics)
+	} else if params.Stateless {
 		log.Info("stateless inference (no KV cache), prompt=%d tokens", len(promptIDs))
 		genErr = e.generateStateless(promptIDs, maxTokens, stopSet, params, mask, onToken, metrics)
 	} else {
@@ -244,120 +268,6 @@ func (e *Engine) Generate(
 	}
 
 	return metrics, genErr
-}
-
-func (e *Engine) generateCached(
-	promptIDs []int32, maxTokens int, stopSet map[int32]bool,
-	params GenerateParams, mask *arch.CullingMask,
-	onToken func(string) bool, metrics *InferenceMetrics,
-) error {
-	cache, err := e.model.NewCache(e.maxSeqLen)
-	if err != nil {
-		return fmt.Errorf("creating cache: %w", err)
-	}
-	defer cache.Free()
-
-	prefillStart := time.Now()
-	logits, err := e.model.ForwardCached(cache, promptIDs, mask, *params.FlashAttention)
-	if err != nil {
-		return fmt.Errorf("prefill forward: %w", err)
-	}
-	metrics.PrefillDuration = time.Since(prefillStart)
-
-	decodeStart := time.Now()
-	hitStop := false
-	for range maxTokens {
-		nextID := e.sample(logits, params)
-		if stopSet[nextID] {
-			hitStop = true
-			break
-		}
-		if params.LogProbs {
-			metrics.TokenLogProbs = append(metrics.TokenLogProbs,
-				ComputeTopLogProbs(logits, nextID, params.TopLogProbs, e.tokenizer.TokenString))
-		}
-		if !onToken(e.tokenizer.TokenString(nextID)) {
-			hitStop = true
-			break
-		}
-		metrics.CompletionTokens++
-		logits, err = e.model.ForwardCached(cache, []int32{nextID}, mask, *params.FlashAttention)
-		if err != nil {
-			return fmt.Errorf("decode forward: %w", err)
-		}
-	}
-	metrics.DecodeDuration = time.Since(decodeStart)
-	if hitStop {
-		metrics.FinishReason = "stop"
-	} else {
-		metrics.FinishReason = "length"
-	}
-	return nil
-}
-
-func (e *Engine) generateStateless(
-	promptIDs []int32, maxTokens int, stopSet map[int32]bool,
-	params GenerateParams, mask *arch.CullingMask,
-	onToken func(string) bool, metrics *InferenceMetrics,
-) error {
-	tokenIDs := make([]int32, len(promptIDs))
-	copy(tokenIDs, promptIDs)
-
-	hitStop := false
-	for range maxTokens {
-		stepStart := time.Now()
-		logits, engagement, err := e.model.ForwardStateless(tokenIDs, mask, nil, *params.FlashAttention)
-		if err != nil {
-			return fmt.Errorf("forward pass: %w", err)
-		}
-		if metrics.CompletionTokens == 0 {
-			metrics.PrefillDuration = time.Since(stepStart)
-			metrics.Engagement = engagement
-			logEngagement(engagement)
-		} else {
-			metrics.DecodeDuration += time.Since(stepStart)
-			metrics.Engagement = engagement // update with latest for live SVG
-		}
-		// Live engagement SVG update (every forward pass in stateless mode).
-		if engagement != nil {
-			culling.WriteEngagementDiag(e.model.CanonicalModuleMap, e.model.ModelPath, e.model.TensorDims, engagement)
-		}
-		nextID := e.sample(logits, params)
-		if stopSet[nextID] {
-			hitStop = true
-			break
-		}
-		if params.LogProbs {
-			metrics.TokenLogProbs = append(metrics.TokenLogProbs,
-				ComputeTopLogProbs(logits, nextID, params.TopLogProbs, e.tokenizer.TokenString))
-		}
-		if !onToken(e.tokenizer.TokenString(nextID)) {
-			hitStop = true
-			break
-		}
-		metrics.CompletionTokens++
-		tokenIDs = append(tokenIDs, nextID)
-	}
-	if hitStop {
-		metrics.FinishReason = "stop"
-	} else {
-		metrics.FinishReason = "length"
-	}
-	return nil
-}
-
-// logEngagement logs per-layer engagement (1 - cosSim) at DEBUG level.
-func logEngagement(ed *arch.EngagementData) {
-	if ed == nil {
-		return
-	}
-	var parts []string
-	for il := range ed.BlockCosSim {
-		bc := ed.BlockCosSim[il]
-		fc := ed.FFNCosSim[il]
-		parts = append(parts, fmt.Sprintf("L%d blk=%.4f ffn=%.4f", il, 1-bc, 1-fc))
-	}
-	log.Debug("engagement (1-cos): %s", strings.Join(parts, " | "))
 }
 
 func (e *Engine) sample(logits []float32, params GenerateParams) int32 {

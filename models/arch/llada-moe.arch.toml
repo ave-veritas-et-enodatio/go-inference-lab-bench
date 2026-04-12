@@ -1,7 +1,7 @@
 # LLaDA-MoE architecture definition.
 #
 # Diffusion-based decoder with bidirectional (non-causal) attention.
-# Standard multi-head attention with QK-norm, standard RoPE, MoE FFN.
+# Standard multi-head attention with QK-norm, NeoX RoPE, MoE FFN.
 # No shared expert, no gated attention output.
 #
 # Known model sizes:
@@ -10,6 +10,8 @@
 [architecture]
 name = "llada-moe"
 non_causal = true
+generation = "diffusion"
+no_flash_attn = true
 
 [params]
 n_layers       = "llada-moe.block_count"
@@ -61,7 +63,7 @@ builder = "attention"
   attn_k_norm = "attn_k_norm.weight"
 
   [blocks.attention.config]
-  rope = "standard"
+  rope = "neox"
 
   [blocks.attention.cache]
   k = { dims = ["head_dim", "max_seq_len", "n_kv_heads"], dtype = "f32" }
@@ -79,8 +81,8 @@ builder = "moe"
   down_exps = "ffn_down_exps.weight"
   # No shared expert in LLaDA-MoE
 
-# [tokens]
-# LLaDA-MoE is not a thinking model — no think tokens defined
+[tokens]
+extra_eos = ["<|role_end|>"]
 
 # Diagram-only example values; no effect on inference.
 [example]

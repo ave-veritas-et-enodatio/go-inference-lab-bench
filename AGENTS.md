@@ -1,4 +1,4 @@
-# Go Inference Lab Bench
+# Inference Lab Bench
 
 From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-model API server, data-driven architecture definition via TOML DSL, KV-cached and stateless inference, weight culling infrastructure, and visualization tooling.
 
@@ -25,9 +25,8 @@ Known working models (links in README.md):
 - DeepSeek-V2-Lite-Chat.Q4_K_M.gguf (`deepseek2` arch)
 - gemma-4-E4B-it-Q4_K_M.gguf (dense, `gemma4` arch)
 - Gemma 4 MoE (`gemma4` arch, auto-detected via `[ffn_alt]` GGUF weights)
-
-In-progress architectures:
-- LLaDA-MoE (`llada-moe` arch) — diffusion-based bidirectional decoder; arch TOML + builder support complete; diffusion inference loop (iterative masked denoising) not yet implemented
+- LLaDA-MoE-7B-A1B-Instruct (`llada-moe` arch) — MoE diffusion model; working
+- LLaDA-8B-Instruct (`llada` arch) — dense diffusion model; built, not yet tested against a live model
 
 - KV-cached and stateless inference; TOML DSL drives GGUF loading, graph construction, and cache allocation. Only C code is a thin model-agnostic ggml op wrapper. Zero C++.
 - HTTP server: Bearer auth, model listing, streaming SSE + non-streaming completions, logprobs, timing/throughput in `usage` response.
@@ -43,7 +42,7 @@ In-progress architectures:
 - **Model definition**: TOML DSL (`models/arch/*.arch.toml`)
 - **Inference backend**: ggml (git submodule), gpu-accelerated
 - **Model format**: GGUF (`models/`)
-- **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"cull_method"`, `"enable_thinking"`, `"elide_thinking"`, `"logprobs"`, `"top_logprobs"`, `"model":"default"`. Legacy `/v1/*` also supported. Diagnostic browser at `/diag/`. Control endpoint at `/ctl/` (`?memstats` = memory stats; `?quit` = graceful shutdown; `?quit&now` = immediate). Request-level overrides of server config defaults logged as `[req] param overrides: ...`.
+- **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"cull_method"`, `"enable_thinking"`, `"elide_thinking"`, `"logprobs"`, `"top_logprobs"`, `"model":"default"`, `"diffusion"` (nested object: `steps`, `block_length`; ignored with a warning on non-diffusion models). Legacy `/v1/*` also supported. Diagnostic browser at `/diag/`. Control endpoint at `/ctl/` (`?memstats` = memory stats; `?quit` = graceful shutdown; `?quit&now` = immediate). Request-level overrides of server config defaults logged as `[req] param overrides: ...`.
 - **Diagnostics**: `/diag/` serves files from `bin/diag/` — a useful location for dumping R&D diagnostic output (SVGs, culling maps, etc.) that can be viewed in-browser while the server is running.
 - **Config**: `config/api_config.toml` — `[server]` (host, port, auth_token), `[models]` (directory, default), `[inference]` (max_seq_len, enable_thinking_default, elide_thinking_default, log_thinking, cull_method_default, single_resident_model, max_request_seq_len, strict_mode)
 - **Default listen**: `0.0.0.0:11116`
@@ -76,7 +75,10 @@ src/
     chatclient/                 Interactive chat client
     model/                      GGUF scanning + metadata
     inference/
-      engine.go                 Generation loop (tokenize → forward → sample)
+      engine.go                 Engine, GenerateParams, DiffusionParams, IsDiffusion(), Generate() dispatch
+      generate_cached.go        generateCached — KV/SSM-cached autoregressive loop
+      generate_stateless.go     generateStateless — full-sequence recompute autoregressive loop
+      generate_diffusion.go     generateDiffusion — block-based iterative masked denoising
       metrics.go                InferenceMetrics (timing, throughput, cull ratio, FinishReason, optional Diagnostic)
       diagnostic.go             Post-generation diagnostic runners (additional forward passes, analysis)
       sampler.go                Greedy and top-p sampling, ComputeTopLogProbs (stable log-softmax)
@@ -102,7 +104,7 @@ src/
         weight_store.go         WeightStore: immutable GPU-resident tensor storage
         model.go                GenericModel: GGUF loading, per-layer FFN routing
         cache.go                Cache allocation (NewCache, GenericCache)
-        graph.go                Forward pass (ForwardStateless, ForwardCached, runLayers)
+        graph.go                Forward pass (ForwardStateless, ForwardStatelessAllLogits, ForwardCached, forwardStatelessCore, runLayers)
         validate_lines.go       ResolveErrorLines (TOML key path → source line)
         diagram_util.go         Shared diagram palette (diagramPalette)
         arch_diagram.go         Architecture overview SVG renderer
@@ -147,6 +149,7 @@ FORCE_NEW_SERVER=true bash test_inference.sh "Hi"
 MODEL=Qwen3.5-4B_abliterated.Q4_K_M MAX_TOKENS=100 bash test_inference.sh "Hi"
 THINK=true ELIDE_THINK=false bash test_inference.sh "Hi"
 ALL_MODELS=true bash test_inference.sh "Hi"   # test every loaded model in sequence
+DIFFUSION_STEPS=32 DIFFUSION_BLOCK_LENGTH=64 bash test_inference.sh "Hi"   # diffusion params (ignored on autoregressive models)
 
 # API
 curl localhost:11116/api/v1/models
@@ -170,8 +173,15 @@ curl -X POST localhost:11116/api/v1/chat/completions \
 - **Weight bindings**: GGUF tensor name templates with `blk.@{layer_idx}.` prefix expansion
 - **Cache specs**: per-block-type tensor dimensions and dtypes; `shared` group name for layers that reuse a single cache tensor (e.g. non-KV layers in Gemma4)
 - **FFN type**: `[ffn]` / `[ffn_alt]` for per-layer routing (e.g. dense for first N layers, MoE for rest — auto-detected from weights)
+- **MoE FFN config** (`[ffn.config]` / `[ffn_alt.config]` for the `moe` builder):
+  - `norm_w = "true"` — normalize router weights (static; always on)
+  - `norm_w_param = "<param_name>"` — normalize router weights only when the named GGUF integer param is nonzero (dynamic; reads at load time). Mutually exclusive with `norm_w` — using both in the same `[ffn.config]` block is a validation error.
 - **Layer routing**: `layers.routing.rule` (expression) OR `layers.routing.pattern` (array param name — nonzero → if_true)
-- **Architecture flags**: `embed_scale` (multiply embeddings by sqrt(n_embd)); `non_causal` (bidirectional attention)
+- **Architecture flags**:
+  - `embed_scale` — multiply input embeddings by `sqrt(n_embd)` before the layer loop
+  - `non_causal` — bidirectional attention (no causal mask); required when `generation = "diffusion"`
+  - `generation` — `""` (default, autoregressive) or `"diffusion"` (iterative masked denoising). Setting `generation = "diffusion"` without `non_causal = true` is a validation error.
+  - `shift_logits` — diffusion only: output position `p` reads logits from position `p-1` rather than `p`. Required for models whose output tensor is offset by one vs. input.
 - **Tokens**: `[tokens]` — `think_open`, `think_close`, `stop_tokens` (string array; each entry added to the generation stop set alongside EOS)
 
 Optional GGUF params use `?` suffix (silently skipped if missing). Full spec: `models/arch/MODEL_ARCH_TOML_DSL_SPEC.md` — **read before writing or modifying any `.arch.toml`**.

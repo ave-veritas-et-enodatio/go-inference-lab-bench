@@ -32,6 +32,7 @@ type Tokenizer struct {
 	specialTokens []string          // control/user-defined tokens, sorted longest-first
 	bos           int32
 	eos           int32
+	maskTokenID   int32  // mask token for diffusion models; -1 if absent
 	chatTpl       *exec.Template
 	useByteLevel  bool // true for GPT-2 style, false for SentencePiece style
 }
@@ -87,6 +88,17 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 	bos := int32(gt.BOSTokenID)
 	eos := int32(gt.EOSTokenID)
 
+	// Read mask token ID for diffusion models; absent in standard models.
+	maskID := int32(-1)
+	if maskKV, ok := kvs.Get("tokenizer.ggml.mask_token_id"); ok {
+		switch maskKV.ValueType {
+		case ggufparser.GGUFMetadataValueTypeUint32:
+			maskID = int32(maskKV.ValueUint32())
+		case ggufparser.GGUFMetadataValueTypeInt32:
+			maskID = maskKV.ValueInt32()
+		}
+	}
+
 	// Compile chat template from GGUF.
 	// Patch Python slice syntax gonja doesn't support: x[::-1] → x|reverse
 	var chatTpl *exec.Template
@@ -130,10 +142,14 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 		specialTokens: specialTokens,
 		bos:           bos,
 		eos:           eos,
+		maskTokenID:   maskID,
 		chatTpl:       chatTpl,
 		useByteLevel:  useByteLevel,
 	}, nil
 }
+
+// MaskTokenID returns the mask token ID for diffusion models, or -1 if not present.
+func (t *Tokenizer) MaskTokenID() int32 { return t.maskTokenID }
 
 // Encode converts a string to token IDs.
 // If addSpecial is true, wraps with BOS/EOS.

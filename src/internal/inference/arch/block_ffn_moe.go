@@ -49,6 +49,8 @@ func (b *MoEBuilder) Contract() BuilderContract {
 		ConfigSchema: map[string][]string{
 			"activation":  {"silu", "gelu", ""},
 			"self_normed": nil,
+			"norm_w":      {"true", "false", ""},
+			"norm_w_param": nil, // free-form string value; validated in arch.go, not here
 		},
 	}
 }
@@ -86,15 +88,25 @@ func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
 	}
 	selected := ggml.ArgsortTopK(ctx, selectionProbs, int(nExpertUsed))
 
-	// --- Extract and normalize routing weights ---
+	// --- Extract routing weights ---
 	probs3d := ggml.Reshape3D(ctx, probs, 1, nExpert, nTokens)
 	routeWeights := ggml.GetRows(ctx, probs3d, selected)
 
-	rw2d := ggml.Reshape2D(ctx, routeWeights, nExpertUsed, nTokens)
-	rwSum := ggml.SumRows(ctx, rw2d)
-	rwSum = ggml.Clamp(ctx, rwSum, 6.103515625e-5, float32(math.Inf(1)))
-	rw2d = ggml.Div(ctx, rw2d, rwSum)
-	routeWeights = ggml.Reshape3D(ctx, rw2d, 1, nExpertUsed, nTokens)
+	// Optional weight normalization: re-normalize selected weights to sum to 1.0.
+	// norm_w = "true" (Qwen3.5-MoE requires this); default = no normalization (LLaDA-MoE, etc.).
+	// norm_w_param overrides norm_w when set: looks up the named integer param (GGUF booleans
+	// resolve to Ints as 0/1); absent param → 0 → false is the correct default.
+	normW := configStr(config, "norm_w") == "true"
+	if normWParam := configStr(config, "norm_w_param"); normWParam != "" {
+		normW = params.Ints[normWParam] != 0
+	}
+	if normW {
+		rw2d := ggml.Reshape2D(ctx, routeWeights, nExpertUsed, nTokens)
+		rwSum := ggml.SumRows(ctx, rw2d)
+		rwSum = ggml.Clamp(ctx, rwSum, 6.103515625e-5, float32(math.Inf(1)))
+		rw2d = ggml.Div(ctx, rw2d, rwSum)
+		routeWeights = ggml.Reshape3D(ctx, rw2d, 1, nExpertUsed, nTokens)
+	}
 
 	// Optional weight scaling
 	wScale := params.Floats["expert_weights_scale"]

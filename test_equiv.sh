@@ -29,13 +29,14 @@ rm -f "${LOG}" 2> /dev/null
 
 PYTHON=$(which python3 2> /dev/null) || \
   PYTHON=$(which python 2>/dev/null) || \
-  { echo "python not found." 1>&2; exit 1;}
+  { echo "neither python3 nor python not found." 1>&2; exit 1;}
 
 function compare_logprobs() {
   local pass_thresh="${1}"
-  "${PYTHON}" -c '
-import sys,json,math
+  EQUIV=${EQUIV} "${PYTHON}" -c '
+import os,sys,json,math
 pass_thresh = float(sys.argv[1])
+equiv = os.environ.get("EQUIV", "")
 ptable = {}
 while True:
     try:
@@ -47,7 +48,12 @@ while True:
         continue
     line = line.split("|")
     model = line[0]
-    prob_data = line[1]
+    model_type = line[1]
+    # normally envar ALL_MODELS_NO_DIFFUSION=true, so this should not get used, but belt and suspenders are good.
+    if equiv == "llama" and model_type == "diffusion":
+        print(f"skipping diffusion model {model} (llama-diffusion-cli does not support logprob).")
+        continue
+    prob_data = line[2]
     ptable.setdefault(model, []).append(json.loads(prob_data)[0]["logprob"])
 for k, v in ptable.items():
     ref = v[0] if len(v) > 0 else math.nan
@@ -68,9 +74,13 @@ echo "Collecting reference ${EQUIV} results..."
 
 case "${EQUIV}" in
   llama)
+    # llama-diffusion-cli does not support extracting logprobs from diffusion models
+    export ALL_MODELS_NO_DIFFUSION=true
     REF_PROBS=$(USE_LLAMA=true collect_logprobs)
     ;;
   stateless)
+    # stateless vs cached has no meaning for diffusion models
+    export ALL_MODELS_NO_DIFFUSION=true
     REF_PROBS=$(STATELESS=true collect_logprobs)
       STATELESS_CHECK0=$(grep 'stateless=true' "${LOG}")
       [[ -n "${STATELESS_CHECK0}" ]] || {
