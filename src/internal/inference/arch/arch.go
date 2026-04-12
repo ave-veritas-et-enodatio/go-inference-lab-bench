@@ -44,6 +44,9 @@ type ArchMeta struct {
 	TiedEmbeddings  bool   `toml:"tied_embeddings"`
 	NonCausal       bool   `toml:"non_causal"`       // bidirectional attention (no causal mask)
 	EmbedScale      bool   `toml:"embed_scale"`      // multiply embeddings by sqrt(n_embd)
+	Generation      string `toml:"generation"`       // "" (default autoregressive) or "diffusion"
+	ShiftLogits     bool   `toml:"shift_logits"`     // diffusion: use position p-1 logits for output position p
+	NoFlashAttn     bool   `toml:"no_flash_attn"`    // disable flash attention; falls back to standard MulMat SDPA
 }
 
 // ParamsDef holds GGUF key mappings and derived expressions.
@@ -194,6 +197,15 @@ func Validate(def *ArchDef) []ValidationError {
 		errs = append(errs, ValidationError{keyPath, msg})
 	}
 
+	// --- Architecture meta checks ---
+
+	if def.Architecture.Generation != "" && def.Architecture.Generation != "diffusion" {
+		add("architecture.generation", fmt.Sprintf("unknown generation strategy %q (valid: \"diffusion\")", def.Architecture.Generation))
+	}
+	if def.Architecture.Generation == "diffusion" && !def.Architecture.NonCausal {
+		add("architecture.generation", "generation=diffusion requires non_causal=true")
+	}
+
 	// --- Structural checks ---
 
 	if def.Layers.Count == "" {
@@ -261,6 +273,36 @@ func Validate(def *ArchDef) []ValidationError {
 		validateContract(fb.Contract(), def.FFN.Weights, def.FFN.Config, "ffn", &errs)
 	}
 
+	// --- FFN alt builder contract checks ---
+
+	if def.FFNAlt != nil {
+		ffnAltB, ok := GetFFNBuilder(def.FFNAlt.Builder)
+		if !ok {
+			add("ffn_alt.builder", fmt.Sprintf("unknown builder %q", def.FFNAlt.Builder))
+		} else {
+			if len(def.FFNAlt.Weights) == 0 {
+				add("ffn_alt.weights", "must not be empty")
+			}
+			validateContract(ffnAltB.Contract(), def.FFNAlt.Weights, def.FFNAlt.Config, "ffn_alt", &errs)
+		}
+	}
+
+	// --- norm_w / norm_w_param mutual exclusion ---
+
+	checkFFNNormW := func(config map[string]any, prefix string) {
+		_, hasStatic := config["norm_w"]
+		_, hasParam := config["norm_w_param"]
+		if hasStatic && hasParam {
+			add(prefix+".config", "norm_w and norm_w_param are mutually exclusive")
+		}
+	}
+	if def.FFN.Config != nil {
+		checkFFNNormW(def.FFN.Config, "ffn")
+	}
+	if def.FFNAlt != nil && def.FFNAlt.Config != nil {
+		checkFFNNormW(def.FFNAlt.Config, "ffn_alt")
+	}
+
 	// --- Required global weights ---
 
 	if _, ok := def.Weights.Global["token_embd"]; !ok {
@@ -282,6 +324,22 @@ func Validate(def *ArchDef) []ValidationError {
 	// --- Cross-reference checks ---
 
 	declaredParams := collectDeclaredParams(def)
+
+	// norm_w_param must reference a declared param.
+	if def.FFN.Config != nil {
+		if ref, ok := def.FFN.Config["norm_w_param"].(string); ok && ref != "" {
+			if !declaredParams[ref] {
+				add("ffn.config.norm_w_param", fmt.Sprintf("references undeclared param %q", ref))
+			}
+		}
+	}
+	if def.FFNAlt != nil && def.FFNAlt.Config != nil {
+		if ref, ok := def.FFNAlt.Config["norm_w_param"].(string); ok && ref != "" {
+			if !declaredParams[ref] {
+				add("ffn_alt.config.norm_w_param", fmt.Sprintf("references undeclared param %q", ref))
+			}
+		}
+	}
 
 	// Routing rule: validate @{builtin} refs, ${param} refs, and expression syntax
 	if r.Rule != "" {

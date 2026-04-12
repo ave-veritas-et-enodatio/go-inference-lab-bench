@@ -1,4 +1,4 @@
-# Go Inference Lab Bench
+# Inference Lab Bench
 
 From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-model API server, data-driven architecture definition via TOML DSL, KV-cached and stateless inference, weight culling infrastructure, and visualization tooling.
 
@@ -12,7 +12,8 @@ From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-mod
 - KV-cached and stateless inference
 - OpenAI-compatible API (`/api/v1/chat/completions`) with extensions: `stateless`, `cull_method`, `enable_thinking`, `elide_thinking`, `logprobs`
 - Non-streaming responses include `usage` with token counts, throughput (tokens/sec), and timing
-- 6 working architectures: Llama 3B, Qwen3.5 4B/9B, Qwen3.5-MoE 30B-A3B, DeepSeek-V2-Lite, Gemma4 4B/26B
+- 7 working architectures: Llama 3B, Qwen3.5 4B/9B, Qwen3.5-MoE 30B-A3B, DeepSeek-V2-Lite, Gemma4 4B/26B, LLaDA-MoE 7B; LLaDA 8B built but not yet tested against a live model
+- Diffusion generation for LLaDA models — iterative masked denoising with configurable steps and block length
 - SVG architecture visualizer: `bench gen-arch-diagram` generates `*.arch.svg` and `*.layers.svg` from TOML
 - Inference equivalence testing against llama-server (validates logprobs match within FP variance)
 
@@ -22,8 +23,8 @@ Known working models:
 - [llama-3.2-3b-instruct-q4_k_m.gguf](https://huggingface.co/hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF/resolve/main/llama-3.2-3b-instruct-q4_k_m.gguf) — quantized
 - [gemma-4-E4B-it-Q4_K_M.gguf](https://huggingface.co/lmstudio-community/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf) — ISWA + GeGLU
 - [gemma-4-26B-A4B-it-MXFP4_MOE](https://huggingface.co/noctrex/gemma-4-26B-A4B-it-MXFP4_MOE-GGUF/resolve/main/gemma-4-26B-A4B-it-MXFP4_MOE.gguf) — MoE ISWA + GeGLU
-
-In progress: LLaDA-MoE (diffusion-based; arch TOML + builder complete; diffusion generation loop in progress)
+- [LLaDA-MoE-7B-A1B-Instruct.i1-Q4_K_M](https://huggingface.co/mradermacher/LLaDA-MoE-7B-A1B-Instruct-i1-GGUF/resolve/main/LLaDA-MoE-7B-A1B-Instruct.i1-Q4_K_M.gguf) — MoE, Text Diffusion
+- [LLaDA-8B-Instruct.i1-Q4_K_M.gguf](https://huggingface.co/mradermacher/LLaDA-8B-Instruct-i1-GGUF/resolve/main/LLaDA-8B-Instruct.i1-Q4_K_M.gguf) — Dense, Text Diffusion (built; live model test pending)
 
 For architecture details, invariants, and development workflow: **[AGENTS.md](AGENTS.md)** and **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
@@ -65,6 +66,11 @@ curl -X POST localhost:11116/api/v1/chat/completions \
 curl -X POST localhost:11116/api/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"default","messages":[{"role":"user","content":"Hi"}],"stateless":true}'
+
+# Diffusion generation (LLaDA models only; ignored on autoregressive models)
+curl -X POST localhost:11116/api/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"default","messages":[{"role":"user","content":"Hi"}],"diffusion":{"steps":64,"block_length":64}}'
 
 # Control endpoints
 curl localhost:11116/ctl/?memstats   # memory statistics

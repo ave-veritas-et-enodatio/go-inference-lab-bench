@@ -1,4 +1,4 @@
-# Architecture — go-inference-lab-bench
+# Architecture — inference-lab-bench
 
 Companion to `AGENTS.md`: codebase structure, data flows, and invariants.
 
@@ -29,10 +29,10 @@ apiserver/server.go (Engine())    look up loaded model → *inference.Engine
 inference/engine.go (Generate())
     ├─ tokenizer.go               EncodeChat (Jinja2 chat template from GGUF, via gonja)
     ├─ culling/culling.go         ApplyCulling(tokenIDs, prompt) → clone ModuleMap → method → CullingMask
-    ├─ ForwardCached / ForwardStateless
+    ├─ generateCached / generateStateless / generateDiffusion
     │       │
     │       ▼
-    │   arch/graph.go             build ggml graph per-layer
+    │   arch/graph.go             ForwardCached / ForwardStateless / ForwardStatelessAllLogits → build ggml graph per-layer
     │       ├─ MaskedLayer()      apply CullingMask (nil tensors for culled weights)
     │       ├─ BlockBuilders[il]  BuildStateless / BuildCached per layer
     │       └─ FFNBuilders[il]    BuildFFN per layer
@@ -71,24 +71,55 @@ Loads `config/api_config.toml` into `Config`: `[server]`, `[models]`, `[inferenc
 ### `internal/inference/engine.go`
 
 ```go
+type DiffusionParams struct {
+    Steps       int    // 0 = use default (64)
+    BlockLength int    // 0 = single block (global); >0 = block-based left-to-right
+    Algorithm   string // "" or "confidence" = max-softmax; stub for future variants
+}
+
 type GenerateParams struct {
     MaxTokens       int
     Temperature     float32
     TopP            float32
-    Stateless       bool   // bypass KV cache (for testing/comparison)
-    CullMethod      string // "" or "none" = no culling; "random" = random test pattern
-    ThinkingEnabled bool   // passed to template as enable_thinking variable
-    LogProbs        bool   // include log-probabilities in response
-    TopLogProbs     int    // number of top log-probabilities per token
+    Stateless       bool             // bypass KV cache (for testing/comparison)
+    CullMethod      string           // "" or "none" = no culling; "random" = random test pattern
+    ThinkingEnabled bool             // passed to template as enable_thinking variable
+    LogProbs        bool             // include log-probabilities in response
+    TopLogProbs     int              // number of top log-probabilities per token
+    FlashAttention  *bool            // nil = use server default; true/false = per-request override
+    Diffusion       *DiffusionParams // nil = not diffusion (ignored for autoregressive models)
 }
 ```
 
 `Generate()` flow:
 1. `EncodeChat` → token IDs (template handles thinking mode natively via `enable_thinking`)
 2. If culling active: `ApplyCulling` → `CullingMask` + `ModuleMap`
-3. `generateCached` or `generateStateless` — each step: forward → sample → logprobs (if enabled) → onToken
+3. Dispatch on generation strategy:
+   - `e.IsDiffusion()` → `generateDiffusion` (block-based iterative masked denoising)
+   - `params.Stateless` → `generateStateless` (full-sequence recompute per token)
+   - default → `generateCached` (KV/SSM-cached autoregressive decode)
 4. Post-generation diagnostics if applicable (see `diagnostic.go`)
 5. Write cull diagnostics if a cull map was produced
+
+### Generation strategies
+
+Three generation paths live in separate files under `internal/inference/`:
+
+| File | Strategy | Forward call | Notes |
+|---|---|---|---|
+| `generate_cached.go` | Autoregressive + KV cache | `ForwardCached` | Prefill in one pass; decode one token at a time |
+| `generate_stateless.go` | Autoregressive, no cache | `ForwardStateless` | Full recompute each step; supports `ForwardCaptures` |
+| `generate_diffusion.go` | Diffusion (iterative denoising) | `ForwardStatelessAllLogits` | Block-based masked denoising; no prefill/decode split |
+
+`Engine.Generate()` dispatches via `IsDiffusion()` first; stateless flag is consulted only on the autoregressive path.
+
+**Diffusion generation** (`generateDiffusion`):
+1. Initialize output positions with `mask_token_id` (read from GGUF via `MaskTokenID()`).
+2. Divide output into left-to-right blocks of size `DiffusionParams.BlockLength` (0 = single global block).
+3. For each block: run `DiffusionParams.Steps` denoising steps. Each step calls `ForwardStatelessAllLogits` on the full sequence (prompt + all output positions), extracts logits for masked positions in the current block, scores each position by max-softmax confidence, and unmasks the highest-confidence positions according to a linear schedule.
+4. Emit output tokens in sequence order after all blocks are resolved, stopping at the first stop token.
+
+Streaming requests on diffusion models produce a single burst response after all denoising steps complete (not token-by-token); a warning is logged.
 
 ### `internal/inference/arch/`
 Structural types (`ModuleMap`, `CullingMask`), TOML DSL parsing, graph
@@ -110,7 +141,7 @@ An `*.arch.toml` file maps directly onto `arch.ArchDef`:
 
 | Section | Go field | Purpose |
 |---|---|---|
-| `[architecture]` | `ArchMeta` | Name, tied_embeddings flag |
+| `[architecture]` | `ArchMeta` | Name, `tied_embeddings`, `embed_scale`, `non_causal`, `generation`, `shift_logits` — see **`ArchMeta` flags** below |
 | `[params]` | `ParamsDef` | GGUF metadata key mappings; `[params.derived]` = arithmetic expressions; `[params.defaults]` = fallback values |
 | `[weights.global]` | `WeightsDef` | Global tensor names: `token_embd`, `output_norm`, `output` |
 | `[layers]` | `LayersDef` | `count` (param ref), `prefix` (must contain `@{layer_idx}`), `[layers.routing]`, `[layers.common_weights]` |
@@ -128,8 +159,11 @@ An `*.arch.toml` file maps directly onto `arch.ArchDef`:
 given cache entry share one physical cache tensor (allocated on the first layer in the
 group). Used for TOML-declared sharing; see also param-driven sharing via `n_kv_shared_layers`.
 
-**`ArchMeta.EmbedScale`:** boolean. When true, input token embeddings are multiplied by
-`sqrt(n_embd)` before the layer loop.
+**`ArchMeta` flags:**
+- `EmbedScale` (`embed_scale`) — when true, input token embeddings are multiplied by `sqrt(n_embd)` before the layer loop.
+- `NonCausal` (`non_causal`) — when true, attention uses a zero mask (all positions attend to all positions) instead of a causal lower-triangular mask. Required for diffusion models.
+- `Generation` (`generation`) — `""` (default, autoregressive) or `"diffusion"`. Controls which generation path `Engine.Generate()` dispatches to via `IsDiffusion()`. Setting `generation = "diffusion"` without `non_causal = true` is a validation error.
+- `ShiftLogits` (`shift_logits`) — diffusion only: output position `p` reads logits at index `p-1` rather than `p`. Required for models whose output tensor is offset by one position relative to the input.
 
 **Expressions:** `@{layer_idx}` = engine builtin; `${param}` = resolved GGUF param;
 bare names = derived param refs; `tensor.ne[dim]` = tensor shape. Full spec including
@@ -266,10 +300,13 @@ a per-layer buffer.
 ## Forward Pass (`arch/graph.go`)
 
 Entry points:
-- `ForwardStateless(tokenIDs, mask, caps) ([]float32, *EngagementData, error)` — full recompute; returns logits, per-layer engagement data, and error
+- `ForwardStateless(tokenIDs, mask, caps) ([]float32, *EngagementData, error)` — full recompute; returns logits for the last token position, per-layer engagement data, and error
+- `ForwardStatelessAllLogits(tokenIDs, mask, flashAttn) ([]float32, error)` — full recompute; returns logits for **all** token positions, row-major by position: position `p` occupies `allLogits[p*nVocab:(p+1)*nVocab]`. Used exclusively by `generateDiffusion` — no engagement data or captures are collected.
 - `ForwardCached(gc, tokenIDs, mask) ([]float32, error)` — KV-cached; returns logits and error
 
-Both follow the same frame:
+Both stateless entry points share a private `forwardStatelessCore` helper that builds the graph context, scheduler, inputs, and runs all layers. The two stateless entry points differ only in how they extract logits after `sched.Compute`.
+
+All three entry points follow the same layer-execution frame:
 1. Extract params; allocate graph context + GPU scheduler
 2. Build input tensors (`inpTokens`, `inpPos`, `inpMask`)
 3. Embedding scaling: if `ArchMeta.EmbedScale`, multiply token embeddings by `sqrt(n_embd)`

@@ -91,6 +91,9 @@ builder = "swiglu"
 [ffn_alt]
 builder = "moe"
 
+  [ffn_alt.config]
+  norm_w = "true"
+
   [ffn_alt.weights]
   gate_inp   = "ffn_gate_inp.weight"
   gate_exps  = "ffn_gate_exps.weight"
