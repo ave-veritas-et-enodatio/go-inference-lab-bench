@@ -11,9 +11,10 @@ import (
 
 	"inference-lab-bench/internal/inference/arch"
 	"inference-lab-bench/internal/inference/culling"
-	log "inference-lab-bench/internal/log"
+	"inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/model"
 	"inference-lab-bench/internal/util"
+	"inference-lab-bench/internal/ggml"
 )
 
 // ErrComputeFailed is returned by Generate when the ggml Metal backend fails to
@@ -34,28 +35,68 @@ type Engine struct {
 	maxSeqLen   int
 	cullingMeta *culling.CullingMeta // optional sidecar metadata (nil = none)
 	flashAttn   bool                 // server default: use FA2 when head geometry allows
+	diagDir     string               // directory for diagnostic output (resolved by caller)
 }
 
 // NewEngine creates an inference engine for the given model.
 // archDir is the directory containing architecture definition TOML files.
+// diagDir is the directory where diagnostic files (cullmap, engagement) are written.
 // maxSeqLen is the KV cache size in tokens (0 = default 8192).
 // flashAttention is the server default for FA2 (true = enable when head geometry allows).
 // Automatically loads a .modulemap sidecar file if present next to the GGUF.
-func NewEngine(info *model.ModelInfo, archDir string, maxSeqLen int, flashAttention bool) (*Engine, error) {
-	f, err := ggufparser.ParseGGUFFile(info.Path)
+func NewEngine(memStats ggml.MemoryStats, info *model.ModelInfo, archDir, diagDir string, maxSeqLen int, flashAttention bool) (*Engine, error) {
+	var (
+		m   *arch.GenericModel
+		tok *Tokenizer
+		err error
+	)
+
+	archName := info.Metadata.Architecture
+	archDef, err := arch.Load(archDir, archName)
 	if err != nil {
-		return nil, fmt.Errorf("parsing GGUF for tokenizer: %w", err)
+		return nil, fmt.Errorf("loading arch def %q: %w", archName, err)
 	}
 
-	tok, err := NewTokenizerFromGGUF(f, info.Path)
-	if err != nil {
-		return nil, fmt.Errorf("building tokenizer: %w", err)
-	}
+	switch info.Format {
+	case model.FormatSafetensors:
+		// Load tokenizer from the tokenizer.gguf sidecar in the safetensors directory.
+		// This is a minimal GGUF containing only tokenizer metadata (no weights).
+		tokPath := filepath.Join(info.Path, "tokenizer.gguf")
+		tokF, e := ggufparser.ParseGGUFFile(tokPath)
+		if e != nil {
+			return nil, fmt.Errorf("parsing tokenizer sidecar: %w", e)
+		}
 
-	// DSL-driven model loading — reuse the already-parsed GGUF to avoid double-parsing.
-	m, err := arch.NewGenericModel(info.Metadata.Architecture, info.Path, archDir, f)
-	if err != nil {
-		return nil, fmt.Errorf("creating model: %w", err)
+		tok, err = NewTokenizerFromGGUF(tokF, tokPath)
+		if err != nil {
+			return nil, fmt.Errorf("building tokenizer: %w", err)
+		}
+
+		m, err = arch.NewGenericModelFromSafetensors(memStats, maxSeqLen, archDef, info.Path, archDir)
+		if err != nil {
+			return nil, fmt.Errorf("creating model: %w", err)
+		}
+
+	case model.FormatGGUF, "":
+		// Existing GGUF path — functionally identical to prior code.
+		f, err := ggufparser.ParseGGUFFile(info.Path)
+		if err != nil {
+			return nil, fmt.Errorf("parsing GGUF for tokenizer: %w", err)
+		}
+
+		tok, err = NewTokenizerFromGGUF(f, info.Path)
+		if err != nil {
+			return nil, fmt.Errorf("building tokenizer: %w", err)
+		}
+
+		// DSL-driven model loading — reuse the already-parsed GGUF to avoid double-parsing.
+		m, err = arch.NewGenericModelFromGGUF(memStats, maxSeqLen, archDef, info.Path, archDir, f)
+		if err != nil {
+			return nil, fmt.Errorf("creating model: %w", err)
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported model format: %s", info.Format)
 	}
 
 	if maxSeqLen <= 0 {
@@ -63,6 +104,15 @@ func NewEngine(info *model.ModelInfo, archDir string, maxSeqLen int, flashAttent
 	}
 
 	validateArchTokens(m.Def.Tokens, tok)
+
+	// For safetensors, NLayers may be 0 if config.json lacked it. Fall back to
+	// the resolved model param (config.json → params stmap).
+	nLayers := info.Metadata.NLayers
+	if nLayers == 0 {
+		if n, err := m.Params.GetInt("n_layers"); err == nil {
+			nLayers = n
+		}
+	}
 
 	// Load culling metadata sidecar if present: <model_stem>.<method>.cullmeta
 	var cullingMeta *culling.CullingMeta
@@ -94,10 +144,11 @@ func NewEngine(info *model.ModelInfo, archDir string, maxSeqLen int, flashAttent
 	return &Engine{
 		model:       m,
 		tokenizer:   tok,
-		nLayers:     info.Metadata.NLayers,
+		nLayers:     nLayers,
 		maxSeqLen:   maxSeqLen,
 		cullingMeta: cullingMeta,
 		flashAttn:   flashAttn,
+		diagDir:     diagDir,
 	}, nil
 }
 
@@ -150,6 +201,13 @@ func (e *Engine) WeightStore() *arch.WeightStore {
 	return e.model.Store
 }
 
+func (e *Engine) MemoryStats() ggml.MemoryStats {
+	if ws := e.WeightStore(); ws != nil {
+		return ggml.DevMemory(ws.GPU, ws.CPU)
+	}
+	return ggml.MemoryStats{}
+}
+
 // DiffusionParams groups diffusion-model-specific generation parameters.
 // Ignored for autoregressive models.
 type DiffusionParams struct {
@@ -160,17 +218,19 @@ type DiffusionParams struct {
 
 // GenerateParams controls the generation loop.
 type GenerateParams struct {
-	MaxTokens       int
-	Temperature     float32
-	TopP            float32
-	Stateless       bool   // bypass KV cache (for testing/comparison)
-	Streaming       bool   // true if the caller is using SSE streaming
-	CullMethod      string // "" or "none" = no culling; "random" = random test pattern
-	ThinkingEnabled bool   // if false, strip think_open prefix the GGUF template may append
-	LogProbs        bool   // include log-probabilities in response
-	TopLogProbs     int    // number of top log-probabilities per token (0 = just the chosen token)
-	FlashAttention  *bool  // nil = use server default; true/false = per-request override
-	Diffusion       *DiffusionParams // nil = not diffusion (ignored for autoregressive models)
+	MaxTokens          int
+	Temperature        float32
+	TopP               float32
+	Stateless          bool             // bypass KV cache (for testing/comparison)
+	Streaming          bool             // true if the caller is using SSE streaming
+	CullMethod         string           // "" or "none" = no culling; "random" = random test pattern
+	ThinkingEnabled    bool             // mirrors ChatTemplateKwargs["enable_thinking"]; used for thinkFilter init + internal logic
+	ChatTemplateKwargs map[string]any   // passed to the chat template renderer; llama.cpp-compatible shape
+	LogProbs           bool             // include log-probabilities in response
+	TopLogProbs        int              // number of top log-probabilities per token (0 = just the chosen token)
+	FlashAttention     *bool            // nil = use server default; true/false = per-request override
+	Diffusion          *DiffusionParams // nil = not diffusion (ignored for autoregressive models)
+	RLB                *RLBParams       // nil = RLB disabled; non-nil = run recurrent logic block generation with these params
 }
 
 // DefaultParams returns sensible defaults.
@@ -193,7 +253,17 @@ func (e *Engine) Generate(
 	params GenerateParams,
 	onToken func(token string) bool,
 ) (*InferenceMetrics, error) {
-	promptIDs, err := e.tokenizer.EncodeChat(messages, params.ThinkingEnabled)
+	// Ensure chat_template_kwargs carries enable_thinking for callers (e.g.
+	// CLI paths) that only set ThinkingEnabled. The HTTP handler populates
+	// both already; this is the backstop for direct Engine users.
+	kwargs := params.ChatTemplateKwargs
+	if kwargs == nil {
+		kwargs = map[string]any{}
+	}
+	if _, ok := kwargs["enable_thinking"]; !ok {
+		kwargs["enable_thinking"] = params.ThinkingEnabled
+	}
+	promptIDs, err := e.tokenizer.EncodeChat(messages, kwargs)
 	if err != nil {
 		return nil, fmt.Errorf("encoding chat: %w", err)
 	}
@@ -243,8 +313,22 @@ func (e *Engine) Generate(
 
 	start := time.Now()
 
+	// RLB doesn't apply to diffusion models (no SSM state to blend, no
+	// per-block recurrence concept). If both are requested, drop RLB and
+	// fall through to the diffusion path.
+	if params.RLB != nil && e.IsDiffusion() {
+		log.Warn("rlb_gen requested on diffusion model; ignoring RLB, performing diffusion generation")
+		params.RLB = nil
+	}
+
 	var genErr error
-	if e.IsDiffusion() {
+	if params.RLB != nil {
+		if params.Stateless {
+			log.Warn("rlb_gen requires cached mode; ignoring stateless=true")
+		}
+		log.Info("rlb generation: prompt=%d tokens", len(promptIDs))
+		genErr = e.generateRLB(promptIDs, maxTokens, stopSet, params, mask, onToken, metrics)
+	} else if e.IsDiffusion() {
 		if params.Streaming {
 			T := 64
 			if params.Diffusion != nil && params.Diffusion.Steps > 0 {
@@ -264,17 +348,35 @@ func (e *Engine) Generate(
 
 	// Write diagnostic files.
 	if cullMap != nil {
-		culling.WriteCullDiagnostics(cullMap, e.model.ModelPath, e.model.TensorDims, metrics.Engagement)
+		culling.WriteCullDiagnostics(e.diagDir, cullMap, e.model.ModelPath, e.model.TensorDims, metrics.Engagement)
 	}
 
 	return metrics, genErr
 }
 
-func (e *Engine) sample(logits []float32, params GenerateParams) int32 {
-	if params.Temperature <= 0 {
-		return Greedy(logits)
+// enablePerTokenLogging gates verbose per-token diagnostic logging on the
+// hot sampling path. Off by default — flipping it to true produces one log
+// line per generated token with the sampled ID and top logit, useful when
+// debugging flat-distribution or off-by-one-token bugs without rebuilding
+// the engine harness. Promote to a config/runtime setting if it proves
+// useful often enough to warrant live toggling.
+const enablePerTokenLogging = false
+
+func (e *Engine) sample(logits []float32, params GenerateParams) (int32, error) {
+	if err := ValidateLogits(logits); err != nil {
+		return 0, fmt.Errorf("sample: %w", err)
 	}
-	return TopP(logits, params.Temperature, params.TopP)
+	var next int32
+	if params.Temperature <= 0 {
+		next = Greedy(logits)
+	} else {
+		next = TopP(logits, params.Temperature, params.TopP)
+	}
+	if enablePerTokenLogging {
+		log.Debug("sample: next=%d top_logit=%.4f n_vocab=%d temp=%.2f top_p=%.2f",
+			next, logits[next], len(logits), params.Temperature, params.TopP)
+	}
+	return next, nil
 }
 
 // lastUserContent returns the content of the last user message, used as diagnostic context for culling.

@@ -89,15 +89,65 @@ case "${EQUIV}" in
       }
     ;;
   standard-attention)
-    REF_PROBS=$(ENABLE=false collect_logprobs)
+    REF_PROBS=$(FLASH=false collect_logprobs)
       FLASH_CHECK0=$(grep 'flash_attention_used=false' "${LOG}")
       [[ -n "${FLASH_CHECK0}" ]] || {
         echo "FAIL: flash_attention true when it should be false" 1>&2
         exit 1
       }
     ;;
-    *)
-      echo "Usage: ${THIS_SCRIPT} [llama|stateless|standard-attention]" 1>&2
+  gguf-st)
+    unset ALL_MODELS
+    MODEL_ARG=${MODEL:-$(find models \( -name \*.st -o -name \*.st.bin \) -maxdepth 1 | sort | head -1)}
+    [[ ! -n ${MODEL} && ! -n ${MODEL_ARG} ]] && {
+      echo "No safetensor models present to test. skipping."
+      exit 0
+    }
+    # trim potential leading ./ and trailing /
+    MODEL_NAME=${MODEL_ARG/\.\//}
+    MODEL_NAME=${MODEL_NAME%/}
+    MODEL_NAME=${MODEL_NAME/models\//}
+    MODEL_NAME=${MODEL_NAME%.bin}
+    MODEL_NAME=${MODEL_NAME%.gguf}
+    MODEL_NAME=${MODEL_NAME%.st}
+    MODEL_ST=models/${MODEL_NAME}.st
+    MODEL_ST_BIN=${MODEL_ST}.bin
+    MODEL_GGUF=models/${MODEL_NAME}.gguf
+    MODEL_GGUF_BIN=${MODEL_GGUF}.bin
+    MODEL_GGUF_BIN_RENAMED=false
+    MODEL_GGUF_HIDE=${MODEL_GGUF}.$$.bin
+
+    ([[ -f "${MODEL_ST}/config.json" || -f "${MODEL_ST_BIN}/config.json" ]] && [[ -f "${MODEL_GGUF}" || -f "${MODEL_GGUF_BIN}" ]]) || {
+      echo "model: ${MODEL_ARG}" 1>&2
+      [[ -f "${MODEL_ST}/config.json" ]] || echo "${MODEL_ST} is not safetensors directory" 1>&2
+      [[ -f "${MODEL_GGUF}" || -f "${MODEL_GGUF_BIN}" ]] || echo "${MODEL_GGUF} or ${MODEL_GGUF_BIN} must exist" 1>&2
+      exit 1
+    }
+    [[ -f "${MODEL_ST}/tokenizer.gguf" || -f "${MODEL_ST_BIN}/tokenizer.gguf" ]] || {
+      echo "error: ${MODEL_ST}/tokenizer.gguf missing. 'make ${MODEL_ST}/tokenizer.gguf' first." 1>&2
+      exit 1
+    }
+
+    [[ -f "${MODEL_GGUF}" || -f "${MODEL_GGUF_BIN}" ]] || {
+      echo " models/${MODEL_NAME}.gguf does not exist. create one with 'make models/${MODEL_NAME}.gguf' first."
+      exit 1
+    }
+
+    # ensure a gguf
+    [[ -f "${MODEL_GGUF_BIN}" && ! -f "${MODEL_GGUF}" ]] && {
+      MODEL_GGUF_BIN_RENAMED=true
+      mv "${MODEL_GGUF_BIN}" "${MODEL_GGUF}"
+    }
+    [[ -f ${MODEL_GGUF} ]] || {
+      echo "internal error: the ${MODEL_GGUF} should have be visible" 1>&2
+      exit 1
+    }
+    REF_PROBS=$(MODEL=${MODEL_NAME} collect_logprobs)
+    # hide the gguf so the server will find the .st
+    ${MODEL_GGUF_BIN_RENAMED} && mv "${MODEL_GGUF}" "${MODEL_GGUF_BIN}" || mv "${MODEL_GGUF}" "${MODEL_GGUF_HIDE}"
+    ;;
+  *)
+    echo "Usage: [MODEL=<model>] ${THIS_SCRIPT} [llama|stateless|standard-attention|gguf-st]" 1>&2
       echo "unknown arg: ${EQUIV}" 1>&2
       exit 1
       ;;
@@ -129,13 +179,31 @@ case "${EQUIV}" in
       echo "FAIL: flash false when it should be true" 1>&2; exit 1;
     }
     ;;
-    *)
-      echo "internal error. unhandled case: ${EQUIV}" 1>&2
-      exit 1;;
+  gguf-st)
+    [[ ! -f ${MODEL_GGUF} ]] || {
+      echo "internal error: the ${MODEL_GGUF} should have been hidden as a .bin file" 1>&2
+      exit 1
+    }
+    # ensure .st
+    MODEL_ST_UNHIDDEN=false
+    [[ -f "${MODEL_ST}/config.json" ]] || {
+      mv "${MODEL_ST_BIN}" "${MODEL_ST}"
+      MODEL_ST_UNHIDDEN=true
+    }
+
+    BENCH_PROBS=$(MODEL=${MODEL_NAME} collect_logprobs)
+    # unhide the gguf if we did the hiding
+    [[ -f "${MODEL_GGUF_HIDE}" ]] && mv "${MODEL_GGUF_HIDE}" "${MODEL_GGUF}"
+    # re-hide the ST if we did the unhiding
+    ${MODEL_ST_UNHIDDEN} && mv "${MODEL_ST}" "${MODEL_ST_BIN}"
+    ;;
+  *)
+    echo "internal error. unhandled case: ${EQUIV}" 1>&2
+    exit 1;;
 esac
 
 [[ -n "${BENCH_PROBS}" ]] || {
-  echo "FAIL: no benchmark results collected" 1>&2
+  echo "FAIL: no lab-bench results collected" 1>&2
   exit 1
 }
 
@@ -146,5 +214,13 @@ echo "${RESULTS}"
 echo ""
 
 [[ "${RESULTS}" == *"FAIL"* ]] && { echo "FAIL: one or more results failed"; exit 1; }
+
+ERRORS=$(grep '\[ERROR\]' "${LOG}")
+[[ -n "${ERRORS}" ]] && {
+  echo "FAIL: log contains [ERROR] messages" 1>&2
+  echo "${ERRORS}" 1>&2
+  exit 1
+}
+
 echo "All checked models passed ${EQUIV} inference equivalence test"
 exit 0

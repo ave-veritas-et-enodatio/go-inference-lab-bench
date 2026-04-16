@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	ggml "inference-lab-bench/internal/ggml"
 	log "inference-lab-bench/internal/log"
 )
 
@@ -46,73 +45,31 @@ func (s *Server) handleCtl(w http.ResponseWriter, r *http.Request) {
 	// memstats command
 	if q.Has("memstats") {
 		// Collect memory stats from loaded engines
-		var allStats []ggml.MemoryStats
-
-		for _, eng := range s.engines {
-			if ws := eng.WeightStore(); ws != nil && ws.Buffer != nil {
-				totalVRAM := ggml.DevMemory(ws.GPU)
-				totalRAM := ggml.DevMemory(ws.CPU)
-
-				bufSize := ws.Buffer.Size()
-
-				allStats = append(allStats, ggml.MemoryStats{
-					VRAM: ggml.MemoryStat{ Allocated: int64(bufSize), Total: totalVRAM },
-					RAM: ggml.MemoryStat{ Allocated: int64(0), Total: totalRAM },
-					IsUMA: ggml.IsUMA(ws.GPU),
-				})
-			}
-		}
-
-		// Aggregate stats
-		var totalAllocatedRAM int64
-		var totalAllocatedVRAM int64
-		var totalVRAM int64
-		var totalRAM int64
-		var isUMA bool
-
-		for _, stat := range allStats {
-			totalAllocatedVRAM += stat.VRAM.Allocated
-			if totalVRAM == 0 {
-				totalVRAM += stat.VRAM.Total
-			}
-			totalAllocatedRAM += stat.RAM.Allocated
-			if totalRAM == 0 {
-				totalRAM += stat.RAM.Total
-			}
-			isUMA = isUMA || stat.IsUMA
-		}
-
-		vramUsage := 0.0
-		if totalVRAM > 0 {
-			vramUsage = float64(totalAllocatedVRAM) / float64(totalVRAM) * 100
-		}
-		ramUsage := 0.0
-		if totalRAM > 0 {
-			ramUsage = float64(totalAllocatedRAM) / float64(totalRAM) * 100
-		}
+		totalStats := s.MemoryStats()
 
 		w.Header().Set("Content-Type", "application/json")
 		resp := map[string]interface{}{
-			"memstats":    allStats,
 			"vram": map[string]interface{}{
-				"alloc": totalAllocatedVRAM,
-				"total":  totalVRAM,
-				"usage": vramUsage,
+				"alloc": totalStats.VRAM.Allocated,
+				"total":  totalStats.VRAM.Total,
+				"usage": totalStats.VRAM.AllocatedPct(),
 			},
 			"ram": map[string]interface{}{
-				"alloc": totalAllocatedRAM,
-				"total":  totalRAM,
-				"usage": ramUsage,
+				"alloc": totalStats.RAM.Allocated,
+				"total":  totalStats.RAM.Total,
+				"usage": totalStats.RAM.AllocatedPct(),
 			},
-			"is_uma":      isUMA,
+			"is_uma":      totalStats.IsUMA,
 		}
 
 		data, _ := json.Marshal(resp)
 		w.Write(data)
 
 		log.Info("[ctl] memstats: allocatedVRAM=%d VRAM=%d vramUsage=%.2f%% allocatedRAM=%d RAM=%d ramUsage=%.2f%% is_uma=%v",
-			totalAllocatedVRAM, totalVRAM, vramUsage, totalAllocatedRAM, totalRAM, ramUsage, isUMA)
-
+			totalStats.VRAM.Allocated, totalStats.VRAM.Total, totalStats.VRAM.AllocatedPct(),
+			totalStats.RAM.Allocated, totalStats.RAM.Total, totalStats.RAM.AllocatedPct(),
+			totalStats.IsUMA,
+		)
 		return
 	}
 

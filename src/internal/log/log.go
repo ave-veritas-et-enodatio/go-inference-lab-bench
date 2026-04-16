@@ -70,26 +70,29 @@ type Logger interface {
 
 // compactLogger writes <HH:MM:SS>[LEVEL] message lines.
 // stderr and file are written independently at their own level thresholds.
+// stderrLevel is accessed via atomic ops so SetLevel/GetLevel are race-free
+// with concurrent emit calls. mu guards only the writer fields.
 type compactLogger struct {
+	stderrLevel atomic.Uint32 // Level stored as uint32; use loadLevel/storeLevel
 	mu          sync.Mutex
 	stderrW     io.Writer
-	stderrLevel Level
 	fileW       *os.File // nil if no log file
 	pathPrefixLen int
 	showFileLine bool
 }
 
 func (c *compactLogger) emit(level Level, format string, args ...any) {
-	toStderr := level >= c.stderrLevel
+	toStderr := level >= Level(c.stderrLevel.Load())
 	toFile := c.fileW != nil // file always gets everything
 	if !toStderr && !toFile {
 		return
 	}
-	_, fileName, lineNum, _ := runtime.Caller(3)
-	fileName = fileName[c.pathPrefixLen:]
 	fileLine := ""
 	if c.showFileLine {
-		fileLine = fmt.Sprintf("%s(%d): ", fileName, lineNum)
+		pc, fileName, lineNum, _ := runtime.Caller(3)
+		funcName := runtime.FuncForPC(pc).Name()
+		fileName = fileName[c.pathPrefixLen:]
+		fileLine = fmt.Sprintf("%s(%d): %s() ", fileName, lineNum, funcName)
 	}
 	msg := fmt.Sprintf(format, args...)
 	line := fmt.Sprintf("<%s>[%s] %s%s\n", time.Now().Format("15:04:05"), level.String(), fileLine, msg)
@@ -103,9 +106,9 @@ func (c *compactLogger) emit(level Level, format string, args ...any) {
 	}
 }
 
-func (c *compactLogger) GetLevel() Level { return c.stderrLevel }
+func (c *compactLogger) GetLevel() Level { return Level(c.stderrLevel.Load()) }
 func (c *compactLogger) GetShowFileAndLine() bool { return c.showFileLine }
-func (c *compactLogger) SetLevel(level Level) { c.stderrLevel = level }
+func (c *compactLogger) SetLevel(level Level) { c.stderrLevel.Store(uint32(level)) }
 func (c *compactLogger) SetShowFileAndLine(show bool) { c.showFileLine = show }
 func (c *compactLogger) Debug(format string, args ...any) { c.emit(LevelDebug, format, args...) }
 func (c *compactLogger) Info(format string, args ...any)  { c.emit(LevelInfo, format, args...) }
@@ -116,12 +119,13 @@ func (c *compactLogger) Fatal(format string, args ...any) {
 	os.Exit(1)
 }
 
-var global atomic.Pointer[Logger]
+var global atomic.Pointer[compactLogger]
 var initOnce sync.Once
 
 func init() {
-	l := Logger(&compactLogger{stderrW: os.Stderr, stderrLevel: LevelInfo})
-	global.Store(&l)
+	cl := &compactLogger{stderrW: os.Stderr}
+	cl.stderrLevel.Store(uint32(LevelInfo))
+	global.Store(cl)
 }
 
 // InitLogger initializes the global logger. Must be called once before any
@@ -134,11 +138,11 @@ func InitLogger(logPath string, stderrLevel Level, logFileLine bool) error {
 		_, logGoPath, _, _ := runtime.Caller(0)
 		logGoPath = path.Dir(path.Dir(path.Dir(logGoPath)))
 		cl := &compactLogger{
-			stderrW:     os.Stderr,
-			stderrLevel: stderrLevel,
+			stderrW:       os.Stderr,
 			pathPrefixLen: len(logGoPath) + 1,
-			showFileLine: logFileLine,
+			showFileLine:  logFileLine,
 		}
+		cl.stderrLevel.Store(uint32(stderrLevel))
 		if logPath != "" {
 			f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 			if err != nil {
@@ -149,20 +153,19 @@ func InitLogger(logPath string, stderrLevel Level, logFileLine bool) error {
 			fmt.Fprintf(f, "new log opened: %s\n", time.Now().Format("2006-01-02 15:04:05"))
 			cl.fileW = f
 		}
-		l := Logger(cl)
-		global.Store(&l)
+		global.Store(cl)
 	})
 	return initErr
 }
 
 // Package-level forwarding functions — these are the primary call-site API.
-func Debug(format string, args ...any) { (*global.Load()).Debug(format, args...) }
-func Info(format string, args ...any)  { (*global.Load()).Info(format, args...) }
-func Warn(format string, args ...any)  { (*global.Load()).Warn(format, args...) }
-func Error(format string, args ...any) { (*global.Load()).Error(format, args...) }
-func Fatal(format string, args ...any) { (*global.Load()).Fatal(format, args...) }
+func Debug(format string, args ...any) { global.Load().Debug(format, args...) }
+func Info(format string, args ...any)  { global.Load().Info(format, args...) }
+func Warn(format string, args ...any)  { global.Load().Warn(format, args...) }
+func Error(format string, args ...any) { global.Load().Error(format, args...) }
+func Fatal(format string, args ...any) { global.Load().Fatal(format, args...) }
 
-func SetLevel(level Level) { (*global.Load()).SetLevel(level) }
-func GetLevel() Level { return (*global.Load()).GetLevel() }
-func SetShowFileAndLine(show bool) { (*global.Load()).SetShowFileAndLine(show) }
-func GetShowFileAndLine() bool { return (*global.Load()).GetShowFileAndLine() }
+func SetLevel(level Level) { global.Load().SetLevel(level) }
+func GetLevel() Level      { return global.Load().GetLevel() }
+func SetShowFileAndLine(show bool) { global.Load().SetShowFileAndLine(show) }
+func GetShowFileAndLine() bool     { return global.Load().GetShowFileAndLine() }

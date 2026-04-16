@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -78,6 +79,29 @@ func ResolveParams(def *ArchDef, reader GGUFReader) (*ResolvedParams, error) {
 		}
 	}
 
+	// Pass 4: sanity-check critical float params. Any of these resolving to
+	// zero, NaN, or Inf means either the source metadata is broken or the
+	// reader silently mis-coerced a value (e.g. float64→uint32 truncation of
+	// a small float). Turning it into a loud load-time error turns a
+	// first-token-EOS mystery into a single-line diagnosis. Extend this list
+	// conservatively — only params whose "unset" and "declared zero" states
+	// are both bugs belong here.
+	mustBePositive := []string{
+		"rms_eps",        // RMSNorm epsilon — division by zero if unset
+		"rope_freq_base", // RoPE frequency base — 0 gives inf/NaN positional encodings
+	}
+	for _, name := range mustBePositive {
+		v, ok := rp.Floats[name]
+		if !ok {
+			continue // param not declared by this arch — fine
+		}
+		f := float64(v)
+		if math.IsNaN(f) || math.IsInf(f, 0) || f <= 0 {
+			return nil, fmt.Errorf("param %q resolved to %v — expected finite positive float "+
+				"(likely cause: source metadata missing or reader type coercion bug)", name, v)
+		}
+	}
+
 	return rp, nil
 }
 
@@ -97,6 +121,15 @@ func resolveParam(name, ggufKey string, reader GGUFReader, rp *ResolvedParams) e
 	// Try u32 first (most params are integers)
 	if v, ok := reader.GetU32(ggufKey); ok {
 		rp.Ints[name] = int(v)
+		// Also populate Floats so consumers that read the param as a float
+		// see the same value. This matters for readers whose underlying
+		// source (e.g. safetensors config.json) is untyped: a semantically-
+		// float param can be stored as an integer literal (e.g.
+		// rope_theta = 10000000), GetU32 wins the probe, and without this
+		// dual-populate the float consumer would get zero. Harmless for the
+		// strictly-typed GGUF reader because params that ggml stores as
+		// UINT32 are never read via GetFloat.
+		rp.Floats[name] = float32(v)
 		return nil
 	}
 

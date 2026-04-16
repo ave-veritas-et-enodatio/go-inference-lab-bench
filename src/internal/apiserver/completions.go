@@ -15,14 +15,20 @@ import (
 // thinkFilter strips <think>...</think> sections from a token stream.
 // Handles tags split across token boundaries. Accumulates think content for logging.
 type thinkFilter struct {
-	open    string // e.g. "<think>" — from arch TOML tokens.think_open
-	close   string // e.g. "</think>" — from arch TOML tokens.think_close
-	buf     string
-	inThink bool // true while inside think block; set initially if model starts in think mode
-	think   strings.Builder
+	open        string // e.g. "<think>" — from arch TOML tokens.think_open
+	close       string // e.g. "</think>" — from arch TOML tokens.think_close
+	buf         string
+	inThink     bool // true while inside think block; set initially if model starts in think mode
+	think       strings.Builder
+	thinkTokens int // tokens received while inThink was true at entry
+	totalTokens int // total tokens received via feed()
 }
 
 func (f *thinkFilter) feed(token string) string {
+	f.totalTokens++
+	if f.inThink {
+		f.thinkTokens++
+	}
 	f.buf += token
 	var out strings.Builder
 	holdClose := len(f.close) + 1
@@ -74,6 +80,7 @@ func (f *thinkFilter) flush() string {
 	return out
 }
 
+// matches logging policy in AGENTS.md
 const maxThinkLogLen = 500 // cap think content in logs
 
 const maxLogValLen = 64
@@ -102,26 +109,35 @@ type chatMessage struct {
 }
 
 type chatCompletionRequest struct {
-	Model             string        `json:"model"`
-	Messages          []chatMessage `json:"messages"`
-	Stream            bool          `json:"stream"`
-	MaxTokens         int           `json:"max_tokens"`
-	Temperature       float64       `json:"temperature"`
-	TopP              float64       `json:"top_p"`
-	LogProbs          bool          `json:"logprobs,omitempty"`           // include log-probabilities
-	TopLogProbs       int           `json:"top_logprobs,omitempty"`       // number of top alternatives (default 1)
-	Stateless         bool          `json:"stateless,omitempty"`          // bypass KV cache (for testing)
-	CullMethod        *string       `json:"cull_method,omitempty"`        // null = use server config; "none" = off; "random" = random
-	EnableThinking    *bool         `json:"enable_thinking,omitempty"`    // true/false/null; null = use server default
-	ElideThinking     *bool         `json:"elide_thinking,omitempty"`     // true/false/null; null = use server default
-	FlashAttention    *bool         `json:"flash_attention,omitempty"`    // true/false/null; null = use server default
-	Diffusion *diffusionRequestParams `json:"diffusion,omitempty"` // nil = no diffusion params; ignored for non-diffusion models
+	Model              string             `json:"model"`
+	Messages           []chatMessage      `json:"messages"`
+	Stream             bool               `json:"stream"`
+	MaxTokens          int                `json:"max_tokens"`
+	Temperature        float64            `json:"temperature"`
+	TopP               float64            `json:"top_p"`
+	LogProbs           bool               `json:"logprobs,omitempty"`             // include log-probabilities
+	TopLogProbs        int                `json:"top_logprobs,omitempty"`         // number of top alternatives (default 1)
+	ChatTemplateKwargs map[string]any     `json:"chat_template_kwargs,omitempty"` // passed to the chat template (llama.cpp-compatible); reserved key: "enable_thinking" (bool)
+	BenchCustom        *benchCustomParams `json:"bench_custom,omitempty"`
 }
 
 type diffusionRequestParams struct {
 	Steps       int    `json:"steps,omitempty"`
 	BlockLength int    `json:"block_length,omitempty"`
 	Algorithm   string `json:"algorithm,omitempty"`
+}
+
+type benchCustomParams struct {
+	Stateless           *bool                   `json:"stateless,omitempty"`
+	CullMethod          string                  `json:"cull_method,omitempty"`
+	FlashAttention      *bool                   `json:"flash_attention,omitempty"`
+	ElideThinking       *bool                   `json:"elide_thinking,omitempty"`
+	EnableRLBOnPrefill  bool                    `json:"enable_rlb_on_prefill,omitempty"`
+	UseRLBGen           bool                    `json:"use_rlb_gen,omitempty"`
+	RLBAlpha            *float64                `json:"rlb_alpha,omitempty"`              // 0.0-1.0; nil = default (1.0, no blending)
+	RLBHaltRule         string                  `json:"rlb_halt_rule,omitempty"`          // halt rule name ("" = default fixed ceiling); see parseHaltRule in generate_rlb.go for menu
+	RLBTerminalHaltRule string                  `json:"rlb_terminal_halt_rule,omitempty"` // halt rule for the terminal block only ("" = reuse rlb_halt_rule); Tier 1 rules only have meaningful signal at the terminal block since upstream tops aren't yet projected through lm_head
+	Diffusion           *diffusionRequestParams `json:"diffusion,omitempty"`
 }
 
 // --- Non-streaming response types ---
@@ -149,6 +165,7 @@ type choice struct {
 type usage struct {
 	PromptTokens           int     `json:"prompt_tokens"`
 	CompletionTokens       int     `json:"completion_tokens"`
+	ThinkingTokens         int     `json:"thinking_tokens,omitempty"`
 	TotalTokens            int     `json:"total_tokens"`
 	PromptTokensPerSec     float64 `json:"prompt_tokens_per_sec,omitempty"`
 	CompletionTokensPerSec float64 `json:"completion_tokens_per_sec,omitempty"`
@@ -220,12 +237,26 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	params := inference.DefaultParams()
 
-	// Resolve thinking mode: request field overrides server default
-	if req.EnableThinking != nil {
-		params.ThinkingEnabled = *req.EnableThinking
+	// Resolve chat_template_kwargs: request overrides server default.
+	// enable_thinking is a reserved key — we type-check it here (must be bool)
+	// and mirror the resolved value into params.ThinkingEnabled for the
+	// thinkFilter initial state and downstream generation logic.
+	kwargs := make(map[string]any, len(req.ChatTemplateKwargs)+1)
+	for k, v := range req.ChatTemplateKwargs {
+		kwargs[k] = v
+	}
+	if raw, present := kwargs["enable_thinking"]; present {
+		b, ok := raw.(bool)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "invalid type for chat_template_kwargs.enable_thinking (expected bool)")
+			return
+		}
+		params.ThinkingEnabled = b
 	} else {
 		params.ThinkingEnabled = s.cfg.Inference.EnableThinkingDefault
+		kwargs["enable_thinking"] = params.ThinkingEnabled
 	}
+	params.ChatTemplateKwargs = kwargs
 
 	if req.MaxTokens > 0 {
 		params.MaxTokens = req.MaxTokens
@@ -236,7 +267,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if req.TopP > 0 {
 		params.TopP = float32(req.TopP)
 	}
-	params.Stateless = req.Stateless
+	if req.BenchCustom != nil && req.BenchCustom.Stateless != nil {
+		params.Stateless = *req.BenchCustom.Stateless
+	}
 	params.LogProbs = req.LogProbs
 	params.TopLogProbs = req.TopLogProbs
 	if params.TopLogProbs < 1 && params.LogProbs {
@@ -250,17 +283,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Inference.MaxRequestSeqLen > 0 && req.MaxTokens > 0 {
 		// Estimate prompt token count via tokenizer
 		// This will be re-encoded inside Generate(), but we need the estimate for guardrails
-		promptText := ""
-		for _, m := range req.Messages {
-			if m.Role == "user" {
-				promptText += m.Content + "\n"
+		var promptText string
+		{
+			sb := strings.Builder{}
+			for _, m := range req.Messages {
+				if m.Role == "user" {
+					sb.WriteString(m.Content + "\n")
+				}
 			}
+			promptText = sb.String()
 		}
+
 		// Rough estimate: assume ~1 token per 4 chars (English text)
-		estimatedPromptTokens := len(promptText) / 4
-		if estimatedPromptTokens < 10 {
-			estimatedPromptTokens = 10 // minimum reasonable prompt
-		}
+		estimatedPromptTokens := max(len(promptText) / 4, 10)
 		totalEstimate := estimatedPromptTokens + req.MaxTokens
 		if totalEstimate > s.cfg.Inference.MaxRequestSeqLen {
 			if s.cfg.Inference.StrictMode {
@@ -283,46 +318,77 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Thinking mode is controlled via the enable_thinking template variable
 	// passed to gonja in EncodeChat — no prompt injection needed.
 
-	// Resolve cull method: request overrides server config; null = use config; "none" = off.
-	if req.CullMethod != nil {
-		params.CullMethod = *req.CullMethod
+	// Resolve cull method: request overrides server config; empty = use config; "none" = off.
+	if req.BenchCustom != nil && req.BenchCustom.CullMethod != "" {
+		params.CullMethod = req.BenchCustom.CullMethod
 	} else {
 		params.CullMethod = s.cfg.Inference.CullMethodDefault
 	}
 	// Resolve flash attention: request overrides server config; null = use config.
-	if req.FlashAttention != nil {
-		params.FlashAttention = req.FlashAttention
+	if req.BenchCustom != nil && req.BenchCustom.FlashAttention != nil {
+		params.FlashAttention = req.BenchCustom.FlashAttention
 	}
-	if req.Diffusion != nil {
+	if req.BenchCustom != nil && req.BenchCustom.Diffusion != nil {
 		if !eng.IsDiffusion() {
 			log.Warn("diffusion params in request ignored: model is not a diffusion model")
 		} else {
 			params.Diffusion = &inference.DiffusionParams{
-				Steps:       req.Diffusion.Steps,
-				BlockLength: req.Diffusion.BlockLength,
-				Algorithm:   req.Diffusion.Algorithm,
+				Steps:       req.BenchCustom.Diffusion.Steps,
+				BlockLength: req.BenchCustom.Diffusion.BlockLength,
+				Algorithm:   req.BenchCustom.Diffusion.Algorithm,
 			}
 		}
+	}
+	if req.BenchCustom != nil && (req.BenchCustom.UseRLBGen || req.BenchCustom.EnableRLBOnPrefill) {
+		rlb := &inference.RLBParams{
+			Prefill: req.BenchCustom.EnableRLBOnPrefill,
+		}
+		if req.BenchCustom.UseRLBGen {
+			rlb.Decode = true
+			rlb.HaltRule = req.BenchCustom.RLBHaltRule
+			rlb.TerminalHaltRule = req.BenchCustom.RLBTerminalHaltRule
+			if req.BenchCustom.RLBAlpha != nil {
+				rlb.Alpha = *req.BenchCustom.RLBAlpha
+			}
+		}
+		params.RLB = rlb
 	}
 	params.Streaming = req.Stream
 
 	// Log any request-level parameter overrides of server config defaults.
 	{
 		var overrides []string
-		if req.Stateless {
+		if req.BenchCustom != nil && req.BenchCustom.Stateless != nil && *req.BenchCustom.Stateless {
 			overrides = append(overrides, "stateless=true")
 		}
-		if req.CullMethod != nil && *req.CullMethod != s.cfg.Inference.CullMethodDefault {
-			overrides = append(overrides, fmt.Sprintf("cull_method=%q (server: %q)", truncLogVal(*req.CullMethod), s.cfg.Inference.CullMethodDefault))
+		if req.BenchCustom != nil && req.BenchCustom.CullMethod != "" && req.BenchCustom.CullMethod != s.cfg.Inference.CullMethodDefault {
+			overrides = append(overrides, fmt.Sprintf("cull_method=%q (server: %q)", truncLogVal(req.BenchCustom.CullMethod), s.cfg.Inference.CullMethodDefault))
 		}
-		if req.EnableThinking != nil && *req.EnableThinking != s.cfg.Inference.EnableThinkingDefault {
-			overrides = append(overrides, fmt.Sprintf("enable_thinking=%v (server: %v)", *req.EnableThinking, s.cfg.Inference.EnableThinkingDefault))
+		if raw, present := req.ChatTemplateKwargs["enable_thinking"]; present {
+			if b, ok := raw.(bool); ok && b != s.cfg.Inference.EnableThinkingDefault {
+				overrides = append(overrides, fmt.Sprintf("enable_thinking=%v (server: %v)", b, s.cfg.Inference.EnableThinkingDefault))
+			}
 		}
-		if req.ElideThinking != nil && *req.ElideThinking != s.cfg.Inference.ShouldElideThink() {
-			overrides = append(overrides, fmt.Sprintf("elide_thinking=%v (server: %v)", *req.ElideThinking, s.cfg.Inference.ShouldElideThink()))
+		if req.BenchCustom != nil && req.BenchCustom.ElideThinking != nil && *req.BenchCustom.ElideThinking != s.cfg.Inference.ShouldElideThink() {
+			overrides = append(overrides, fmt.Sprintf("elide_thinking=%v (server: %v)", *req.BenchCustom.ElideThinking, s.cfg.Inference.ShouldElideThink()))
 		}
-		if req.FlashAttention != nil && *req.FlashAttention != s.cfg.Inference.UseFlashAttention() {
-			overrides = append(overrides, fmt.Sprintf("flash_attention=%v (server: %v)", *req.FlashAttention, s.cfg.Inference.UseFlashAttention()))
+		if req.BenchCustom != nil && req.BenchCustom.FlashAttention != nil && *req.BenchCustom.FlashAttention != s.cfg.Inference.UseFlashAttention() {
+			overrides = append(overrides, fmt.Sprintf("flash_attention=%v (server: %v)", *req.BenchCustom.FlashAttention, s.cfg.Inference.UseFlashAttention()))
+		}
+		if req.BenchCustom != nil && req.BenchCustom.EnableRLBOnPrefill {
+			overrides = append(overrides, "rlb.prefill=true")
+		}
+		if req.BenchCustom != nil && req.BenchCustom.UseRLBGen {
+			overrides = append(overrides, "rlb.decode=true")
+		}
+		if req.BenchCustom != nil && req.BenchCustom.UseRLBGen && req.BenchCustom.RLBAlpha != nil {
+			overrides = append(overrides, fmt.Sprintf("rlb.alpha=%.2f", *req.BenchCustom.RLBAlpha))
+		}
+		if req.BenchCustom != nil && req.BenchCustom.UseRLBGen && req.BenchCustom.RLBHaltRule != "" {
+			overrides = append(overrides, fmt.Sprintf("rlb.halt_rule=%q", req.BenchCustom.RLBHaltRule))
+		}
+		if req.BenchCustom != nil && req.BenchCustom.UseRLBGen && req.BenchCustom.RLBTerminalHaltRule != "" {
+			overrides = append(overrides, fmt.Sprintf("rlb.terminal_halt_rule=%q", req.BenchCustom.RLBTerminalHaltRule))
 		}
 		if len(overrides) > 0 {
 			log.Info("[req] param overrides: %s", strings.Join(overrides, ", "))
@@ -358,8 +424,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		sendChunk(deltaContent{Role: "assistant"}, nil)
 
 		elide := s.cfg.Inference.ShouldElideThink()
-		if req.ElideThinking != nil {
-			elide = *req.ElideThinking
+		if req.BenchCustom != nil && req.BenchCustom.ElideThinking != nil {
+			elide = *req.BenchCustom.ElideThinking
 		}
 
 		filter := &thinkFilter{open: eng.ThinkOpen(), close: eng.ThinkClose(), inThink: params.ThinkingEnabled}
@@ -374,8 +440,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return true
 		})
 		if metrics != nil {
-			log.Info("[metrics] prompt=%d completion=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f cull=%.1f%%",
-				metrics.PromptTokens, metrics.CompletionTokens,
+			log.Info("[metrics] prompt=%d completion=%d think=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f cull=%.1f%%",
+				metrics.PromptTokens, metrics.CompletionTokens, filter.thinkTokens,
 				float64(metrics.PrefillDuration.Microseconds())/1000,
 				float64(metrics.DecodeDuration.Microseconds())/1000,
 				float64(metrics.TotalDuration.Microseconds())/1000,
@@ -408,10 +474,20 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	} else {
 		// --- Non-streaming ---
-		var sb []byte
+		elide := s.cfg.Inference.ShouldElideThink()
+		if req.BenchCustom != nil && req.BenchCustom.ElideThinking != nil {
+			elide = *req.BenchCustom.ElideThinking
+		}
+
+		// Always feed tokens through the filter for think-token counting;
+		// also collect visible output when eliding.
+		filter := &thinkFilter{open: eng.ThinkOpen(), close: eng.ThinkClose(), inThink: params.ThinkingEnabled}
+		var visible strings.Builder
+		var raw []byte
 
 		metrics, genErr := eng.Generate(msgs, params, func(token string) bool {
-			sb = append(sb, token...)
+			visible.WriteString(filter.feed(token))
+			raw = append(raw, token...)
 			return true
 		})
 		if genErr != nil {
@@ -428,25 +504,18 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var content string
-		elide := s.cfg.Inference.ShouldElideThink()
-		if req.ElideThinking != nil {
-			elide = *req.ElideThinking
-		}
 		if elide {
-			filter := &thinkFilter{open: eng.ThinkOpen(), close: eng.ThinkClose(), inThink: params.ThinkingEnabled}
-			content = filter.feed(string(sb))
-			content += filter.flush()
-			content = strings.TrimSpace(content)
+			content = strings.TrimSpace(visible.String() + filter.flush())
 			if s.cfg.Inference.LogThinking {
 				filter.logThinking(req.Model)
 			}
 		} else {
-			content = strings.TrimSpace(string(sb))
+			content = strings.TrimSpace(string(raw))
 		}
 
 		if metrics != nil {
-			log.Info("[metrics] prompt=%d completion=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f cull=%.1f%%",
-				metrics.PromptTokens, metrics.CompletionTokens,
+			log.Info("[metrics] prompt=%d completion=%d think=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f cull=%.1f%%",
+				metrics.PromptTokens, metrics.CompletionTokens, filter.thinkTokens,
 				float64(metrics.PrefillDuration.Microseconds())/1000,
 				float64(metrics.DecodeDuration.Microseconds())/1000,
 				float64(metrics.TotalDuration.Microseconds())/1000,
@@ -476,6 +545,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			Usage: usage{
 				PromptTokens:           metrics.PromptTokens,
 				CompletionTokens:       metrics.CompletionTokens,
+				ThinkingTokens:         filter.thinkTokens,
 				TotalTokens:            metrics.PromptTokens + metrics.CompletionTokens,
 				PromptTokensPerSec:     metrics.PrefillTokensPerSec(),
 				CompletionTokensPerSec: metrics.TokensPerSec(),

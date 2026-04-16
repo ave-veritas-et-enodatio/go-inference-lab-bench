@@ -2,10 +2,11 @@ package arch
 
 import (
 	ggml "inference-lab-bench/internal/ggml"
+	"inference-lab-bench/internal/log"
 )
 
 // newZeroFilledInput creates a tensor, marks it as input, and appends it to the zero-fill list.
-func newZeroFilledInput(ctx *ggml.GraphContext, typ int, zeroFill *[]ggml.Tensor, dims ...int64) ggml.Tensor {
+func newZeroFilledInput(ctx *ggml.GraphContext, typ ggml.GGMLType, zeroFill *[]ggml.Tensor, dims ...int64) ggml.Tensor {
 	var t ggml.Tensor
 	switch len(dims) {
 	case 3:
@@ -42,6 +43,16 @@ func (b *GatedDeltaNetBuilder) BuildStateless(
 	ctx *ggml.GraphContext, cur ggml.Tensor, weights map[string]ggml.Tensor,
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	zeroFill *[]ggml.Tensor) ggml.Tensor {
+
+	// Validate required weights are present before passing anything to C FFI.
+	requiredWeights := []string{"attn_qkv", "attn_gate", "ssm_a", "ssm_alpha", "ssm_beta",
+		"ssm_conv1d", "ssm_dt_bias", "ssm_out"}
+	for _, w := range requiredWeights {
+		if weights[w].IsNil() {
+			log.Error("SSM builder: required weight %q is nil (model file missing weight)", w)
+			return ggml.NilTensor()
+		}
+	}
 
 	nTokens := inputs.NTokens
 	rmsEps := params.Floats["rms_eps"]
@@ -104,9 +115,14 @@ func (b *GatedDeltaNetBuilder) BuildStateless(
 
 	// Gated normalization
 	z4d := ggml.Reshape4D(ctx, z, hvDim, dtRank, nTokens, nSeqs)
-	cur = ggml.Mul(ctx, rmsNormApply(ctx, ssmOutput, weights["ssm_norm"], rmsEps), ggml.Silu(ctx, z4d))
+	normOut := ssmOutput
+	if !weights["ssm_norm"].IsNil() {
+		normOut = rmsNormApply(ctx, ssmOutput, weights["ssm_norm"], rmsEps)
+	}
+	cur = ggml.Mul(ctx, normOut, ggml.Silu(ctx, z4d))
 
 	cur = ggml.Reshape2D(ctx, cur, dInner, nTokens*nSeqs)
+
 	cur = ggml.MulMat(ctx, weights["ssm_out"], cur)
 	cur = ggml.Reshape2D(ctx, cur, nEmbd, nTokens*nSeqs)
 	return cur
@@ -116,6 +132,16 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 	ctx *ggml.GraphContext, gf *ggml.Graph, cur ggml.Tensor, weights map[string]ggml.Tensor,
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	cache *LayerCache) ggml.Tensor {
+
+	// Validate required weights are present before passing anything to C FFI.
+	requiredWeights := []string{"attn_qkv", "attn_gate", "ssm_a", "ssm_alpha", "ssm_beta",
+		"ssm_conv1d", "ssm_dt_bias", "ssm_out"}
+	for _, w := range requiredWeights {
+		if weights[w].IsNil() {
+			log.Error("SSM builder: required weight %q is nil (model file missing weight)", w)
+			return ggml.NilTensor()
+		}
+	}
 
 	nNew := inputs.NTokens
 	rmsEps := params.Floats["rms_eps"]
@@ -191,7 +217,11 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 
 	// Gated normalization
 	z4d := ggml.Reshape4D(ctx, z, hvDim, dtRank, nNew, nSeqs)
-	cur = ggml.Mul(ctx, rmsNormApply(ctx, ssmOutput, weights["ssm_norm"], rmsEps), ggml.Silu(ctx, z4d))
+	normOut := ssmOutput
+	if !weights["ssm_norm"].IsNil() {
+		normOut = rmsNormApply(ctx, ssmOutput, weights["ssm_norm"], rmsEps)
+	}
+	cur = ggml.Mul(ctx, normOut, ggml.Silu(ctx, z4d))
 
 	cur = ggml.Reshape2D(ctx, cur, dInner, nNew*nSeqs)
 	cur = ggml.MulMat(ctx, weights["ssm_out"], cur)

@@ -16,6 +16,11 @@ static_assert(GGML_GO_STATUS_SUCCESS == GGML_STATUS_SUCCESS, "GGML_GO_STATUS_SUC
 static_assert(GGML_GO_TYPE_F32 == GGML_TYPE_F32, "GGML_GO_TYPE_F32 must match GGML_TYPE_F32");
 static_assert(GGML_GO_TYPE_F16 == GGML_TYPE_F16, "GGML_GO_TYPE_F16 must match GGML_TYPE_F16");
 static_assert(GGML_GO_TYPE_I32 == GGML_TYPE_I32, "GGML_GO_TYPE_I32 must match GGML_TYPE_I32");
+static_assert(GGML_GO_TYPE_BF16 == GGML_TYPE_BF16, "GGML_GO_TYPE_BF16 must match GGML_TYPE_BF16");
+static_assert(GGML_GO_TYPE_Q4_0 == GGML_TYPE_Q4_0, "GGML_GO_TYPEQ4_0 must match GGML_TYPEQ4_0");
+static_assert(GGML_GO_TYPE_Q4_K == GGML_TYPE_Q4_K, "GGML_GO_TYPEQ4_K must match GGML_TYPEQ4_K");
+static_assert(GGML_GO_TYPE_Q6_K == GGML_TYPE_Q6_K, "GGML_GO_TYPEQ6_K must match GGML_TYPEQ6_K");
+
 static_assert(GGML_GO_ROPE_NEOX == GGML_GO_ROPE_NEOX, "GGML_GO_ROPE_NEOX must match GGML_ROPE_NEOX");
 
 static_assert(GGML_GO_BACKEND_DEVICE_TYPE_CPU == GGML_BACKEND_DEVICE_TYPE_CPU, "GGML_GO_BACKEND_DEVICE_TYPE_CPU must match GGML_BACKEND_DEVICE_TYPE_CPU");
@@ -62,10 +67,14 @@ ggml_go_tensor ggml_go_add(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor
 ggml_go_tensor ggml_go_mul(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b)        { return ggml_mul(CTX(ctx), T(a), T(b)); }
 ggml_go_tensor ggml_go_div(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b)        { return ggml_div(CTX(ctx), T(a), T(b)); }
 ggml_go_tensor ggml_go_scale(ggml_go_context ctx, ggml_go_tensor a, float s)                { return ggml_scale(CTX(ctx), T(a), s); }
+ggml_go_tensor ggml_go_scale_bias(ggml_go_context ctx, ggml_go_tensor a, float s, float b)  { return ggml_scale_bias(CTX(ctx), T(a), s, b); }
 ggml_go_tensor ggml_go_clamp(ggml_go_context ctx, ggml_go_tensor a, float min_val, float max_val) { return ggml_clamp(CTX(ctx), T(a), min_val, max_val); }
 ggml_go_tensor ggml_go_sum_rows(ggml_go_context ctx, ggml_go_tensor a)                     { return ggml_sum_rows(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_sum(ggml_go_context ctx, ggml_go_tensor a)                          { return ggml_sum(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_sqrt(ggml_go_context ctx, ggml_go_tensor a)                         { return ggml_sqrt(CTX(ctx), T(a)); }
+ggml_go_tensor ggml_go_exp(ggml_go_context ctx, ggml_go_tensor a)                          { return ggml_exp(CTX(ctx), T(a)); }
+ggml_go_tensor ggml_go_neg(ggml_go_context ctx, ggml_go_tensor a)                          { return ggml_neg(CTX(ctx), T(a)); }
+
 ggml_go_tensor ggml_go_mul_mat(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b)    { return ggml_mul_mat(CTX(ctx), T(a), T(b)); }
 ggml_go_tensor ggml_go_mul_mat_id(ggml_go_context ctx, ggml_go_tensor as, ggml_go_tensor b, ggml_go_tensor ids) { return ggml_mul_mat_id(CTX(ctx), T(as), T(b), T(ids)); }
 
@@ -132,12 +141,32 @@ size_t  ggml_go_row_size(int type, int64_t ne)     { return ggml_row_size((enum 
 size_t  ggml_go_tensor_overhead(void)              { return ggml_tensor_overhead(); }
 int     ggml_go_tensor_type(ggml_go_tensor t)      { return (int)T(t)->type; }
 
+int     ggml_go_validate_row_data(int type, const void* data, size_t nbytes) {
+    return ggml_validate_row_data((enum ggml_type)type, data, nbytes) ? 1 : 0;
+}
+
+/* --- Graph compute (CPU-only, no backend/scheduler needed) --- */
+void ggml_go_graph_compute(ggml_go_context ctx, ggml_go_graph g, int n_threads) {
+    ggml_graph_compute_with_ctx(CTX(ctx), G(g), n_threads);
+}
+
+/* --- Tensor data pointer access (sets direct data pointer, no backend copy) --- */
+void* ggml_go_tensor_data(ggml_go_tensor t)          { return T(t)->data; }
+void  ggml_go_tensor_set_data(ggml_go_tensor t, void* data) { T(t)->data = data; }
+
+/* --- Graph overhead accounting --- */
+size_t ggml_go_graph_overhead_custom(int size, int grads) {
+    return ggml_graph_overhead_custom((size_t)size, grads != 0);
+}
+
 /* --- Context lifecycle --- */
-ggml_go_context ggml_go_init(size_t mem_size) {
-    struct ggml_init_params p = { .mem_size = mem_size, .mem_buffer = NULL, .no_alloc = true };
+ggml_go_context ggml_go_init(size_t mem_size, int no_alloc) {
+    struct ggml_init_params p = { .mem_size = mem_size, .mem_buffer = NULL, .no_alloc = no_alloc };
     return ggml_init(p);
 }
-void ggml_go_free(ggml_go_context ctx) { ggml_free(CTX(ctx)); }
+void   ggml_go_free(ggml_go_context ctx)     { ggml_free(CTX(ctx)); }
+void   ggml_go_reset(ggml_go_context ctx)    { ggml_reset(CTX(ctx)); }
+size_t ggml_go_used_mem(ggml_go_context ctx) { return ggml_used_mem(CTX(ctx)); }
 
 /* --- Graph --- */
 ggml_go_graph ggml_go_new_graph(ggml_go_context ctx, int size)          { return ggml_new_graph_custom(CTX(ctx), size, false); }
@@ -156,6 +185,16 @@ void             ggml_go_buffer_clear(ggml_go_buffer buf, uint8_t v)  { ggml_bac
 /* --- Backend tensor I/O --- */
 void ggml_go_tensor_set(ggml_go_tensor t, const void* data, size_t offset, size_t size) { ggml_backend_tensor_set(T(t), data, offset, size); }
 void ggml_go_tensor_get(ggml_go_tensor t, void* data, size_t offset, size_t size)       { ggml_backend_tensor_get(T(t), data, offset, size); }
+
+/* Mirrors the ggml_backend_tensor_set/get null check, including the view_src
+ * indirection, so callers can skip I/O on tensors a scheduler decided not
+ * to allocate (e.g. inputs referenced by no op in a per-layer graph). */
+int ggml_go_tensor_has_buffer(ggml_go_tensor t) {
+    if (t == NULL) return 0;
+    struct ggml_tensor* tt = T(t);
+    struct ggml_backend_buffer* buf = tt->view_src ? tt->view_src->buffer : tt->buffer;
+    return buf != NULL;
+}
 
 /* --- Scheduler --- */
 ggml_go_sched ggml_go_sched_new(ggml_go_backend b0, ggml_go_buf_type bt0,

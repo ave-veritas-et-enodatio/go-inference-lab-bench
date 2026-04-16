@@ -14,10 +14,12 @@ import (
 
 // WriteCullDiagnostics saves the culled module map and SVG diagram alongside the model GGUF.
 // Writes timestamped files plus non-timestamped "latest" copies for browser refresh.
-func WriteCullDiagnostics(mm *arch.ModuleMap, modelPath string, tensorDims arch.TensorDimsMap, engagement *arch.EngagementData) {
-	paths := util.ResolvePaths()
+// diagDir is the output directory, injected by the caller (engine) — it was
+// resolved by the cobra entry point so this utility does not need to call
+// util.ResolvePaths itself.
+func WriteCullDiagnostics(diagDir string, mm *arch.ModuleMap, modelPath string, tensorDims arch.TensorDimsMap, engagement *arch.EngagementData) {
 	base := strings.TrimSuffix(filepath.Base(modelPath), filepath.Ext(modelPath))
-	base = filepath.Join(paths.DiagDir, base)
+	base = filepath.Join(diagDir, base)
 
 	ts := time.Now().Format("20060102-150405")
 
@@ -48,15 +50,15 @@ func WriteCullDiagnostics(mm *arch.ModuleMap, modelPath string, tensorDims arch.
 // WriteEngagementDiag writes an engagement-shaded module map SVG and an HTML auto-refresh
 // wrapper to the diagnostics directory. Called after stateless inference to visualize
 // per-layer engagement. The HTML file polls the SVG every second for live updates.
-func WriteEngagementDiag(mm *arch.ModuleMap, modelPath string, tensorDims arch.TensorDimsMap, engagement *arch.EngagementData) {
+// diagDir is the output directory, injected by the caller (see WriteCullDiagnostics).
+func WriteEngagementDiag(diagDir string, mm *arch.ModuleMap, modelPath string, tensorDims arch.TensorDimsMap, engagement *arch.EngagementData) {
 	if mm == nil {
 		return
 	}
-	paths := util.ResolvePaths()
-	os.MkdirAll(paths.DiagDir, 0755) // ensure dir exists
+	os.MkdirAll(diagDir, 0755) // ensure dir exists
 
 	stem := strings.TrimSuffix(filepath.Base(modelPath), filepath.Ext(modelPath))
-	base := filepath.Join(paths.DiagDir, stem)
+	base := filepath.Join(diagDir, stem)
 
 	svgPath := base + ".engagement.svg"
 	htmlPath := base + ".engagement.html"

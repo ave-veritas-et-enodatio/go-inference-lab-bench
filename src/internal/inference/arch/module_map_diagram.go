@@ -564,9 +564,6 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 						fmt.Fprintf(&sb, "  <text class=\"tlbl\" x=\"%d\" y=\"%d\">%s</text>\n",
 							bX+bs/2, bY+bs/2, lbl)
 					}
-					// TODO: trim shading for 3D tensor box lid — shade near/far fractions
-					// of the parallelogram lid to represent expert-axis trim. Deferred
-					// until an MoE model is available for testing.
 				}
 			}
 			if ns := len(sharedWts); ns > 0 {

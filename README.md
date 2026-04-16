@@ -16,6 +16,7 @@ From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-mod
 - Diffusion generation for LLaDA models — iterative masked denoising with configurable steps and block length
 - SVG architecture visualizer: `bench gen-arch-diagram` generates `*.arch.svg` and `*.layers.svg` from TOML
 - Inference equivalence testing against llama-server (validates logprobs match within FP variance)
+- Support for swiftensor models
 
 Known working models:
 - [qwen35-9b-opus46-mix-i1-Q4_K_M.gguf](https://huggingface.co/slyfox1186/qwen35-9b-opus46-mix-i1-GGUF/resolve/main/qwen35-9b-opus46-mix-i1-Q4_K_M.gguf) - hybrid SSM + attention
@@ -24,11 +25,24 @@ Known working models:
 - [gemma-4-E4B-it-Q4_K_M.gguf](https://huggingface.co/lmstudio-community/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf) — ISWA + GeGLU
 - [gemma-4-26B-A4B-it-MXFP4_MOE](https://huggingface.co/noctrex/gemma-4-26B-A4B-it-MXFP4_MOE-GGUF/resolve/main/gemma-4-26B-A4B-it-MXFP4_MOE.gguf) — MoE ISWA + GeGLU
 - [LLaDA-MoE-7B-A1B-Instruct.i1-Q4_K_M](https://huggingface.co/mradermacher/LLaDA-MoE-7B-A1B-Instruct-i1-GGUF/resolve/main/LLaDA-MoE-7B-A1B-Instruct.i1-Q4_K_M.gguf) — MoE, Text Diffusion
-- [LLaDA-8B-Instruct.i1-Q4_K_M.gguf](https://huggingface.co/mradermacher/LLaDA-8B-Instruct-i1-GGUF/resolve/main/LLaDA-8B-Instruct.i1-Q4_K_M.gguf) — Dense, Text Diffusion (built; live model test pending)
+- [LLaDA-8B-Instruct.i1-Q4_K_M.gguf](https://huggingface.co/mradermacher/LLaDA-8B-Instruct-i1-GGUF/resolve/main/LLaDA-8B-Instruct.i1-Q4_K_M.gguf) — Dense, Text Diffusion
+- [Qwen3.5-9B.st/](https://www.modelscope.cn/Qwen/Qwen3.5-9B.git) - (Instruct) Official safetensors, hybrid SSM + attention, git lfs needed
+- [LLaDA-8B-Instruct](https://huggingface.co/GSAI-ML/LLaDA-8B-Instruct/tree/main) - Official safetensors, text diffusion, git xet needed
 
 For architecture details, invariants, and development workflow: **[AGENTS.md](AGENTS.md)** and **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ## Quick Start
+
+- download one or more gguf model to `models/[name].gguf`
+- download one or more safetensors file set to `models/[name].st/`
+- after adding any `models/[name].st/` directory, run `make st-tok-ggufs` to
+  build the required `tokenizer.gguf` sidecar in each `.st/` dir (safetensors
+  files carry no tokenizer; bench loads it from this sidecar). `make serve`
+  runs this automatically, but `./bin/bench serve-api` directly will not.
+- if the same `[name]` exists as both a `.gguf` and a `.st/` the .gguf will be used
+- there's also a make rule for generating `[name].gguf` from `[name].st/`
+  - `make models/[name].gguf`
+
 
 ```bash
 # Build (first run compiles ggml, ~1 min)

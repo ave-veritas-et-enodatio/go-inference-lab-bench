@@ -29,7 +29,10 @@ var (
 )
 
 func init() {
-	paths := util.ResolvePaths()
+	paths, err := util.ResolvePaths()
+	if err != nil {
+		log.Fatal("resolve paths: %v", err)
+	}
 	serveAPICmd.Flags().StringVar(&apiConfigPath, "config", filepath.Join(paths.ConfigDir, "api_config.toml"), "path to API config file")
 	serveAPICmd.Flags().StringVar(&apiHost, "host", "", "override listen host")
 	serveAPICmd.Flags().IntVar(&apiPort, "port", 0, "override listen port")
@@ -48,7 +51,10 @@ func runServeAPI(cmd *cobra.Command, args []string) {
 		log.Fatal("init logger: %v", err)
 	}
 	ggmlmod.InitLogging()
-	paths := util.ResolvePaths()
+	paths, err := util.ResolvePaths()
+	if err != nil {
+		log.Fatal("resolve paths: %v", err)
+	}
 	if err := util.EnsureDiagDir(paths); err != nil {
 		log.Fatal("pre-init: %v", err)
 	}
@@ -64,16 +70,12 @@ func runServeAPI(cmd *cobra.Command, args []string) {
 		cfg.Server.Port = apiPort
 	}
 
-	modelsDir := cfg.Models.Directory
-	if !filepath.IsAbs(modelsDir) {
-		modelsDir = filepath.Join(paths.ExeDir, modelsDir)
-	}
-	manager, err := model.NewManager(modelsDir)
+	manager, err := model.NewManager(paths.ModelsDir)
 	if err != nil {
 		log.Fatal("initializing model manager: %v", err)
 	}
 
-	srv := apiserver.NewServer(cfg, manager)
+	srv := apiserver.NewServer(paths, cfg, manager)
 	if err := srv.Run(); err != nil {
 		log.Fatal("server error: %v", err)
 	}

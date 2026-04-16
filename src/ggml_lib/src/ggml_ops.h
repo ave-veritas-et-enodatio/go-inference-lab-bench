@@ -26,6 +26,10 @@ enum {
     GGML_GO_TYPE_F32  = 0,
     GGML_GO_TYPE_F16  = 1,
     GGML_GO_TYPE_I32  = 26,
+    GGML_GO_TYPE_BF16 = 30,
+    GGML_GO_TYPE_Q4_0  = 2,
+    GGML_GO_TYPE_Q4_K  = 12,
+    GGML_GO_TYPE_Q6_K  = 14,
 };
 enum {
     GGML_GO_ROPE_NEOX = 2,
@@ -73,12 +77,15 @@ ggml_go_tensor ggml_go_add(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor
 ggml_go_tensor ggml_go_mul(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b);
 ggml_go_tensor ggml_go_div(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b);
 ggml_go_tensor ggml_go_scale(ggml_go_context ctx, ggml_go_tensor a, float s);
+ggml_go_tensor ggml_go_scale_bias(ggml_go_context ctx, ggml_go_tensor a, float s, float b);
 ggml_go_tensor ggml_go_clamp(ggml_go_context ctx, ggml_go_tensor a, float min_val, float max_val);
 ggml_go_tensor ggml_go_sum_rows(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_sum(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_sqrt(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_mul_mat(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b);
 ggml_go_tensor ggml_go_mul_mat_id(ggml_go_context ctx, ggml_go_tensor as, ggml_go_tensor b, ggml_go_tensor ids);
+ggml_go_tensor ggml_go_exp(ggml_go_context ctx, ggml_go_tensor a);
+ggml_go_tensor ggml_go_neg(ggml_go_context ctx, ggml_go_tensor a);
 
 /* --- Normalization --- */
 ggml_go_tensor ggml_go_rms_norm(ggml_go_context ctx, ggml_go_tensor a, float eps);
@@ -121,6 +128,13 @@ ggml_go_tensor ggml_go_cast(ggml_go_context ctx, ggml_go_tensor a, int type);
 /* --- Precision --- */
 void ggml_go_mul_mat_set_prec_f32(ggml_go_tensor t);
 
+/* --- Graph compute (CPU-only, no backend/scheduler needed) --- */
+void ggml_go_graph_compute(ggml_go_context ctx, ggml_go_graph g, int n_threads);
+
+/* --- Tensor data pointer access --- */
+void*    ggml_go_tensor_data(ggml_go_tensor t);
+void     ggml_go_tensor_set_data(ggml_go_tensor t, void* data);
+
 /* --- Tensor flags --- */
 void ggml_go_set_input(ggml_go_tensor t);
 void ggml_go_set_output(ggml_go_tensor t);
@@ -135,9 +149,21 @@ size_t  ggml_go_row_size(int type, int64_t ne);
 size_t  ggml_go_tensor_overhead(void);
 int     ggml_go_tensor_type(ggml_go_tensor t);
 
+/* Validates raw tensor bytes for a given ggml_type. For quantized types this
+ * inspects each block's scale/delta fields for NaN/Inf at near-zero cost; for
+ * float types it scans every element. Returns 1 on success, 0 on failure. The
+ * underlying ggml_validate_row_data prints a diagnostic line to stderr
+ * identifying the offending block when validation fails. */
+int     ggml_go_validate_row_data(int type, const void* data, size_t nbytes);
+
+/* --- Graph overhead accounting --- */
+size_t ggml_go_graph_overhead_custom(int size, int grads);
+
 /* --- Context lifecycle --- */
-ggml_go_context ggml_go_init(size_t mem_size);
+ggml_go_context ggml_go_init(size_t mem_size, int no_alloc);
 void            ggml_go_free(ggml_go_context ctx);
+void            ggml_go_reset(ggml_go_context ctx);
+size_t          ggml_go_used_mem(ggml_go_context ctx);
 
 /* --- Graph --- */
 ggml_go_graph   ggml_go_new_graph(ggml_go_context ctx, int size);
@@ -156,6 +182,13 @@ void             ggml_go_buffer_clear(ggml_go_buffer buf, uint8_t value);
 /* --- Backend tensor I/O --- */
 void ggml_go_tensor_set(ggml_go_tensor t, const void* data, size_t offset, size_t size);
 void ggml_go_tensor_get(ggml_go_tensor t, void* data, size_t offset, size_t size);
+
+/* Returns non-zero if the tensor has a backing buffer (i.e. has been
+ * allocated by a scheduler or context). Mirrors the null-check inside
+ * ggml_backend_tensor_set/get, including the view_src indirection, so
+ * callers can safely skip I/O on tensors the scheduler decided were
+ * unreferenced and therefore didn't allocate. */
+int  ggml_go_tensor_has_buffer(ggml_go_tensor t);
 
 /* --- Scheduler --- */
 ggml_go_sched ggml_go_sched_new(ggml_go_backend b0, ggml_go_buf_type bt0,

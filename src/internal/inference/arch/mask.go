@@ -9,6 +9,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	ggml "inference-lab-bench/internal/ggml"
+	"inference-lab-bench/internal/log"
 )
 
 // CullingMask defines which weight tensors are culled (zeroed out).
@@ -72,6 +73,10 @@ func (cm *CullingMask) NumZeroed() int {
 // No mask: returns the raw weight map from the store (zero overhead).
 func (m *GenericModel) MaskedLayer(layerIdx int, mask *CullingMask) map[string]ggml.Tensor {
 	lt := m.Store.Layer(layerIdx)
+	if lt == nil {
+		log.Error("MaskedLayer: layer %d out of bounds (no layer data available)", layerIdx)
+		return nil
+	}
 	if mask == nil || len(mask.zeroSet) == 0 {
 		return lt
 	}
@@ -120,7 +125,7 @@ func resolveGGUFName(lw ResolvedLayerWeights, logicalName string) string {
 
 // makeTensorFromSpec creates a new graph-context tensor from explicit type and dimension parameters.
 // Unused dimensions should be 1. Used for Go-parser tensor creation.
-func makeTensorFromSpec(gctx *ggml.GraphContext, typ int, ne0, ne1, ne2, ne3 int64) ggml.Tensor {
+func makeTensorFromSpec(gctx *ggml.GraphContext, typ ggml.GGMLType, ne0, ne1, ne2, ne3 int64) ggml.Tensor {
 	if ne3 > 1 {
 		return ggml.NewTensor4D(gctx, typ, ne0, ne1, ne2, ne3)
 	} else if ne2 > 1 {

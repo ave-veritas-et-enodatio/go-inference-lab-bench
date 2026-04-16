@@ -24,7 +24,11 @@ func (ws *WeightStore) Global(name string) ggml.Tensor {
 }
 
 // Layer returns the weight tensor map for a given layer index.
+// Returns nil for out-of-bounds indices.
 func (ws *WeightStore) Layer(idx int) map[string]ggml.Tensor {
+	if idx < 0 || idx >= len(ws.layers) {
+		return nil
+	}
 	return ws.layers[idx]
 }
 

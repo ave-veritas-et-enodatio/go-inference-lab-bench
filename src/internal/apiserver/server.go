@@ -11,9 +11,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"inference-lab-bench/internal/inference"
-	log "inference-lab-bench/internal/log"
+	"inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/model"
 	"inference-lab-bench/internal/util"
+	"inference-lab-bench/internal/ggml"
 )
 
 const (
@@ -27,14 +28,16 @@ const (
 type Server struct {
 	cfg        *Config
 	manager    *model.Manager
+	enginesMu  sync.Mutex                  // mutex protects engines against concurrent request handling
 	engines    map[string]*inference.Engine // model ID → loaded engine
+	paths      util.BenchPaths              // resolved paths, injected by the cobra entry point
 	archDir    string                       // absolute path to arch definitions
 	httpServer *http.Server                 // for graceful shutdown
 	pending    sync.WaitGroup               // tracks in-flight inference requests
 }
 
-func NewServer(cfg *Config, manager *model.Manager) *Server {
-	absModelsDir := cfg.Models.Directory
+func NewServer(paths util.BenchPaths, cfg *Config, manager *model.Manager) *Server {
+	absModelsDir := paths.ModelsDir
 	if !filepath.IsAbs(absModelsDir) {
 		if abs, err := filepath.Abs(absModelsDir); err == nil {
 			absModelsDir = abs
@@ -44,13 +47,16 @@ func NewServer(cfg *Config, manager *model.Manager) *Server {
 		cfg:     cfg,
 		manager: manager,
 		engines: make(map[string]*inference.Engine),
-		archDir: filepath.Join(absModelsDir, "arch"),
+		paths:   paths,
+		archDir: paths.ArchDir,
 	}
 }
 
 // evictEngine closes and removes the engine for modelID. Safe to call if the
 // engine is not loaded. Used to recover from a poisoned Metal backend.
 func (s *Server) evictEngine(modelID string) {
+	s.enginesMu.Lock()
+	defer s.enginesMu.Unlock()
 	if eng, ok := s.engines[modelID]; ok {
 		log.Warn("evicting poisoned engine for %s", modelID)
 		eng.Close()
@@ -61,6 +67,8 @@ func (s *Server) evictEngine(modelID string) {
 // Engine returns or lazily creates an inference engine for the given model ID.
 // Only one engine is kept resident at a time — switching models evicts the previous one.
 func (s *Server) Engine(modelID string) (*inference.Engine, error) {
+	s.enginesMu.Lock()
+	defer s.enginesMu.Unlock()
 	if eng, ok := s.engines[modelID]; ok {
 		return eng, nil
 	}
@@ -78,13 +86,44 @@ func (s *Server) Engine(modelID string) (*inference.Engine, error) {
 		}
 	}
 	log.Info("loading inference engine for %s ...", modelID)
-	eng, err := inference.NewEngine(info, s.archDir, s.cfg.Inference.MaxSeqLen, s.cfg.Inference.UseFlashAttention())
+	eng, err := inference.NewEngine(s.memoryStatsLocked(), info, s.archDir, s.paths.DiagDir, s.cfg.Inference.MaxSeqLen, s.cfg.Inference.UseFlashAttention())
 	if err != nil {
 		return nil, fmt.Errorf("inference engine: %w", err)
 	}
 	s.engines[modelID] = eng
 	log.Info("inference engine ready for %s", modelID)
 	return eng, nil
+}
+
+func (s *Server) MemoryStats() ggml.MemoryStats {
+	s.enginesMu.Lock()
+	defer s.enginesMu.Unlock()
+	return s.memoryStatsLocked()
+}
+
+// memoryStatsLocked collects memory stats from loaded engines.
+// Caller must hold enginesMu.
+func (s *Server) memoryStatsLocked() ggml.MemoryStats {
+	var memStats ggml.MemoryStats
+
+	if len(s.engines) > 0 {
+		for _, eng := range s.engines {
+			engStats := eng.MemoryStats()
+			memStats.VRAM.Allocated += engStats.VRAM.Allocated
+			memStats.VRAM.Total = engStats.VRAM.Total
+			memStats.RAM.Allocated += engStats.RAM.Allocated
+			memStats.RAM.Total = engStats.RAM.Total
+			memStats.IsUMA = memStats.IsUMA || engStats.IsUMA
+		}
+	} else {
+		gpu := ggml.GPUInit()
+		defer gpu.Free()
+		cpu := ggml.CPUInit()
+		defer cpu.Free()
+		memStats = ggml.DevMemory(gpu, cpu)
+	}
+
+	return memStats
 }
 
 func (s *Server) Run() error {
@@ -98,8 +137,9 @@ func (s *Server) Run() error {
 	r.Get(ctlRoot, s.handleCtl)
 
 	// Diagnostic file explorer: serves contents of bin/diag/
-	paths := util.ResolvePaths()
-	diagFS := http.StripPrefix("/diag/", http.FileServer(http.Dir(paths.DiagDir)))
+	// Paths were resolved at process start by the cobra entry point and
+	// injected via NewServer; s.paths is the cached, validated BenchPaths.
+	diagFS := http.StripPrefix("/diag/", http.FileServer(http.Dir(s.paths.DiagDir)))
 	r.Get(diagRoot+"*", diagFS.ServeHTTP)
 	r.Get(diagRoot, diagFS.ServeHTTP)
 

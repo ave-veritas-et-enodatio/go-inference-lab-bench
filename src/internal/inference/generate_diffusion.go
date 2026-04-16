@@ -156,6 +156,9 @@ func (e *Engine) generateDiffusion(
 			if err != nil {
 				return fmt.Errorf("diffusion block %d step %d forward: %w", blockNum, step, err)
 			}
+			if err := ValidateLogits(allLogits); err != nil {
+				return fmt.Errorf("diffusion block %d step %d: %w", blockNum, step, err)
+			}
 			lastAllLogits = allLogits
 			nVocab := len(allLogits) / len(seq)
 			if nVocab <= 0 {
@@ -237,6 +240,9 @@ func (e *Engine) generateDiffusion(
 		lpl, err := e.model.ForwardStatelessAllLogits(seq, mask, *params.FlashAttention)
 		if err != nil {
 			return fmt.Errorf("diffusion logprob forward: %w", err)
+		}
+		if err := ValidateLogits(lpl); err != nil {
+			return fmt.Errorf("diffusion logprob: %w", err)
 		}
 		logprobLogits = lpl
 		logprobNVocab = len(lpl) / len(seq)

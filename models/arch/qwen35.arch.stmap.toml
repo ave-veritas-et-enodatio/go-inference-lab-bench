@@ -1,0 +1,185 @@
+# Qwen3.5 stmap — maps HuggingFace tensor/param names to our logical names.
+# HF class: Qwen3_5ForConditionalGeneration
+# Arch name: qwen35
+#
+# Note: config.json params are nested under text_config (see params section).
+# Note: ssm_alpha.weight / ssm_beta.weight are direct row-permutations of
+# linear_attn.in_proj_a / in_proj_b (not QR decomposition). The permutation
+# reorders V heads from HF grouped layout to ggml tiled layout — see the
+# [[transforms]] sections below for the full set of affected tensors.
+
+[architecture]
+hf_class = "Qwen3_5ForConditionalGeneration"
+
+[params]
+"text_config.num_hidden_layers"       = "qwen35.block_count"
+"text_config.hidden_size"             = "qwen35.embedding_length"
+"text_config.intermediate_size"       = "qwen35.feed_forward_length"
+"text_config.num_attention_heads"     = "qwen35.attention.head_count"
+"text_config.num_key_value_heads"     = "qwen35.attention.head_count_kv"
+"text_config.rms_norm_eps"            = "qwen35.attention.layer_norm_rms_epsilon"
+"text_config.max_position_embeddings" = "qwen35.context_length"
+"text_config.full_attention_interval"  = "qwen35.full_attention_interval"
+"text_config.linear_conv_kernel_dim"   = "qwen35.ssm.conv_kernel"
+"text_config.linear_key_head_dim"      = "qwen35.ssm.state_size"
+"text_config.linear_num_key_heads"     = "qwen35.ssm.group_count"
+"text_config.linear_num_value_heads"   = "qwen35.ssm.time_step_rank"
+"text_config.rope_parameters.rope_theta" = "qwen35.rope.freq_base"
+
+[params.defaults]
+n_kv_heads = "n_heads"
+
+[layer_prefix]
+hf = "model.language_model.layers.{N}."
+
+[tensors]
+"attn_norm.weight"           = "input_layernorm.weight"
+"post_attention_norm.weight" = "post_attention_layernorm.weight"
+"ffn_gate.weight"            = "mlp.gate_proj.weight"
+"ffn_up.weight"              = "mlp.up_proj.weight"
+"ffn_down.weight"            = "mlp.down_proj.weight"
+
+# SSM / recurrent block weights (linear_attn.* prefix in safetensors)
+"attn_qkv.weight"     = "linear_attn.in_proj_qkv.weight"
+"attn_gate.weight"    = "linear_attn.in_proj_z.weight"
+"ssm_alpha.weight"    = "linear_attn.in_proj_a.weight"
+"ssm_beta.weight"     = "linear_attn.in_proj_b.weight"
+"ssm_a"               = "linear_attn.A_log"
+"ssm_conv1d.weight"   = "linear_attn.conv1d.weight"
+"ssm_dt.bias"         = "linear_attn.dt_bias"
+"ssm_norm.weight"     = "linear_attn.norm.weight"
+"ssm_out.weight"      = "linear_attn.out_proj.weight"
+
+# Tensor reorder / transform details are declared in [[transforms]] below.
+# See tools/convert_hf_to_gguf.py: Qwen3NextModel.modify_tensors and
+# _LinearAttentionVReorderBase.modify_tensors for the reference semantics.
+
+# Full attention block weights (self_attn.* prefix, every 4th layer)
+"attn_q.weight"      = "self_attn.q_proj.weight"
+"attn_k.weight"      = "self_attn.k_proj.weight"
+"attn_v.weight"      = "self_attn.v_proj.weight"
+"attn_output.weight" = "self_attn.o_proj.weight"
+"attn_q_norm.weight" = "self_attn.q_norm.weight"
+"attn_k_norm.weight" = "self_attn.k_norm.weight"
+
+[tensors.global]
+"token_embd.weight"  = "model.language_model.embed_tokens.weight"
+"output_norm.weight" = "model.language_model.norm.weight"
+"output.weight"      = "lm_head.weight"
+
+# Derived GGUF metadata values — the converter computes these from config.json
+# fields but not as simple 1:1 remappings:
+#   key_length           = head_dim (256) — the converter writes head_dim as key_length
+#   value_length         = head_dim (256) — same for value_length
+#   ssm_inner_size       = linear_value_head_dim × linear_num_value_heads (= 4096 for Qwen3.5)
+#   rope.dimension_count = head_dim × partial_rotary_factor (= 256 × 0.25 = 64 for Qwen3.5);
+#                          this is the number of head-dim elements RoPE rotates, not
+#                          max_position_embeddings which is qwen35.context_length.
+#   rope.dimension_sections = mrope_section + trailing 0
+[gguf_metadata]
+"qwen35.ssm.inner_size"          = 4096
+"qwen35.attention.key_length"    = 256
+"qwen35.attention.value_length"  = 256
+"qwen35.rope.dimension_count"    = 64
+"qwen35.rope.dimension_sections" = [11, 11, 10, 0]
+
+# ---------------------------------------------------------------------------
+# Tensor transforms — applied in declared order to the F32 working buffer
+# after reading from safetensors, before casting to the final ggml type.
+#
+# Equivalent to tools/convert_hf_to_gguf.py transforms:
+#   - Qwen3NextModel.modify_tensors:        +1 on norm.weight, -exp on A_log
+#   - _LinearAttentionVReorderBase:         V-head grouped→tiled reorder
+#
+# Short names in `apply` match either the global tensor name or the
+# per-layer suffix ("attn_norm.weight" matches "blk.N.attn_norm.weight").
+#
+# Qwen3.5 V-head layout constants:
+#   num_k_heads = 16  (linear_num_key_heads)
+#   num_v_per_k = 2   (linear_num_value_heads / linear_num_key_heads = 32/16)
+#   head_v_dim  = 128 (linear_value_head_dim; ssm_inner_size / num_v_heads = 4096/32)
+# ---------------------------------------------------------------------------
+
+# Qwen3NextModel adds +1 to every norm.weight tensor EXCEPT
+# linear_attn.norm.weight (= ssm_norm.weight in GGUF), which is intentionally
+# excluded because it's written verbatim by the model.
+[[transforms]]
+op = "add_scalar"
+value = 1.0
+apply = [
+  "attn_norm.weight",
+  "post_attention_norm.weight",
+  "attn_q_norm.weight",
+  "attn_k_norm.weight",
+  "output_norm.weight",
+]
+
+# V-head reorder for scalar-per-head tensors (head_dim = 1).
+# Covers the 1D tensors ssm_a, ssm_dt.bias and the 2D rank-1 projection
+# matrices ssm_alpha.weight, ssm_beta.weight. For 2D cases the permuted axis
+# is ne[1] (num_v_heads rows), each "row" = ne[0] elements.
+[[transforms]]
+op = "reorder_v_heads"
+axis = "row"
+num_k_heads = 16
+num_v_per_k = 2
+head_dim = 1
+apply = [
+  "ssm_a",
+  "ssm_dt.bias",
+  "ssm_alpha.weight",
+  "ssm_beta.weight",
+]
+
+# V-head reorder for in_proj_z: entire tensor, head_dim = head_v_dim (128).
+# ne[1] = num_v_heads * head_v_dim = 32 * 128 = 4096, all rows are V.
+[[transforms]]
+op = "reorder_v_heads"
+axis = "row"
+num_k_heads = 16
+num_v_per_k = 2
+head_dim = 128
+apply = ["attn_gate.weight"]
+
+# V-head reorder for the V portion of in_proj_qkv.
+# HF layout: Q rows (0..2047), K rows (2048..4095), V rows (4096..8191).
+# Only the V block (rows 4096..8191) is reordered; head_dim = 128.
+[[transforms]]
+op = "reorder_v_heads"
+axis = "row"
+num_k_heads = 16
+num_v_per_k = 2
+head_dim = 128
+offset_rows = 4096
+apply = ["attn_qkv.weight"]
+
+# V-head reorder for the V channels of conv1d.
+# Raw HF shape [8192, 1, 4] squeezes to [8192, 4] → ne[0]=4, ne[1]=8192.
+# First 4096 channels are QK (Q+K = 2 * num_k_heads * head_k_dim = 2*2048),
+# the remaining 4096 are V channels; head_dim = head_v_dim = 128.
+[[transforms]]
+op = "reorder_v_heads"
+axis = "row"
+num_k_heads = 16
+num_v_per_k = 2
+head_dim = 128
+offset_rows = 4096
+apply = ["ssm_conv1d.weight"]
+
+# V-head reorder for out_proj: permute the INPUT dim (ne[0] = columns).
+# Each output row has num_v_heads * head_v_dim = 4096 columns that need
+# the grouped→tiled permutation applied independently.
+[[transforms]]
+op = "reorder_v_heads"
+axis = "col"
+num_k_heads = 16
+num_v_per_k = 2
+head_dim = 128
+apply = ["ssm_out.weight"]
+
+# A_log = -exp(A_log). Applied AFTER the reorder above (matches converter
+# order: the V-head reorder subclass runs first, then the parent
+# Qwen3NextModel.modify_tensors does the -exp).
+[[transforms]]
+op = "neg_exp"
+apply = ["ssm_a"]
