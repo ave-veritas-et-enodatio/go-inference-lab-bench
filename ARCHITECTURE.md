@@ -58,12 +58,13 @@ Zero-external-dependency. Imports stdlib only — no project package may be impo
 Loads `config/api_config.toml` into `Config`: `[server]`, `[models]`, `[inference]` subsections. Per-request JSON fields override server defaults for `cull_method`, `enable_thinking`, `elide_thinking`.
 
 ### `internal/model/`
-- `gguf.go` — GGUF header scanning → `ModelInfo`
-- `manager.go` — `ModelManager`: directory scan, filters architectures without matching `.arch.toml`
+- `manager.go` — `ModelManager`: two-pass directory scan — `*.gguf` glob first, then `*.st/` directory enumeration via `os.ReadDir`; `ModelFormat` type (`FormatGGUF` / `FormatSafetensors`); `ModelInfo.Format` field; `List()` rescans for new files and `.st/` dirs; `Get()`/`tryLoadOne()` checks `.gguf` before falling back to `.st/`; filters architectures without matching `.arch.toml`
+- `gguf.go` — GGUF header scanning → `GGUFMetadata`
+- `safetensors.go` — `ParseSafetensorsDir()`: reads safetensors index for tensor inventory, `config.json` for architecture class and numeric params, resolves architecture via `arch.FindSTMapByHFClass()`; returns "unknown" architecture and zeroed numeric fields if `config.json` is absent; corrupt `config.json` logs debug warning and continues with partial data
 - `culling.go` — `CullingMap` (`[layer][head]float32` weight relevance; currently all-ones stub)
 
 ### `internal/apiserver/`
-- `server.go` — `Server` holds `engines` map (`modelName → *inference.Engine`), `httpServer`, `pending` WaitGroup. No mutex on `engines` (single-client R&D).
+- `server.go` — `Server` holds `engines` map (`modelName → *inference.Engine`) guarded by `enginesMu sync.Mutex`, `httpServer`, `pending` WaitGroup, and an injected `util.BenchPaths`. The mutex is held while looking up, evicting, or creating an engine — single-client R&D, but the lock keeps the eviction/creation race honest. `NewServer(paths, cfg, manager)` takes `BenchPaths` from the cobra entry point — `apiserver` never calls `util.ResolvePaths()` itself.
 - `completions.go` — POST `/api/v1/chat/completions`. Per-request overrides, SSE streaming, logprobs, timing/throughput in `usage` response.
 - `models.go` — GET `/api/v1/models`.
 - `ctl.go` — GET `/ctl/` (`?memstats`, `?quit`, `?quit&now`).
@@ -177,6 +178,11 @@ numbers. A successful `arch.Load()` means the definition is structurally sound.
 **Adding a new architecture:** Copy the closest existing `.arch.toml`. The validator
 and builder contracts will identify exactly what is wrong.
 
+**For safetensors models:** also create a matching `.arch.stmap.toml` file that maps
+HF config.json keys → GGUF metadata keys and HF tensor names → our short names. The
+stmap's `architecture.hf_class` must match `config.json["architectures"][0]` for the
+target architecture. Without it, `NewSafetensorsReader` will fail to locate a stmap.
+
 ---
 
 ## Block Builder System
@@ -234,22 +240,64 @@ checks `IsNil()` and skips the op — culling is transparent to graph constructi
 
 ## Model Loading (`arch/model.go`)
 
-`NewGenericModel(archName, ggufPath, archDir)` → `*GenericModel`:
+**`ModelReader` interface** (`arch/model_reader.go`): abstracts metadata + tensor loading behind a single contract. Both GGUF and safetensors implement `ModelReader` — `newGenericModelFromReader()` is format-agnostic:
+
+```go
+type ModelReader interface {
+    GetU32, GetF32, GetArrInts, GetArrBools  // GGUFReader metadata access
+    GetTensorDim(tensorName, dim)            // shape query
+    TensorCount() int                         // total tensor count
+    TensorNames() []string                    // all tensor names
+    TensorSpec(name string) (TensorSpec, bool) // shape, dtype, byte size
+    ReadTensor(name string, buf []byte) error // raw bytes into caller buffer
+    Close() error                            // release file handles
+}
+
+type TensorSpec struct {
+    Type int               // ggml type constant (e.g., ggml.TypeF16)
+    Ne   [4]int64          // dimensions, padded to 4 (unused = 1)
+    Size int               // total bytes in ggml format
+}
+```
+
+**Construction**: `NewModelReader(path, *GGUFFile)` for GGUF; `NewSafetensorsReader(stDir, archDir)` for safetensors. Both return `ModelReader`.
+
+**`NewGenericModel(archName, modelPath, archDir, gf)`** → `*GenericModel` (GGUF path):
 1. Parse `.arch.toml` → `ArchDef`
-2. Read GGUF KV metadata → `ResolvedParams`
-3. Read GGUF tensor shapes → `ResolvedLayerWeights` per layer
-4. Determine per-layer FFN routing (`ffn` vs `ffn_alt`)
-5. Assign `BlockBuilders[]`, `FFNBuilders[]` per layer
-6. Build `CanonicalModuleMap`
-7. Load tensors into GPU VRAM
-8. Create persistent `cachedCtx` and `cachedSched` for reuse across decode tokens
-9. Allocate `ffnScratch` and `logitBuf` scratch buffers for the hot decode path
+2. Create `ModelReader` from GGUF file (reuses pre-parsed `gf` if provided)
+3. Delegates to `newGenericModelFromReader()` (steps 3–9 below)
+
+**`NewSafetensorsModel(archName, stDir, archDir)`** → `*GenericModel` (safetensors path):
+1. Parse `.arch.toml` → `ArchDef`
+2. Create `ModelReader` via `NewSafetensorsReader(stDir, archDir)`:
+   a. Load `model.safetensors.index.json` (500KB guard) or parse single `model.safetensors`
+   b. Read `config.json`, extract `architectures[0]` as HF class
+   c. Find matching `.arch.stmap.toml` via `FindSTMapByHFClass()` — scans all stmap files, returns the one with `architecture.hf_class` matching
+   d. Build param value map: stmap says `hf_param → GGUF_key`, values come from `config.json`
+   e. Precompute tensor specs (dtype → ggml type mapping; BF16 mapped to F32)
+   f. Open all shard files for `ReadAt`
+   g. Return `stReaderAdapter` implementing `ModelReader`
+3. Delegates to `newGenericModelFromReader()` (steps 3–9 below)
+
+**`newGenericModelFromReader(reader, def, modelPath)`** → `*GenericModel` (shared path):
+
+The loader is structured as a `genericModelBuilder` struct with phase methods, called sequentially from `build()`. The builder owns partial state until each phase succeeds; on failure, `cleanupOnError` releases everything allocated so far. The `WeightStore` is the ownership cut line: before `buildWeightStore` runs the builder owns `gpu`/`cpu`/`weightCtx`/`weightBuf` individually; after, `store.Close()` frees all four in one call. Compute resources (`cachedCtx`, `cachedSched`) created in the final phase are owned by the model and freed before `store.Close()`.
+
+Phases (each a method on `genericModelBuilder`):
+1. `checkMemory` — verify the model fits available VRAM/RAM via `reader.MinMemoryRequired(maxSeqLen)`
+2. `resolveArch` — resolve params → `ResolvedParams`, then **validate**: every required param is present, typed, and nonzero where zero would cause silent downstream divergence (e.g. `rms_eps`, `rope_freq_base`). Bails out with a named error before any allocation. Then resolve weights → `ResolvedLayerWeights` per layer, build `CanonicalModuleMap` and `TensorDimsMap`.
+3. `initBackendsAndArena` — bring up GPU/CPU backends, create the weight context (`AllocPermDisallow`), build the tensor-name → tensor index from reader specs, allocate weight VRAM via `AllocCtxTensors`.
+4. `uploadWeights` — for each weight tensor: `reader.ReadTensor()` into a byte buffer → `ggml.ValidateRowData(spec.Type, buf)` → `ggml.TensorSetBytes(t, buf, 0)`. Validation inspects block scale/delta fields for quantized types (near-zero cost) and every element for float types; a NaN/Inf byte is a hard load error with the offending tensor name. This catches corrupt weight files and reader type/shape mismatches at load time, not as NaN logits mid-generation.
+5. `buildWeightStore` — wrap the backends + arena in a `WeightStore`, transferring ownership; resolve global and per-layer tensor maps; handle tied embeddings; validate required globals are present.
+6. `assignBuilders` — determine per-layer FFN routing (`ffn` vs `ffn_alt`), assign `BlockBuilders[]` and `FFNBuilders[]` per layer.
+7. `createComputeResources` — create persistent `cachedCtx` (`AllocPermDisallow`, sized via `graphCtxSize()`) and `cachedSched` (sized to `maxGraphNodes`) for reuse across decode tokens; allocate `ffnScratch` and `logitBuf` scratch buffers for the hot decode path.
 
 ```go
 type GenericModel struct {
     Def               *ArchDef
     Params            *ResolvedParams
-    Weights           *ResolvedWeights       // GGUF tensor name maps per layer
+    Weights           *ResolvedWeights       // tensor name maps per layer (format-agnostic above ModelReader);
+                                             // ResolvedLayerWeights.Prefix is the canonical per-layer prefix source
     Store             *WeightStore           // GPU-resident tensors
     LayerBlockNames   []string               // which block builder each layer uses
     BlockBuilders     []BlockBuilder
@@ -258,11 +306,11 @@ type GenericModel struct {
     CanonicalModuleMap *ModuleMap            // immutable; always Clone() before modifying
     HeadDim           int                    // attention head dimension
     TensorDims        TensorDimsMap          // tensor shape info for diagnostics
-    ModelPath         string
+    ModelPath         string                 // path to GGUF or .st/ directory
 
     // Persistent compute resources for ForwardCached. Created at load, reused across tokens.
-    cachedCtx   *ggml.GraphContext
-    cachedSched *ggml.Sched
+    cachedCtx   *ggml.GraphContext  // sized via arch.graphCtxSize(); AllocPermDisallow
+    cachedSched *ggml.Sched         // sized to arch.maxGraphNodes
 
     // Pre-allocated scratch buffers for the hot decode path.
     ffnScratch map[string]ggml.Tensor // reused by buildFFNBlock each layer
@@ -275,6 +323,8 @@ type GenericModel struct {
 ## Cache (`arch/cache.go`)
 
 `GenericModel.NewCache(maxSeqLen)` allocates per-layer cache tensors on GPU VRAM and pre-allocates `maskBuf` and `swaMaskBuf` (each sized to `maxSeqLen`) for reuse in `buildCausalMaskData` / `buildSWAMaskData` during cached decode. `ForwardStateless` allocates its own mask buffers and does not use these fields.
+
+`GenericCache.Clear()` zeroes the entire cache backing buffer in a single `cacheBuf.Clear(0)` backend call rather than iterating per-tensor.
 
 Two sharing mechanisms keep non-KV layers from allocating redundant buffers:
 
@@ -307,7 +357,7 @@ Entry points:
 Both stateless entry points share a private `forwardStatelessCore` helper that builds the graph context, scheduler, inputs, and runs all layers. The two stateless entry points differ only in how they extract logits after `sched.Compute`.
 
 All three entry points follow the same layer-execution frame:
-1. Extract params; allocate graph context + GPU scheduler
+1. Extract params; allocate graph context + GPU scheduler. Stateless paths build a fresh `GraphContext` per call sized via `graphCtxSize()` (= `ggml.GraphContextSize(maxGraphNodes)` — derived from ggml's own cgraph + tensor-overhead accounting). `ForwardCached` reuses the persistent `cachedCtx` / `cachedSched` allocated at model load. All call sites pass `maxGraphNodes` (= 16384) consistently to the context, `NewGraph`, and `NewSched` — these three must agree.
 2. Build input tensors (`inpTokens`, `inpPos`, `inpMask`)
 3. Embedding scaling: if `ArchMeta.EmbedScale`, multiply token embeddings by `sqrt(n_embd)`
 4. SWA mask: if `sliding_window` param present and nonzero, allocate `inpMaskSWA` and set it on `GraphInputs`
@@ -468,6 +518,16 @@ See AGENTS.md: CPU path first, GPU second, never GPU-only.
 All CGo is confined here. `ggml_lib/` is a thin C wrapper over ggml ops — no model-specific
 logic, no C++.
 
+**Type and signature conventions** (enforced as the API for every Go caller):
+- `ggml.GGMLType` — named integer type for tensor element types (e.g. `TypeF32`, `TypeQ4_K`). Distinct from `int` so that tensor type arguments cannot be silently swapped with unrelated ints (ne dimensions, mode flags, etc.).
+- `ggml.AllocPerm` — named type controlling whether a `GraphContext` arena holds tensor *data* (`AllocPermAllow`) or only tensor *descriptors* (`AllocPermDisallow`, the normal graph-build case). `NewGraphContext(memSize int, allocPerm AllocPerm)` is non-variadic — every caller must declare its intent explicitly. There is no `AllocPermDefault`.
+- `opt*` parameter prefix — nullable tensor parameters in op wrappers use the `opt` prefix to flag that callers may pass `NilTensor()` (e.g. `SoftMaxExt(ctx, a, optMask, ...)`, `RopeExt(ctx, a, pos, optFreqFactors, ...)`, `FlashAttnExt(ctx, q, k, v, optMask, ...)`). Required tensor parameters have no prefix.
+
+**Principled context sizing** (`backend.go`):
+- `GraphOverheadCustom(size int, grads bool) int` — exact bytes ggml requires for a cgraph structure (nodes array, leafs array, hash tables) of the given size. Thin wrapper over `ggml_graph_overhead_custom`.
+- `GraphContextSize(maxNodes int) int` — minimum context arena bytes needed to build a graph of up to `maxNodes` nodes: `GraphOverheadCustom + TensorOverhead*maxNodes + 64` alignment slop. Use this with `NewGraphContext` to size graph contexts precisely from the declared maxNodes budget — never ad-hoc multipliers.
+- `Buffer.Clear(byte)` — single backend call that writes `value` to every byte in the buffer (including alignment padding). Used by `GenericCache.Clear` instead of per-tensor zero loops.
+
 **ggml log routing (`ggml/logging.go`):**  
 `ggml_log_set` registers a CGo callback in the C layer (`ggml_ops.c`). All ggml diagnostic
 output — previously printed directly to stderr — is intercepted and forwarded to the Go
@@ -483,13 +543,91 @@ the rest of the package has no dependency on it.
 - `Tanh(ctx, a)` — element-wise tanh (used by logit softcapping)
 - `MulMatSetPrecF32(t)` — sets F32 accumulation precision on a `mul_mat` tensor (no return value; mutates in place)
 
+**Go wrappers for load-time validation (in `ggml/`):**
+- `ValidateRowData(typ int, data []byte) bool` — thunks to upstream `ggml_validate_row_data`. Full element scan for float types; per-block scale/delta scan for quantized types. Returns true on empty input. Called by `newGenericModelFromReader` before every `TensorSetBytes`. Unit tested in `ggml/validate_test.go` (F32 NaN/Inf, I32 pass-through, Q4_K block-scale NaN).
+
 **GGUF metadata reading**: `arch/model.go` uses pure-Go `gguf-parser-go` — no CGo. The `goGGUFReader` adapter implements the `GGUFReader` interface with type-checked KV access (guards against gguf-parser-go's panic-on-wrong-type behavior). Split GGUF files are rejected at parse time.
+
+**Safetensors parsing**: `arch/safetensors_index.go` and `arch/safetensors_reader.go` are pure Go — JSON index parsing, shard header reading, and BF16→F32 conversion are all done without CGo. The `stReaderAdapter` implements `ModelReader` using `os.ReadAt` on shard files.
 
 **Verified ggml semantics** (do not change without re-verifying):
 - `ggml_mul_mat(A, B)`: contracts over `A→ne[0] == B→ne[0]`; result `[A→ne[1], B→ne[1], ...]`; GQA broadcasting when `B→ne[2] % A→ne[2] == 0`
 - `ggml_permute(ctx, a, ax0..ax3)`: input dim i → output position ax_i
 - `ggml_rms_norm`: normalizes over `ne[0]` per slice
 - `ggml_soft_max_ext(a, mask, scale, max_bias)`: `softmax(scale * a + mask)` over `ne[0]`
+
+---
+
+## Defensive Checks
+
+Silent numerical failures are the highest-cost class of bug in this codebase — a
+single NaN in a Q4_K block scale propagates through every row the block touches
+and surfaces as "the model produces gibberish," forcing hours of bisection
+through the load and forward paths. The checks below convert that class of
+failure into loud load-time or sampler-time errors with the offending
+tensor/position named, plus two debugging aids (param dumps and the
+GGUF↔safetensors equivalence test).
+
+**Param validation (load time, `arch/params.go`)**  
+After `ResolveParams`, the loader asserts that every required param is present,
+typed correctly, and nonzero where zero would cause silent downstream
+divergence. Concrete failures this catches:
+- `rms_eps = 0` (from untyped JSON `1e-6` silently truncated to `uint32 0`) →
+  `1/sqrt(0) = Inf` in every RMS norm
+- `rope_freq_base` present in `Ints` but not `Floats` → positional encoding
+  computed against zero base → NaN positions → first-token-EOS output
+- Missing `n_heads` / `n_kv_heads` / `head_dim` → attention scale computation
+  fails later rather than at load
+
+Fails before any VRAM allocation; the error names the param and the reader
+that produced it.
+
+**Weight validation (load time, `arch/model.go`)**  
+Every tensor's raw bytes are validated via `ggml.ValidateRowData(spec.Type,
+buf)` before `TensorSetBytes` uploads them to VRAM. The underlying
+`ggml_validate_row_data`:
+- Float types (F32, F16, BF16, F64) — scans every element for NaN/Inf
+- Quantized types (Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K,
+  Q8_K) — scans each block's scale/delta fields for NaN/Inf (near-zero cost;
+  quants themselves are integers so they cannot be NaN)
+- MXFP4 — E8M0 scale validation
+- Integer types (I8, I16, I32, I64) — pass-through (no representation for NaN)
+
+On failure the C layer prints `ggml_validate_row_data: found nan value at
+block N` to stderr (routed through the Go logger) and the Go wrapper returns
+false. `newGenericModelFromReader` converts that into a named load error that
+identifies the tensor and the likely cause (corrupt file or reader type/shape
+mismatch).
+
+Unit tested in `internal/ggml/validate_test.go`: F32 finite/empty/NaN/Inf,
+I32 pass-through, Q4_K well-formed block passes, Q4_K F16 NaN d-scale fails.
+
+**Logit validation (sample time, `inference/sampler.go`)**  
+`ValidateLogits` runs at every sampler chokepoint. Autoregressive paths
+(`generate_cached`, `generate_stateless`, `generate_rlb`) hit it transitively
+via `Engine.sample()` in `engine.go`, which validates before any sampling
+math. The diffusion path (`generate_diffusion`) calls it explicitly after
+each `ForwardStatelessAllLogits`, wrapped with `blockNum` / `step` context.
+If any logit is NaN/Inf the request fails with a named error rather than
+emitting garbage tokens. Cost is one linear scan of `n_vocab` per call —
+memory-bandwidth bound, negligible vs. a full forward pass.
+
+**Param dumps (debugging aid, `arch/model_reader_safetensors.go`,
+`arch/model_reader_gguf.go`)**  
+Both readers emit a sorted `[param] key = value` dump at DEBUG level listing
+every metadata KV seen from the source file. When porting a new architecture
+to safetensors, visual diff of the two dumps is the fastest way to find a
+stmap error: any param present in one but absent/wrong in the other is the
+bug. Keep these dumps symmetric — a difference in dump format between loaders
+hides exactly the class of bug they are there to surface.
+
+**Equivalence testing (acceptance gate, `make equiv-test`)**  
+`test_equiv.sh gguf-st` compares logprobs between the GGUF and safetensors
+loaders for the same model, at the same sampler step, on the same prompt.
+Non-identical above GPU FP variance is a hard failure. This test is on the
+default Makefile testing path and is the authoritative gate for any change
+touching the load or inference path — it must be green before a change is
+considered complete.
 
 ---
 
@@ -519,13 +657,113 @@ is via `ResolvedLayerWeights` in `arch/weights.go`.
 
 ---
 
+## Safetensors Loading Pipeline
+
+Safetensors models from HuggingFace use a different directory layout and naming convention
+than GGUF. The loading pipeline translates both into the format-agnostic `ModelReader`
+interface so that inference code is identical above the abstraction boundary.
+
+### Directory Convention
+
+```
+models/
+  Llama-3.2-3B-Instruct.Q4_K_M.gguf          ← GGUF model
+  Llama-3.2-3B-Instruct.st/                   ← safetensors directory (.st suffix)
+    model-00001-of-00002.safetensors          ← shard file(s)
+    model.safetensors.index.json              ← JSON index (weight → shard mapping)
+    config.json                               ← HF model config
+    tokenizer.gguf                            ← tokenizer sidecar (vocab only, no weights)
+```
+
+Format is auto-detected: `*.gguf` → GGUF parser; `*.st/` → safetensors directory.
+`ModelInfo.Format` (`FormatGGUF` / `FormatSafetensors`) carries the result into
+`NewEngine()`.
+
+### Index Parsing (`safetensors_index.go`)
+
+`LoadSafetensorsIndex(stDir)` handles both sharded and single-file models:
+1. **Sharded**: reads `model.safetensors.index.json` (500KB guard), parses `weight_map`
+   to build ordered shard list, then reads each shard's 8-byte header length + JSON header
+   to populate `STTensorEntry` per tensor (dtype, shape, absolute data offset, shard assignment).
+2. **Single-file**: reads `model.safetensors` directly, parses its JSON header.
+
+Both paths produce a `SafetensorsIndex` with `Tensors` map and `Shards` list.
+
+### STMap Resolution (`stmap.go`, `safetensors_reader.go`)
+
+Safetensors tensor/param names differ from GGUF conventions. A per-architecture
+`.arch.stmap.toml` file provides the translation (see
+`models/arch/MODEL_ARCH_STMAP_TOML_DSL_SPEC.md`). The lookup chain:
+
+1. `config.json["architectures"][0]` → HF class (e.g. `"LlamaForCausalLM"`)
+2. `FindSTMapByHFClass(archDir, hfClass)` scans `*.arch.stmap.toml` files, returns the
+   one with `architecture.hf_class` matching
+3. STMap provides:
+   - `[params]`: HF config.json key → GGUF metadata key mapping
+   - `[layer_prefix].hf`: per-layer prefix with `{N}` substitution
+   - `[tensors]`: our short tensor name → HF short tensor name
+   - `[tensors.global]`: our short global name → HF full tensor name
+
+Param resolution: HF config.json value is stored under the GGUF key name, so the
+existing `ResolveParams()` machinery works without changes. Note: safetensors models
+only provide scalar params from `config.json` — array types (`GetArrInts`, `GetArrBools`)
+are not available from that format and will always return `(nil, false)`.
+
+Tensor name resolution at load time:
+- Per-layer: `layer_prefix.hf` (with `{N}` resolved) + `tensors[our_short_name]` = full HF tensor key
+- Global: `tensors.global[our_short_name]` used directly
+
+### Reader Construction (`safetensors_reader.go`)
+
+`NewSafetensorsReader(stDir, archDir)` builds an `stReaderAdapter` implementing
+`ModelReader`:
+
+1. Parse safetensors index → `SafetensorsIndex`
+2. Read `config.json`
+3. Extract HF class → find matching stmap
+4. Build param value map from stmap + config.json
+5. Precompute `TensorSpec` for all tensors (dtype → ggml type mapping via `stDtypeToGGML`)
+6. Open all shard files for `ReadAt`-based random access
+
+**BF16 conversion**: ggml has no native BF16 type. At load time, BF16 data is expanded
+to F32 — the upper 16 bits of BF16 (sign + 8-bit exponent + 7-bit mantissa) are placed
+in the upper half of the F32 value with 16 zero bits appended as the lower half. This is
+a byte-level operation: read 2 bytes, write 4 bytes (bottom-up to avoid overwriting).
+
+### Engine Integration (`engine.go`)
+
+`NewEngine()` dispatches on `info.Format`:
+- `FormatSafetensors`: loads tokenizer from `tokenizer.gguf` sidecar in the `.st/`
+  directory (a minimal GGUF with only tokenizer metadata), then calls
+  `arch.NewSafetensorsModel(archName, stDir, archDir)`
+- `FormatGGUF`: existing GGUF path; reuses pre-parsed GGUF to avoid double-parsing
+
+For safetensors models, `NLayers` may be 0 if `config.json` lacked the field — falls
+back to the resolved model param (`m.Params.GetInt("n_layers")`).
+
+### Model Discovery (`model/safetensors.go`)
+
+`ParseSafetensorsDir(stDir, archDir)` produces `GGUFMetadata` for the model manager:
+1. Load safetensors index for tensor inventory
+2. Convert `STTensorEntry` → `TensorInfo` (offset=0, no unified safetensors offset concept)
+3. Read `config.json` for architecture class and numeric params (`num_hidden_layers`,
+   `hidden_size`, etc.)
+4. Resolve HF class → architecture name via `FindSTMapByHFClass()`
+5. Return `GGUFMetadata` with resolved architecture name
+
+The manager (`manager.go`) scans both `*.gguf` files and `*.st/` directories during
+`scan()` and `List()`, filtering by whether the resolved architecture has a matching
+`.arch.toml` file. `tryLoadOne()` checks GGUF first, then falls back to `.st/`.
+
+---
+
 ## Key Invariants
 
 1. **No model-specific Go code.** Architecture branches belong in TOML.
 2. **`CanonicalModuleMap` is never mutated.** Always `Clone()` before modification.
 3. **NilTensor means culled.** Absent map keys return zero-value `ggml.Tensor`. Every builder checks `IsNil()`.
-4. **`os.Exit` never below CLI entry point.** Return errors up the chain.
-5. **CGo stays in `ggml/`.** No other package imports `"C"`. GGUF metadata is read via pure-Go `gguf-parser-go`.
+4. **`os.Exit` never below CLI entry point.** Return errors up the chain. `log.Fatal` is permitted only in `bench/` cobra entry points; utility and library packages (including `util/paths.go`) return errors. `util.ResolvePaths()` returns `(BenchPaths, error)`; `BenchPaths` is injected from the cobra entry into `Server`, `Engine`, and culling helpers — no library code calls `ResolvePaths` itself.
+5. **CGo stays in `ggml/`.** No other package imports `"C"`. GGUF metadata is read via pure-Go `gguf-parser-go`; safetensors index and tensor data are parsed in pure Go.
 6. **Builder contracts enforced at parse time.** Adding a required weight to `Contract()` requires updating all `.arch.toml` files using that builder.
 7. **Palette is single-source.** All diagram colors from `diagramPalette()`.
 8. **TOML is the data language.** JSON only for OpenAI-compatible API payloads.
@@ -536,6 +774,12 @@ is via `ResolvedLayerWeights` in `arch/weights.go`.
 13. **Data capture is stateless-only.** `ForwardCaptures` on `ForwardStateless` only.
 14. **Template owns thinking mode.** `enable_thinking` passed to gonja template. No post-render manipulation.
 15. **SharedKV ordering validated at parse time.** `shared_kv_group` with no `attn_k` producer is a validation error.
+16. **`ModelReader` is the format boundary.** Everything above `newGenericModelFromReader()` is format-agnostic. Adding a new model format requires only a new `ModelReader` implementation.
+17. **Tokenizer is GGUF-only.** Safetensors models use a `tokenizer.gguf` sidecar; no HuggingFace `tokenizer.json` parsing path exists.
+18. **`NewGraphContext` requires explicit `AllocPerm`.** No default. Graph-build contexts pass `AllocPermDisallow`; data-arena scratch contexts (load-time type conversion) pass `AllocPermAllow`. Caller intent must be visible at the call site.
+19. **Single source of truth for the cgraph node budget.** `arch.maxGraphNodes = 16384` drives both the context arena (via `arch.graphCtxSize()` → `ggml.GraphContextSize`) and every `NewGraph` / `NewSched` call in the arch package. Never use a literal node count.
+20. **Canonical logical weight names live in `arch_util.go`.** `WeightAttnNorm`, `WeightFFNNorm` (and the `Cache*` keys) are constants; never inline these literal strings in graph or module code.
+21. **`ResolvedLayerWeights.Prefix` is the canonical per-layer prefix.** All consumers (module map, tensor dims, diagram code) read `lw.Prefix` (already includes the trailing dot). Never reconstruct `blk.<N>.` from `layer_idx` ad hoc.
 
 ## Metrics and Timing
 

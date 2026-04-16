@@ -1,0 +1,67 @@
+# LLaDA (dense) stmap — maps HuggingFace tensor/param names to our logical names.
+# HF class: LLaDAModelLM
+# Arch name: llada
+#
+# Verified against LLaDA-8B-Instruct.st/ (config.json + model.safetensors.index.json
+# + modeling_llada.py).
+#
+# Layout notes:
+#   - activation_type = "silu" with ff_proj + up_proj → standard SwiGLU: ff_proj
+#     is the gate (fed through SiLU), up_proj is the up (gated), ff_out is the down.
+#     Inside each block: ff_proj/up_proj/ff_out are the FFN tensors.
+#   - Globals live under model.transformer.* (not model.*): wte (embeddings),
+#     ln_f (final norm), ff_out (LM head — DISTINCT from per-block ff_out because
+#     weight_tying = false).
+#   - Per-block prefix is model.transformer.blocks.{N}. (not model.layers.{N}.).
+
+[architecture]
+hf_class = "LLaDAModelLM"
+
+[params]
+"n_layers"       = "llada.block_count"
+"d_model"        = "llada.embedding_length"
+"mlp_hidden_size" = "llada.feed_forward_length"
+"n_heads"        = "llada.attention.head_count"
+"n_kv_heads"     = "llada.attention.head_count_kv"
+"rms_norm_eps"   = "llada.attention.layer_norm_rms_epsilon"
+"rope_theta"     = "llada.rope.freq_base"
+
+[layer_prefix]
+hf = "model.transformer.blocks.{N}."
+
+[tensors]
+"attn_norm.weight"   = "attn_norm.weight"
+"attn_q.weight"      = "q_proj.weight"
+"attn_k.weight"      = "k_proj.weight"
+"attn_v.weight"      = "v_proj.weight"
+"attn_output.weight" = "attn_out.weight"
+"ffn_norm.weight"    = "ff_norm.weight"
+"ffn_gate.weight"    = "ff_proj.weight"
+"ffn_up.weight"      = "up_proj.weight"
+"ffn_down.weight"    = "ff_out.weight"
+
+[tensors.global]
+"token_embd.weight"  = "model.transformer.wte.weight"
+"output_norm.weight" = "model.transformer.ln_f.weight"
+"output.weight"      = "model.transformer.ff_out.weight"
+
+# ---------------------------------------------------------------------------
+# Tensor transforms
+#
+# LLaDA's modeling_llada.py uses NeoX-style RoPE (see RotaryEmbedding.rotate_half
+# and get_rotary_embedding in modeling_llada.py — freqs are duplicated as
+# cat((freqs, freqs), dim=-1) and rotate_half splits the head dim in two).
+# Our llada.arch.toml declares `rope = "standard"`, matching how llama.cpp's
+# convert_hf_to_gguf.py ships LLaDA GGUFs: the converter's LLaDAModel class
+# sets undo_permute = True and applies permute() to q_proj and k_proj weights
+# so that standard (interleaved) RoPE produces NeoX-equivalent outputs.
+#
+# The safetensors loader must reproduce this permute to match the GGUF path.
+# LLaDA-8B-Instruct is dense MHA (n_heads == n_kv_heads == 32), so Q and K use
+# the same n_heads value. If a model added GQA, K would use n_kv_heads.
+# ---------------------------------------------------------------------------
+
+[[transforms]]
+op = "permute_qk_rope"
+n_heads = 32
+apply = ["attn_q.weight", "attn_k.weight"]

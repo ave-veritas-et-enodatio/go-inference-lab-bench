@@ -10,8 +10,9 @@ import (
 
 // Custom file extensions used across the project.
 const (
-	ExtArchToml = ".arch.toml"  // architecture definition
-	ExtCullMeta = ".cullmeta"   // culling metadata sidecar
+	ExtArchToml       = ".arch.toml" // architecture definition
+	ExtCullMeta       = ".cullmeta"  // culling metadata sidecar
+	ExtSafetensorsDir = ".st"        // safetensors model directory
 )
 
 // benchPaths holds standard directory paths derived from the executable location.
@@ -37,6 +38,7 @@ func makeBenchPaths(exeDir string) BenchPaths {
 
 var (
 	resolvedPaths BenchPaths
+	resolveErr    error
 	resolveOnce   sync.Once
 )
 
@@ -45,22 +47,21 @@ func IsDir(path string) bool {
 	return err == nil && stat.IsDir()
 }
 
-func getExeDir() string {
-	if exe, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exe)
-		return exeDir
-	} else {
-		log.Fatal("failed to determine executable path: %v", err)
+func getExeDir() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("determine executable path: %w", err)
 	}
-	return ""
+	return filepath.Dir(exe), nil
 }
 
 // ResolvePaths computes standard paths relative to the running executable.
 // Falls back to the current directory if the executable path cannot be determined.
-// The result is computed once and cached for the lifetime of the process.
-// handles hacky debugging envar BENCH_EXE_DIR because debug.json configs
-// don't let you separate the source level CWD from runtime CWD
-func ResolvePaths() BenchPaths {
+// The result is computed once and cached for the lifetime of the process —
+// subsequent calls return the same (paths, err) pair.
+// Handles hacky debugging envar BENCH_EXE_DIR because debug.json configs
+// don't let you separate the source level CWD from runtime CWD.
+func ResolvePaths() (BenchPaths, error) {
 	resolveOnce.Do(func() {
 		if exeDir := os.Getenv("BENCH_EXE_DIR"); exeDir != "" {
 			// hacky debug envar was provided
@@ -68,24 +69,30 @@ func ResolvePaths() BenchPaths {
 			resolvedPaths = makeBenchPaths(exeDir)
 		} else {
 			// normal path
-			resolvedPaths = makeBenchPaths(getExeDir())
+			exeDir, err := getExeDir()
+			if err != nil {
+				resolveErr = err
+				return
+			}
+			resolvedPaths = makeBenchPaths(exeDir)
 		}
 		configRel, _ := filepath.Rel(resolvedPaths.ExeDir, resolvedPaths.ConfigDir)
 		if !IsDir(resolvedPaths.ConfigDir) {
-			if cwd, err := os.Getwd(); err == nil {
-				log.Error("%s does not contain %s falling back to %s",
-					resolvedPaths.ExeDir, configRel, cwd)
-				resolvedPaths = makeBenchPaths(cwd)
-			} else {
-				log.Fatal("failed to determine current directory: %v", err)
+			cwd, err := os.Getwd()
+			if err != nil {
+				resolveErr = fmt.Errorf("determine current directory: %w", err)
+				return
 			}
+			log.Error("%s does not contain %s falling back to %s",
+				resolvedPaths.ExeDir, configRel, cwd)
+			resolvedPaths = makeBenchPaths(cwd)
 		}
 		if !IsDir(resolvedPaths.ConfigDir) {
 			log.Error("%s does not contain %s",
 				resolvedPaths.ExeDir, configRel)
 		}
 	})
-	return resolvedPaths
+	return resolvedPaths, resolveErr
 }
 
 // EnsureDiagDir creates the diagnostics output directory if it doesn't exist.

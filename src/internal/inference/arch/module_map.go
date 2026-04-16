@@ -38,7 +38,10 @@ func BuildTensorDimsMap(weights *ResolvedWeights, dimLookup func(string) (int64,
 	}
 
 	for _, lw := range weights.Layers {
-		ctx := fmt.Sprintf("blk.%d.", lw.Index)
+		// lw.Prefix is the canonical expanded per-layer prefix ("blk.5.") from [layers].prefix
+		// in the arch TOML. It already carries the trailing dot, so it plugs straight into
+		// TrimPrefix without reconstruction.
+		ctx := lw.Prefix
 		short := func(ggufName string) string {
 			return strings.TrimSuffix(strings.TrimPrefix(ggufName, ctx), ".weight")
 		}
@@ -118,7 +121,9 @@ func BuildModuleMap(weights *ResolvedWeights) *ModuleMap {
 	nextID := 1
 	for _, lw := range weights.Layers {
 		L := lw.Index
-		ctx := fmt.Sprintf("blk.%d", L)
+		// Module weight_context drops the trailing "." from lw.Prefix (e.g. "blk.5." → "blk.5")
+		// because addCompact re-appends it when stripping.
+		ctx := strings.TrimSuffix(lw.Prefix, ".")
 
 		// Block module: pre-attention norm + attention/SSM/recurrent weights.
 		block := Module{ID: nextID, Name: fmt.Sprintf("block_%d", L), BlockName: lw.BlockName, WeightContext: ctx}
@@ -130,7 +135,7 @@ func BuildModuleMap(weights *ResolvedWeights) *ModuleMap {
 		// Route common weights by purpose: attn_norm is the block's pre-norm;
 		// ffn_norm (or any other non-attn_norm common weight) is the FFN's pre-norm.
 		for logicalName, ggufName := range lw.Common {
-			if logicalName == "attn_norm" {
+			if logicalName == WeightAttnNorm {
 				addCompact(&block, ctx, ggufName)
 			} else {
 				addCompact(&ffn, ctx, ggufName)

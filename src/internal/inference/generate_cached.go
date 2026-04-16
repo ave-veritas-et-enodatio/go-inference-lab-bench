@@ -28,7 +28,10 @@ func (e *Engine) generateCached(
 	decodeStart := time.Now()
 	hitStop := false
 	for range maxTokens {
-		nextID := e.sample(logits, params)
+		nextID, err := e.sample(logits, params)
+		if err != nil {
+			return err
+		}
 		if stopSet[nextID] {
 			hitStop = true
 			break

@@ -36,7 +36,7 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 	}
 
 	ctxSize := nTensors*ggml.TensorOverhead() + 1024
-	cacheCtx := ggml.NewGraphContext(ctxSize)
+	cacheCtx := ggml.NewGraphContext(ctxSize, ggml.AllocPermDisallow)
 	if cacheCtx == nil {
 		return nil, fmt.Errorf("failed to create cache context")
 	}
@@ -101,8 +101,8 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 				cacheCtx.Free()
 				return nil, fmt.Errorf("layer %d cache %q: %w", i, cacheName, err)
 			}
-			dtype := ggml.TypeF32 // only F32 cache supported for now
-			_ = spec.Dtype
+			// TODO: use spec.Dtype when non-F32 cache types are needed.
+			dtype := ggml.TypeF32
 
 			var t ggml.Tensor
 			switch len(dims) {
@@ -134,6 +134,7 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 		cacheCtx.Free()
 		return nil, fmt.Errorf("failed to alloc cache GPU VRAM")
 	}
+	log.Debug("cache ctx: %d / %d bytes used", cacheCtx.UsedMem(), ctxSize)
 
 	gc.cacheCtx = cacheCtx
 	gc.cacheBuf = cacheBuf
@@ -147,16 +148,12 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 	return gc, nil
 }
 
-// Clear resets the cache to empty.
+// Clear resets the cache to empty. Zeroes the entire backing buffer in a
+// single backend call rather than iterating per tensor.
 func (gc *GenericCache) Clear() {
 	gc.SeqPos = 0
-	for _, lc := range gc.Layers {
-		for _, t := range lc.Tensors {
-			if !t.IsNil() {
-				zeros := make([]byte, t.Nbytes())
-				ggml.TensorSetBytes(t, zeros, 0)
-			}
-		}
+	if gc.cacheBuf != nil {
+		gc.cacheBuf.Clear(0)
 	}
 }
 

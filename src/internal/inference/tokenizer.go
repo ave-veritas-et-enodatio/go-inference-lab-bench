@@ -32,7 +32,7 @@ type Tokenizer struct {
 	specialTokens []string          // control/user-defined tokens, sorted longest-first
 	bos           int32
 	eos           int32
-	maskTokenID   int32  // mask token for diffusion models; -1 if absent
+	maskTokenID   int32 // mask token for diffusion models; -1 if absent
 	chatTpl       *exec.Template
 	useByteLevel  bool // true for GPT-2 style, false for SentencePiece style
 }
@@ -204,9 +204,13 @@ func (t *Tokenizer) Decode(ids []int32) string {
 // EncodeChat executes the GGUF chat template via gonja and encodes the result.
 // Returns the token ID sequence for the full prompt, ending with the
 // assistant turn start marker (ready for completion).
-// enableThinking is passed to the template as "enable_thinking" so templates
-// that support it can emit or suppress the <think> opening natively.
-func (t *Tokenizer) EncodeChat(messages []ChatMessage, enableThinking bool) ([]int32, error) {
+//
+// kwargs is passed through to the Jinja renderer as template variables
+// (llama.cpp-compatible chat_template_kwargs semantics). Reserved keys
+// managed by the tokenizer itself — messages, add_generation_prompt,
+// bos_token, eos_token — are set here and cannot be clobbered by kwargs.
+// All other keys (notably enable_thinking) pass through untouched.
+func (t *Tokenizer) EncodeChat(messages []ChatMessage, kwargs map[string]any) ([]int32, error) {
 	if t.chatTpl == nil {
 		return nil, fmt.Errorf("no chat template loaded")
 	}
@@ -225,13 +229,17 @@ func (t *Tokenizer) EncodeChat(messages []ChatMessage, enableThinking bool) ([]i
 		eosStr = t.tokens[t.eos]
 	}
 
-	ctx := exec.NewContext(map[string]any{
-		"messages":              msgs,
-		"add_generation_prompt": true,
-		"enable_thinking":       enableThinking,
-		"bos_token":             bosStr,
-		"eos_token":             eosStr,
-	})
+	vars := make(map[string]any, len(kwargs)+4)
+	for k, v := range kwargs {
+		vars[k] = v
+	}
+	// Tokenizer-managed keys override any caller-supplied values.
+	vars["messages"] = msgs
+	vars["add_generation_prompt"] = true
+	vars["bos_token"] = bosStr
+	vars["eos_token"] = eosStr
+
+	ctx := exec.NewContext(vars)
 	result, err := t.chatTpl.ExecuteToString(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("chat template render: %w", err)
@@ -263,7 +271,7 @@ func (t *Tokenizer) BuildStopSet(stopTokenStrings []string) map[int32]bool {
 		if id, ok := t.tokenIDs[s]; ok {
 			set[id] = true
 		} else {
-			log.Error("extra_eos: %q not found in vocabulary — skipped", s)
+			log.Warn("extra_eos: %q not found in vocabulary — skipped", s)
 		}
 	}
 	return set

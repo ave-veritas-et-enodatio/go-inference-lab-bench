@@ -7,15 +7,8 @@ import (
 	"unsafe"
 
 	ggml "inference-lab-bench/internal/ggml"
+	"inference-lab-bench/internal/log"
 )
-
-// nodesPerLayer estimates ggml graph nodes per transformer layer. The +1 in
-// graphCtxSize accounts for global ops (embedding lookup, final norm, LM head).
-const nodesPerLayer = 160
-
-func graphCtxSize(nLayers int) int {
-	return 4*1024*1024 + ggml.TensorOverhead()*(nLayers+1)*nodesPerLayer
-}
 
 // buildCausalMaskData generates the float32 mask data for causal attention.
 // Positions where key > query get -Inf. Returns all zeros if nonCausal.
@@ -83,6 +76,11 @@ func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
 	engagement *EngagementData) ggml.Tensor {
 	for il := range m.Params.Ints["n_layers"] {
 		lt := m.MaskedLayer(il, mask)
+		if lt == nil {
+			// MaskedLayer already logged the error (out-of-bounds layer index).
+			// Skip this layer — x stays as-is (from previous layer's output).
+			continue
+		}
 		blockName := m.LayerBlockNames[il]
 		blockDef := m.Def.Blocks[blockName]
 		inputs.CurrentLayer = il
@@ -168,9 +166,9 @@ func anyNonNil(weights map[string]ggml.Tensor) bool {
 }
 
 // ffnNorm returns the pre-FFN norm weight from the layer tensor map.
-// All architectures use "ffn_norm" as the canonical logical key in layers.common_weights.
+// All architectures use WeightFFNNorm as the canonical logical key in layers.common_weights.
 func ffnNorm(lt map[string]ggml.Tensor) ggml.Tensor {
-	return lt["ffn_norm"]
+	return lt[WeightFFNNorm]
 }
 
 // buildLogits extracts the last token's embedding, applies final norm, and projects
@@ -221,7 +219,7 @@ type statelessCtx struct {
 	gf         *ggml.Graph
 	x          ggml.Tensor
 	inputs     *GraphInputs
-	inpTokens  ggml.Tensor  // input token ID tensor — needed for TensorSet after AllocGraph
+	inpTokens  ggml.Tensor // input token ID tensor — needed for TensorSet after AllocGraph
 	nEmbd      int
 	rmsEps     float32
 	nVocab     int
@@ -246,8 +244,8 @@ func (sc *statelessCtx) Free() {
 // On error, the helper frees its own resources before returning nil — callers
 // must NOT call Free() on error.
 //
-//   withEngagement — allocates and wires EngagementData (ForwardStateless path only)
-//   caps           — ForwardCaptures or nil (ForwardStateless path only)
+//	withEngagement — allocates and wires EngagementData (ForwardStateless path only)
+//	caps           — ForwardCaptures or nil (ForwardStateless path only)
 func (m *GenericModel) forwardStatelessCore(
 	tokenIDs []int32,
 	mask *CullingMask,
@@ -261,12 +259,13 @@ func (m *GenericModel) forwardStatelessCore(
 	rmsEps := m.Params.Floats["rms_eps"]
 	nTokens := int64(len(tokenIDs))
 
-	gctx := ggml.NewGraphContext(graphCtxSize(nLayers))
+	ctxSize := graphCtxSize()
+	gctx := ggml.NewGraphContext(ctxSize, ggml.AllocPermDisallow)
 	if gctx == nil {
 		return nil, fmt.Errorf("failed to create graph context")
 	}
 
-	sched := ggml.NewSched(m.Store.GPU, m.Store.CPU, 16384)
+	sched := ggml.NewSched(m.Store.GPU, m.Store.CPU, maxGraphNodes)
 	if sched == nil {
 		gctx.Free()
 		return nil, fmt.Errorf("failed to create scheduler")
@@ -330,7 +329,9 @@ func (m *GenericModel) forwardStatelessCore(
 	}
 	x = m.runLayers(gctx, x, inputs, rmsEps, mask, blkFn, perLayerEmbd, engagement)
 
-	gf := ggml.NewGraph(gctx, 16384)
+	gf := ggml.NewGraph(gctx, maxGraphNodes)
+
+	log.Debug("stateless graph ctx: %d / %d bytes used", gctx.UsedMem(), ctxSize)
 
 	return &statelessCtx{
 		gctx:       gctx,
@@ -369,6 +370,10 @@ func (m *GenericModel) ForwardStatelessAllLogits(tokenIDs []int32, mask *Culling
 	}
 
 	for _, t := range sc.zeroFill {
+		if t.IsNil() {
+			log.Error("zeroFill: nil tensor in zero-fill list — uninitialized GPU memory")
+			continue
+		}
 		zeros := make([]byte, t.Nbytes())
 		ggml.TensorSetBytes(t, zeros, 0)
 	}
@@ -453,6 +458,10 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32, mask *CullingMask, cap
 
 	// Zero-fill SSM state tensors (appended to zeroFill by the SSM block builder).
 	for _, t := range sc.zeroFill {
+		if t.IsNil() {
+			log.Error("zeroFill: nil tensor in zero-fill list — uninitialized GPU memory")
+			continue
+		}
 		zeros := make([]byte, t.Nbytes())
 		ggml.TensorSetBytes(t, zeros, 0)
 	}
@@ -565,7 +574,7 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, mask *C
 
 	// Build the graph before running layers so that BuildCached can emit in-graph
 	// cpy ops for KV and SSM state writebacks directly via gf.BuildForwardExpand.
-	gf := ggml.NewGraph(gctx, 16384)
+	gf := ggml.NewGraph(gctx, maxGraphNodes)
 
 	blkFn := func(gctx *ggml.GraphContext, cur ggml.Tensor,
 		lt map[string]ggml.Tensor, il int, config map[string]any,

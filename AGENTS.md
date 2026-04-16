@@ -25,10 +25,13 @@ Known working models (links in README.md):
 - DeepSeek-V2-Lite-Chat.Q4_K_M.gguf (`deepseek2` arch)
 - gemma-4-E4B-it-Q4_K_M.gguf (dense, `gemma4` arch)
 - Gemma 4 MoE (`gemma4` arch, auto-detected via `[ffn_alt]` GGUF weights)
-- LLaDA-MoE-7B-A1B-Instruct (`llada-moe` arch) — MoE diffusion model; working
-- LLaDA-8B-Instruct (`llada` arch) — dense diffusion model; built, not yet tested against a live model
+- LLaDA-MoE-7B-A1B-Instruct gguf (`llada-moe` arch) — MoE diffusion model
+- LLaDA-8B-Instruct gguf (`llada` arch) — dense diffusion model
+- Qwen3.5-9B.st/ (`qwen3.5` arch)
+- LLaDA-8B-Instruct.st/ (`llada` arch)
 
-- KV-cached and stateless inference; TOML DSL drives GGUF loading, graph construction, and cache allocation. Only C code is a thin model-agnostic ggml op wrapper. Zero C++.
+- **Two model formats**: GGUF (`*.gguf`) and safetensors (`*.st/` directories). Format is auto-detected at load time; inference code is identical above the `ModelReader` abstraction layer.
+- KV-cached and stateless inference; TOML DSL drives loading, graph construction, and cache allocation regardless of source format. Only C code is a thin model-agnostic ggml op wrapper. Zero C++.
 - HTTP server: Bearer auth, model listing, streaming SSE + non-streaming completions, logprobs, timing/throughput in `usage` response.
 - **Zero model-specific code**: chat templates executed from GGUF `tokenizer.chat_template` via gonja; BOS/EOS from GGUF metadata. Thinking mode controlled entirely by template `enable_thinking` variable — no post-render prompt manipulation.
 - BPE tokenizer: dual mode — GPT-2 byte-level (Llama, Qwen) + SentencePiece (Gemma); greedy + top-p sampling; logprob computation via stable log-softmax
@@ -41,7 +44,7 @@ Known working models (links in README.md):
 - **Language**: Go + pure C via CGo (ggml op wrappers only)
 - **Model definition**: TOML DSL (`models/arch/*.arch.toml`)
 - **Inference backend**: ggml (git submodule), gpu-accelerated
-- **Model format**: GGUF (`models/`)
+- **Model format**: GGUF (`*.gguf`) and safetensors (`*.st/` directories), auto-detected at load time
 - **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"cull_method"`, `"enable_thinking"`, `"elide_thinking"`, `"logprobs"`, `"top_logprobs"`, `"model":"default"`, `"diffusion"` (nested object: `steps`, `block_length`; ignored with a warning on non-diffusion models). Legacy `/v1/*` also supported. Diagnostic browser at `/diag/`. Control endpoint at `/ctl/` (`?memstats` = memory stats; `?quit` = graceful shutdown; `?quit&now` = immediate). Request-level overrides of server config defaults logged as `[req] param overrides: ...`.
 - **Diagnostics**: `/diag/` serves files from `bin/diag/` — a useful location for dumping R&D diagnostic output (SVGs, culling maps, etc.) that can be viewed in-browser while the server is running.
 - **Config**: `config/api_config.toml` — `[server]` (host, port, auth_token), `[models]` (directory, default), `[inference]` (max_seq_len, enable_thinking_default, elide_thinking_default, log_thinking, cull_method_default, single_resident_model, max_request_seq_len, strict_mode)
@@ -56,8 +59,10 @@ config/
   chat_config.toml              Chat client config (base_url=auto, model, system_prompt)
 models/
   *.gguf                        Model files (not committed)
+  *.st/                         Safetensors directories (not committed)
   arch/                         Architecture TOML definitions + generated SVGs
     MODEL_ARCH_TOML_DSL_SPEC.md DSL specification
+    MODEL_ARCH_STMAP_TOML_DSL_SPEC.md STMap file DSL for safetensors name mapping
     block_svg/                  Hand-crafted SVG fragments per block builder
 src/
   Makefile                      Go build, ggml build, test
@@ -70,10 +75,10 @@ src/
     gen_cull_metadata.go        gen-cull-metadata: writes .cullmeta sidecar
   internal/
     log/                        Structured leveled logger (Debug/Info/Warn/Error/Fatal); see ### Internal Logging
-    util/                       Project-wide utilities (LoadTOML, WriteJSON, BenchPaths, extension constants)
+    util/                       Project-wide utilities (LoadTOML, WriteJSON, BenchPaths, ResolvePaths, extension constants)
     apiserver/                  HTTP handlers (OpenAI-compatible: /api/v1/*), /ctl endpoint
     chatclient/                 Interactive chat client
-    model/                      GGUF scanning + metadata
+    model/                      GGUF scanning + safetensors directory discovery
     inference/
       engine.go                 Engine, GenerateParams, DiffusionParams, IsDiffusion(), Generate() dispatch
       generate_cached.go        generateCached — KV/SSM-cached autoregressive loop
@@ -86,6 +91,10 @@ src/
       arch/
         arch.go                 ArchDef, TOML parser, Validate() with builder contracts
         arch_util.go            Shared tensor-op helpers, cache key constants, configIntOr/configFloatOr/configStr, attentionScale
+        model_reader.go         ModelReader interface (GGUFReader + tensor loading), GGUF adapter
+        safetensors_index.go    LoadSafetensorsIndex() — JSON index parser + shard header reader
+        safetensors_reader.go   Safetensors ModelReader implementation; BF16→F32 conversion
+        stmap.go                .arch.stmap.toml parser (LoadArchSTMap, FindSTMapByHFClass)
         block_attention_util.go Shared attention helpers (scaledDotProductAttention, RoPE, KV cache)
         params.go               Param resolver + routing expression eval
         weights.go              Weight resolver (template expansion, layer routing)
@@ -102,7 +111,7 @@ src/
         modules.go              Module, ModuleMap
         module_map.go           BuildModuleMap, BuildTensorDimsMap
         weight_store.go         WeightStore: immutable GPU-resident tensor storage
-        model.go                GenericModel: GGUF loading, per-layer FFN routing
+        model.go                GenericModel: GGUF + safetensors loading via ModelReader, per-layer FFN routing
         cache.go                Cache allocation (NewCache, GenericCache)
         graph.go                Forward pass (ForwardStateless, ForwardStatelessAllLogits, ForwardCached, forwardStatelessCore, runLayers)
         validate_lines.go       ResolveErrorLines (TOML key path → source line)
@@ -133,14 +142,28 @@ make                    # build bench binary, symlink config+models into bin/
 make serve              # build + start API server (--log bin/bench.log --log-level INFO)
 make chat               # build + start interactive chat client
 make arch-diagrams      # rebuild SVG diagrams from models/arch/*.arch.toml
+make st-tok-ggufs       # (re)generate tokenizer.gguf sidecar in every models/*.st/ dir
 make test               # run go unit tests
 make integration-test   # test inference end to end for all models
+make equiv-test         # test equivalence of inference across various pairs of cases
 
 # CLI subcommands
 ./bin/bench serve-api
 ./bin/bench chat
 ./bin/bench gen-arch-diagram [--layers] [--blocks] <input.toml> [output.svg]
 ./bin/bench gen-cull-metadata --cull-method <method> [--cpu] <model.gguf>
+
+# Safetensors conversion tools
+tools/hf_to_gguf_setup.sh       One-time setup: Python venv + llama.cpp convert script
+tools/hf_to_gguf.sh             Tokenizer sidecar generation + full convert passthrough
+  tools/hf_to_gguf.sh --bench-tokenizer <model-name>  # generates tokenizer.gguf in .st/ dir
+
+# After adding a new models/<name>.st/ directory, build its tokenizer.gguf sidecar:
+make st-tok-ggufs               # builds the sidecar in every .st/ dir missing one
+#   — the sidecar is required to load a safetensors model (bench's tokenizer
+#     path is GGUF-only). `make serve` invokes this automatically; running
+#     `./bin/bench serve-api` directly does not, so run it manually after
+#     dropping a new .st/ directory into models/.
 
 # Test harness (assumes server running; FORCE_NEW_SERVER=true to kill+restart)
 bash test_inference.sh "What is 2+2?"
@@ -160,8 +183,15 @@ curl -X POST localhost:11116/api/v1/chat/completions \
 
 **Validating Changes**
 * `make test && make integration-test` must pass.
-* When adding new model architectures or changing inference code, `make equiv-test` must also pass — it compares top-1 logprobs against `llama-server` (Homebrew) (among other checks) to verify inference correctness within GPU floating-point variance.
+* When adding new model architectures or changing inference code, `make equiv-test` must also pass — it compares top-1 logprobs against `llama-server` (Homebrew) and between the GGUF and safetensors loader paths to verify inference correctness within GPU floating-point variance. This is the authoritative gate for any change touching the load or inference path.
 * Run `ALL_MODELS=true bash test_inference.sh "..."` before declaring any inference change complete. Llama is easy mode — edge cases surface on Qwen3.5, Qwen3.5-MoE, DeepSeek2, and Gemma4.
+
+**Load-time defensive checks** — the loader runs three cheap sanity checks that turn silent numerical failures into loud load-time errors. Do not disable them without cause:
+* `arch.ResolveParams` validates every required param is present and typed correctly; the loader aborts before VRAM allocation if any required key is missing or has a zero/garbage value that would cause silent divergence downstream (e.g. `rms_eps=0`).
+* `ggml.ValidateRowData` inspects every tensor's raw bytes before upload — full element scan for float types, block scale/delta scan for quantized types (near-zero cost). Catches corrupt weight files and reader type/shape mismatches at load time rather than as NaN logits mid-generation.
+* `ValidateLogits` runs at every sampler chokepoint (cached, stateless, diffusion) and fails the request if any logit is NaN/Inf. Diffusion wraps the error with `blockNum` / `step`; autoregressive paths wrap with `sample:`.
+
+**Param dumps** — both GGUF and safetensors readers emit a sorted `[param] key = value` DEBUG dump of all metadata at load. Visual diff between the two is the fastest way to catch stmap errors when porting a new architecture to safetensors.
 
 ## Key Technical Details
 
@@ -260,12 +290,50 @@ On unrecognized input, `ParseLevel` returns `(LevelInfo, false)` — always chec
 `ggmlGoLogCallback` in `logging.go` carries the `//export` directive. CGo auto-generates its C declaration in `_cgo_export.h`. A forward declaration for this symbol must NOT appear in `ggml_ops.h`. If it does, the CGo auto-generated declaration and the hand-written one will conflict at compile time. The symbol's C declaration is local to `ggml_ops.c` only.
 
 **Constraints** (enforce these):
-- `log.Fatal` is only permitted in `bench/` cobra entry points. Never call it from `internal/apiserver/` or `internal/inference/`.
+- `log.Fatal` is only permitted in `bench/` cobra entry points. Never call it from `internal/apiserver/`, `internal/inference/`, or any utility package — including `internal/util/paths.go`. Library code returns errors; only the cobra entry decides whether to terminate. `util.ResolvePaths()` returns `(BenchPaths, error)` to honor this.
 - Never pass user-controlled values in the format string position — always use `%s`/`%v` args.
 - Think content must be capped at 500 chars before logging; request string fields at 64 chars.
 - `LOG_LEVEL` env var does not exist — level comes only from `--log-level`.
 - No slog dependency; no third-party logging dependency.
 - `ModuleMap.CullLog []string` in the culling package is a data structure, not a logger — do not confuse it with this package.
+
+### Path Resolution and Injection
+
+`util.BenchPaths` carries the standard directory layout (`ExeDir`, `ConfigDir`, `ModelsDir`, `ArchDir`, `DiagDir`) derived from the running executable's location. Two rules:
+
+- **Resolution happens once, in `bench/`**. `util.ResolvePaths() (BenchPaths, error)` is called from each cobra entry point (`serve_api.go`, `chat.go`, `gen_arch_diagram.go`, `gen_cull_metadata.go`). The result is cached for the process lifetime via `sync.Once`. On error, the cobra entry calls `log.Fatal` itself.
+- **Injection downstream**. Library code never calls `ResolvePaths`. `BenchPaths` is passed into `apiserver.NewServer(paths, cfg, manager)`, then forwarded to `inference.NewEngine(...)` and culling helpers. `Server` stores `paths util.BenchPaths` and reads `paths.DiagDir` / `paths.ArchDir` from it. This keeps utility and library packages free of `os.Exit` and the executable-path dance.
+
+The `BENCH_EXE_DIR` env var is honored by `ResolvePaths` for debug/IDE configurations where source CWD and runtime CWD diverge.
+
+### Graph Context Sizing (`arch` ↔ `ggml`)
+
+Two named pieces of state govern every ggml graph the arch package builds:
+
+- `arch.maxGraphNodes = 16384` — single source of truth for the per-pass cgraph node budget. Sized for the widest forward pass we build (stateless + cached, all architectures). Drives both context-arena sizing and `NewGraph` / `NewSched` allocations — all three must agree.
+- `arch.graphCtxSize() int` — returns `ggml.GraphContextSize(maxGraphNodes)`. The underlying `ggml.GraphContextSize(maxNodes)` is principled: `GraphOverheadCustom(maxNodes, false) + TensorOverhead*maxNodes + 64` alignment slop, computed from ggml's own accounting. No empirical multipliers, no magic numbers.
+
+`ggml.NewGraphContext(memSize int, allocPerm AllocPerm)` is non-variadic — every caller declares `AllocPermDisallow` (graph-build context, descriptors only — the normal case) or `AllocPermAllow` (data-arena scratch context, e.g. load-time type conversion). There is no default. The named `AllocPerm` type catches accidental swaps with `memSize`.
+
+Canonical logical weight names live in `arch_util.go`: `WeightAttnNorm`, `WeightFFNNorm`, and the `Cache*` keys. Never inline these literal strings in graph or module-map code.
+
+`ResolvedLayerWeights.Prefix` (set by `ResolveWeights` to the expanded per-layer prefix, e.g. `"blk.5."`, with trailing dot) is the canonical source for any per-layer prefix consumer — module map, tensor dims, diagram code. Never reconstruct `blk.<N>.` from `layer_idx` ad hoc.
+
+### ggml Wrapper Conventions
+
+- `ggml.GGMLType` is a named integer type for tensor element types (`TypeF32`, `TypeF16`, `TypeQ4_K`, etc.). Distinct from `int` — tensor type arguments cannot be silently swapped with unrelated ints (ne dimensions, mode flags, etc.).
+- Nullable tensor parameters in op wrappers use the `opt` prefix to flag that callers may pass `NilTensor()`: `SoftMaxExt(ctx, a, optMask, ...)`, `RopeExt(ctx, a, pos, optFreqFactors, ...)`, `FlashAttnExt(ctx, q, k, v, optMask, ...)`. Required tensor parameters have no prefix.
+- `Buffer.Clear(byte)` zeroes (or fills) an entire backend buffer in a single C call. `GenericCache.Clear()` uses this instead of per-tensor zero loops;
+
+### Model Loader Phase Structure (`arch/model.go`)
+
+`newGenericModelFromReader` builds a `genericModelBuilder` and calls `b.build()`. The builder carries partial state across phase methods (`checkMemory`, `resolveArch`, `initBackendsAndArena`, `uploadWeights`, `buildWeightStore`, `assignBuilders`, `createComputeResources`) and uses `WeightStore` as the ownership cut line:
+
+- Before `buildWeightStore`: the builder owns `gpu`, `cpu`, `weightCtx`, `weightBuf` individually — `cleanupOnError` frees them one by one.
+- After `buildWeightStore`: `store` owns all four — `cleanupOnError` calls `store.Close()` and returns.
+- After `createComputeResources`: the model owns `cachedCtx` / `cachedSched` — `cleanupOnError` frees them before closing the store.
+
+This avoids the double-free hazard of the previous open-coded loader. When adding new phases, place them in the sequence and update the cleanup logic; do not pass loose state by parameter.
 
 ### Shell Scripting Style
 - Shebang: `#!/usr/bin/env bash`
@@ -283,13 +351,16 @@ On unrecognized input, `ParseLevel` returns `(LevelInfo, false)` — always chec
 Before writing any code, build a complete picture of the model.
 
 1. **Read the llama.cpp reference implementation** — the authoritative source for how the architecture actually works at inference time:
-   - `../llama.cpp/src/models/<arch>.cpp` — full forward pass (layer loop, attention, FFN, any novel ops)
-   - `../llama.cpp/src/llama-arch.cpp` — GGUF tensor name mappings
-   - `../llama.cpp/src/llama-hparams.h` — parameter names, defaults, helper functions (e.g., `is_swa()`, `has_kv()`)
-   - `../llama.cpp/src/llama-model.cpp` — model init (look for arch-specific overrides like `f_attention_scale`, `rope_type`, `layer_reuse_cb`)
-   - `../llama.cpp/src/llama-graph.cpp` — shared graph construction (attention, KV cache writes, mask construction)
+   - ```make llama-cpp``` will clone our reference version 
+   - `tools/llama.cpp/src/models/<arch>.cpp` — full forward pass (layer loop, attention, FFN, any novel ops)
+   - `tools/llama.cpp/src/llama-arch.cpp` — GGUF tensor name mappings
+   - `tools/llama.cpp/src/llama-hparams.h` — parameter names, defaults, helper functions (e.g., `is_swa()`, `has_kv()`)
+   - `tools/llama.cpp/src/llama-model.cpp` — model init (look for arch-specific overrides like `f_attention_scale`, `rope_type`, `layer_reuse_cb`)
+   - `tools/llama.cpp/src/llama-graph.cpp` — shared graph construction (attention, KV cache writes, mask construction)
 
-2. **Scan the GGUF file** — verify actual metadata keys and tensor names:
+2. **Scan the model file or directory** — verify actual metadata keys and tensor names:
+
+   **GGUF**:
    ```python
    # Use the python gguf library to inspect metadata and tensor inventory
    import gguf
@@ -297,7 +368,17 @@ Before writing any code, build a complete picture of the model.
    for field in reader.fields.values(): print(field.name, ...)
    for t in reader.tensors: print(t.name, t.shape)
    ```
+
+   **Safetensors** — inspect `config.json` and `model.safetensors.index.json` (or shard headers):
+   ```python
+   import json
+   with open("models/<model>.st/config.json") as f: cfg = json.load(f)
+   for t_name, t_info in index["weight_map"].items(): print(t_name, t_info["dtype"], t_info["shape"])
+   ```
+
    Common surprises: tensors named without `.weight` suffix, global vs per-layer tensors, bool arrays stored as GGUF bool type, scalar params stored as arrays.
+
+   **If using safetensors**, you will also need to create a `.arch.stmap.toml` mapping HF names → GGUF-equivalent names (see `models/arch/MODEL_ARCH_STMAP_TOML_DSL_SPEC.md`). The stmap is per-architecture, not per-model — all variants of the same architecture share one stmap file.
 
 3. **Read existing arch TOMLs** — find the closest existing architecture and understand the DSL patterns:
    - `models/arch/MODEL_ARCH_TOML_DSL_SPEC.md` — authoritative DSL spec
@@ -341,7 +422,7 @@ To add a new builder:
 ### Phase 3: Extend the TOML DSL (if needed)
 
 If the architecture needs TOML/param features not yet supported:
-- **New param types**: `params.go` handles int, float, string, int arrays, bool arrays. Add new `Get*` methods to `GGUFReader` interface if needed.
+- **New param types**: `params.go` handles int, float, string, int arrays, bool arrays. Add new `Get*` methods to `GGUFReader` interface if needed. Note: safetensors models only provide scalar params from `config.json` — array types (`GetArrInts`, `GetArrBools`) are not available from that format.
 - **New routing patterns**: `weights.go:resolveBlockName()` supports expression-based (`rule`) and array-based (`pattern`) routing. Array routing uses `IntArr[pattern][layer_idx]` — nonzero → `if_true`, zero → `if_false`.
 - **New cache sharing**: `cache.go:NewCache()` supports param-driven sharing via `n_kv_shared_layers` (layers past `nLayers - nKVShared` reuse the last KV layer's cache per block type).
 - **Architecture-level flags**: `arch.go:ArchMeta` — add fields like `EmbedScale bool`, `TiedEmbeddings bool`, `NonCausal bool`.
@@ -367,6 +448,12 @@ The layer loop ordering in `runLayers` is: `attn_norm → attention block → po
 5. Update `[layers.common_weights]` — per-layer tensors shared across block types
 6. Update `[blocks.*]` — per-block-type weights, config overrides, cache specs
 7. Update `[ffn]` — FFN builder and weights
+
+**If using safetensors**, also write `models/arch/<arch-name>.arch.stmap.toml` mapping HF names → GGUF-equivalent names (see `models/arch/MODEL_ARCH_STMAP_TOML_DSL_SPEC.md`). The stmap covers:
+- `[params]` — HF `config.json` keys → GGUF metadata keys
+- `[layer_prefix].hf` — HF per-layer prefix with `{N}` substitution
+- `[tensors]` — our short tensor names → HF short tensor names
+- `[tensors.global]` — our short global names → HF full tensor names
 
 **Common pitfalls:**
 - GGUF tensor names: check for `.weight` suffix presence/absence. Our loader tries both.

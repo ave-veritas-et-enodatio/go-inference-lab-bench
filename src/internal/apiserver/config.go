@@ -21,7 +21,6 @@ type ServerConfig struct {
 }
 
 type ModelsConfig struct {
-	Directory string `toml:"directory"`
 	Default   string `toml:"default"` // "first", "last", or explicit model name
 }
 
@@ -61,7 +60,6 @@ func LoadConfig(path string) (*Config, error) {
 			Port: 11116,
 		},
 		Models: ModelsConfig{
-			Directory: "models",
 			Default:   "first",
 		},
 		Inference: InferenceConfig{
@@ -95,11 +93,6 @@ func (c *Config) validate() error {
 	}
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be 1-65535, got %d", c.Server.Port)
-	}
-
-	// models
-	if c.Models.Directory == "" {
-		return fmt.Errorf("models.directory must not be empty")
 	}
 
 	// inference

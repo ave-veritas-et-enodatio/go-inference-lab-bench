@@ -2,6 +2,7 @@ package arch
 
 import (
 	ggml "inference-lab-bench/internal/ggml"
+	"inference-lab-bench/internal/log"
 )
 
 // flashAttnHeadDims is the set of head dimensions supported by the GPU FA2 kernel.
@@ -61,6 +62,11 @@ func writeCacheKV(ctx *ggml.GraphContext, gf *ggml.Graph, kNew, vNew ggml.Tensor
 	cache *LayerCache, seqPos int, nKVHeads int64) {
 
 	headDim := kNew.Ne(0)
+	kc := cache.Tensors[CacheK]
+	if kc.IsNil() {
+		log.Error("writeCacheKV: nil K cache tensor — KV write skipped")
+		return
+	}
 	nNew := kNew.Ne(2)
 
 	// Permute new K/V to [headDim, nNew, nKVHeads] — contiguous for cpy source.
@@ -75,7 +81,6 @@ func writeCacheKV(ctx *ggml.GraphContext, gf *ggml.Graph, kNew, vNew ggml.Tensor
 	const float32Size = 4
 	offset := seqPos * int(headDim) * float32Size
 
-	kc := cache.Tensors[CacheK]
 	kView := ggml.View3D(ctx, kc, headDim, nNew, nKVHeads, kc.Nb(1), kc.Nb(2), offset)
 	gf.BuildForwardExpand(ggml.Cpy(ctx, kForCache, kView))
 

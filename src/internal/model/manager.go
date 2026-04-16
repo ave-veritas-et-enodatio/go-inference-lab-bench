@@ -13,17 +13,26 @@ import (
 	"inference-lab-bench/internal/util"
 )
 
+type ModelFormat string
+
+const (
+	FormatGGUF        ModelFormat = "gguf"
+	FormatSafetensors ModelFormat = "safetensors"
+)
+
 type ModelInfo struct {
-	ID       string // filename without .gguf extension
-	Path     string // absolute path to .gguf file
+	ID       string // filename without .gguf / directory name without .st
+	Path     string // absolute path to .gguf file or .st/ directory
+	Format   ModelFormat
 	Metadata *GGUFMetadata
 	LoadedAt int64 // unix timestamp when this model was first discovered
 }
 
 type Manager struct {
-	mu     sync.RWMutex
-	models map[string]*ModelInfo
-	dir    string
+	mu      sync.RWMutex
+	models  map[string]*ModelInfo
+	dir     string
+	archDir string
 }
 
 func NewManager(dir string) (*Manager, error) {
@@ -31,8 +40,9 @@ func NewManager(dir string) (*Manager, error) {
 	scanArchDefinitions(archDir)
 
 	m := &Manager{
-		models: make(map[string]*ModelInfo),
-		dir:    dir,
+		models:  make(map[string]*ModelInfo),
+		dir:     dir,
+		archDir: archDir,
 	}
 	if err := m.scan(); err != nil {
 		return nil, err
@@ -71,7 +81,46 @@ func (m *Manager) scan() error {
 			log.Warn("skipping %s: unsupported architecture %q", id, meta.Architecture)
 			continue
 		}
-		m.models[id] = &ModelInfo{ID: id, Path: path, Metadata: meta, LoadedAt: time.Now().Unix()}
+		m.models[id] = &ModelInfo{ID: id, Path: path, Format: FormatGGUF, Metadata: meta, LoadedAt: time.Now().Unix()}
+		log.Info("loaded model: %s (%d tensors)", id, len(meta.Tensors))
+	}
+
+	// Safetensors directory scanning.
+	entries, err := os.ReadDir(m.dir)
+	if err != nil {
+		return fmt.Errorf("scanning models dir for safetensors: %w", err)
+	}
+	log.Debug("safetensors scan: %d entries in %s", len(entries), m.dir)
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), util.ExtSafetensorsDir) {
+			continue
+		}
+		stDir := filepath.Join(m.dir, e.Name())
+		fi, err := os.Stat(stDir)
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), util.ExtSafetensorsDir)
+		log.Debug("safetensors candidate: id=%q dir=%s", id, stDir)
+		if strings.Contains(id, "..") {
+			log.Debug("safetensors skip (has ..): %s", id)
+			continue
+		}
+		meta, err := ParseSafetensorsDir(stDir, m.archDir)
+		if err != nil {
+			log.Info("skipping %s: %v", e.Name(), err)
+			continue
+		}
+		log.Debug("safetensors parsed: id=%q arch=%q tensors=%d", id, meta.Architecture, len(meta.Tensors))
+		if !supportedArchitectures[meta.Architecture] {
+			log.Warn("skipping %s: unsupported architecture %q", id, meta.Architecture)
+			continue
+		}
+		if existing, exists := m.models[id]; exists {
+			log.Debug("skipping %s: GGUF version already loaded (format=%s)", e.Name(), existing.Format)
+			continue
+		}
+		m.models[id] = &ModelInfo{ID: id, Path: stDir, Format: FormatSafetensors, Metadata: meta, LoadedAt: time.Now().Unix()}
 		log.Info("loaded model: %s (%d tensors)", id, len(meta.Tensors))
 	}
 	return nil
@@ -106,7 +155,37 @@ func (m *Manager) List() []*ModelInfo {
 		if !supportedArchitectures[meta.Architecture] {
 			continue
 		}
-		fresh[id] = &ModelInfo{ID: id, Path: path, Metadata: meta, LoadedAt: time.Now().Unix()}
+		fresh[id] = &ModelInfo{ID: id, Path: path, Format: FormatGGUF, Metadata: meta, LoadedAt: time.Now().Unix()}
+		log.Info("discovered model: %s (%d tensors)", id, len(meta.Tensors))
+	}
+
+	// Safetensors directory scanning (mirrors GGUF pattern above).
+	dirEntries, _ := os.ReadDir(m.dir)
+	for _, e := range dirEntries {
+		if !strings.HasSuffix(e.Name(), util.ExtSafetensorsDir) {
+			continue
+		}
+		stDir := filepath.Join(m.dir, e.Name())
+		fi, err := os.Stat(stDir)
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), util.ExtSafetensorsDir)
+		if strings.Contains(id, "..") {
+			continue
+		}
+		if existing := snapshot[id]; existing != nil {
+			fresh[id] = existing
+			continue
+		}
+		meta, err := ParseSafetensorsDir(stDir, m.archDir)
+		if err != nil {
+			continue
+		}
+		if !supportedArchitectures[meta.Architecture] {
+			continue
+		}
+		fresh[id] = &ModelInfo{ID: id, Path: stDir, Format: FormatSafetensors, Metadata: meta, LoadedAt: time.Now().Unix()}
 		log.Info("discovered model: %s (%d tensors)", id, len(meta.Tensors))
 	}
 
@@ -137,27 +216,49 @@ func (m *Manager) Get(id string) *ModelInfo {
 }
 
 // tryLoadOne attempts to load a single model by ID from the models directory.
+// Checks for .gguf first, then falls back to .st directory.
 func (m *Manager) tryLoadOne(id string) *ModelInfo {
-	path := filepath.Join(m.dir, id+".gguf")
-	if _, err := os.Stat(path); err != nil {
-		return nil
+	// GGUF path
+	ggufPath := filepath.Join(m.dir, id+".gguf")
+	if fi, err := os.Stat(ggufPath); err == nil && !fi.IsDir() {
+		meta, err := ParseGGUF(ggufPath)
+		if err == nil {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if existing := m.models[id]; existing != nil {
+				return existing
+			}
+			scanArchDefinitions(filepath.Join(m.dir, "arch"))
+			if !supportedArchitectures[meta.Architecture] {
+				return nil
+			}
+			info := &ModelInfo{ID: id, Path: ggufPath, Format: FormatGGUF, Metadata: meta, LoadedAt: time.Now().Unix()}
+			m.models[id] = info
+			log.Info("discovered model: %s (%d tensors)", id, len(meta.Tensors))
+			return info
+		}
 	}
-	meta, err := ParseGGUF(path)
-	if err != nil {
-		return nil
+
+	// Safetensors directory fallback
+	stDir := filepath.Join(m.dir, id+util.ExtSafetensorsDir)
+	if fi, err := os.Stat(stDir); err == nil && fi.IsDir() {
+		meta, err := ParseSafetensorsDir(stDir, m.archDir)
+		if err == nil {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if existing := m.models[id]; existing != nil {
+				return existing
+			}
+			scanArchDefinitions(filepath.Join(m.dir, "arch"))
+			if !supportedArchitectures[meta.Architecture] {
+				return nil
+			}
+			info := &ModelInfo{ID: id, Path: stDir, Format: FormatSafetensors, Metadata: meta, LoadedAt: time.Now().Unix()}
+			m.models[id] = info
+			log.Info("discovered model: %s (%d tensors)", id, len(meta.Tensors))
+			return info
+		}
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	// Double-check: another goroutine may have loaded this model while we were outside the lock.
-	if existing := m.models[id]; existing != nil {
-		return existing
-	}
-	scanArchDefinitions(filepath.Join(m.dir, "arch"))
-	if !supportedArchitectures[meta.Architecture] {
-		return nil
-	}
-	info := &ModelInfo{ID: id, Path: path, Metadata: meta, LoadedAt: time.Now().Unix()}
-	m.models[id] = info
-	log.Info("discovered model: %s (%d tensors)", id, len(meta.Tensors))
-	return info
+
+	return nil
 }

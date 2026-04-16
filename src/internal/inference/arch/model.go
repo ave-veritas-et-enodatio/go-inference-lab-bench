@@ -2,12 +2,11 @@ package arch
 
 import (
 	"fmt"
-	"os"
 
 	ggufparser "github.com/gpustack/gguf-parser-go"
 
 	"inference-lab-bench/internal/ggml"
-	log "inference-lab-bench/internal/log"
+	"inference-lab-bench/internal/log"
 )
 
 // GenericModel is a model loaded from a GGUF file using an architecture definition.
@@ -15,15 +14,15 @@ type GenericModel struct {
 	Def             *ArchDef
 	Params          *ResolvedParams
 	Weights         *ResolvedWeights
-	Store           *WeightStore               // immutable weight storage (read-only after load)
-	LayerBlockNames []string                    // which block each layer uses
-	BlockBuilders   []BlockBuilder              // per-layer block builder
-	FFNBuilders     []FFNBuilder                // per-layer FFN builder
-	FFNConfigs      []map[string]any            // per-layer FFN config (from [ffn.config] / [ffn_alt.config])
+	Store           *WeightStore     // immutable weight storage (read-only after load)
+	LayerBlockNames []string         // which block each layer uses
+	BlockBuilders   []BlockBuilder   // per-layer block builder
+	FFNBuilders     []FFNBuilder     // per-layer FFN builder
+	FFNConfigs      []map[string]any // per-layer FFN config (from [ffn.config] / [ffn_alt.config])
 
 	// Canonical module map and supporting data for per-query culling.
 	CanonicalModuleMap *ModuleMap
-	HeadDim            int           // elements per attention head (for flash attention geometry check)
+	HeadDim            int // elements per attention head (for flash attention geometry check)
 	TensorDims         TensorDimsMap
 	ModelPath          string
 
@@ -34,163 +33,332 @@ type GenericModel struct {
 	// Pre-allocated scratch buffers for the hot decode path (ForwardCached).
 	ffnScratch map[string]ggml.Tensor // reused by buildFFNBlock each layer
 	logitBuf   []float32              // reused by readLogitsInto each token
+
+	// rlb bundles all RLB-specific state (block ranges, lazy scratch
+	// context/scheduler). Defined in graph_rlb.go so RLB internals stay out
+	// of this file.
+	rlb rlbState
 }
 
-// NewGenericModel loads a GGUF model using the named architecture definition.
+// NewGenericModelFromGGUF loads a GGUF model using the named architecture definition.
 // archDir is the directory containing architecture definition TOML files.
 // If gf is non-nil it is used directly; otherwise the GGUF is parsed from modelPath.
-func NewGenericModel(archName, modelPath, archDir string, gf *ggufparser.GGUFFile) (*GenericModel, error) {
-	def, err := Load(archDir, archName)
+func NewGenericModelFromGGUF(memStats ggml.MemoryStats, maxSeqLen int, archDef *ArchDef, modelPath, archDir string, gf *ggufparser.GGUFFile) (*GenericModel, error) {
+	if archDef == nil {
+		return nil, fmt.Errorf("valid ArchDef required")
+	}
+	reader, err := NewModelReaderGGUF(archDef, modelPath, gf)
 	if err != nil {
-		return nil, fmt.Errorf("loading arch def %q: %w", archName, err)
+		return nil, err
 	}
 
-	// 1. Parse GGUF with pure-Go parser — provides KV metadata and tensor specs.
-	if gf == nil {
-		var parseErr error
-		gf, parseErr = ggufparser.ParseGGUFFile(modelPath)
-		if parseErr != nil {
-			return nil, fmt.Errorf("failed to parse GGUF: %w", parseErr)
+	return newGenericModelFromReader(memStats, maxSeqLen, reader, archDef, modelPath)
+}
+
+// NewGenericModelFromSafetensors loads a safetensors model using the named architecture definition.
+// archDir is the directory containing architecture definition TOML and stmap files.
+// stDir is the directory containing the safetensors shards and config.json.
+func NewGenericModelFromSafetensors(memStats ggml.MemoryStats, maxSeqLen int, archDef *ArchDef, stDir, archDir string) (*GenericModel, error) {
+	if archDef == nil {
+		return nil, fmt.Errorf("valid ArchDef required")
+	}
+	reader, err := NewModelReaderSafetensors(archDef, stDir, archDir)
+	if err != nil {
+		return nil, err
+	}
+
+	return newGenericModelFromReader(memStats, maxSeqLen, reader, archDef, stDir)
+}
+
+// newGenericModelFromReader is the shared loading path used by both GGUF and safetensors.
+// Takes an already-constructed ModelReader and loaded ArchDef. Always closes the
+// reader before returning. On error, releases any resources allocated so far.
+func newGenericModelFromReader(memStats ggml.MemoryStats, maxSeqLen int, reader ModelReader, def *ArchDef, modelPath string) (*GenericModel, error) {
+	b := &genericModelBuilder{
+		memStats:  memStats,
+		maxSeqLen: maxSeqLen,
+		reader:    reader,
+		def:       def,
+		modelPath: modelPath,
+	}
+	return b.build()
+}
+
+// genericModelBuilder owns the partial state accumulated while constructing a
+// GenericModel. Splitting the loader into phase methods on this struct keeps
+// the top-level control flow readable without passing a dozen locals around.
+//
+// Ownership model for cleanup:
+//   - Before buildWeightStore(): gpu, cpu, weightCtx, weightBuf (if allocated)
+//     are owned by the builder and must be freed individually on error.
+//   - After buildWeightStore(): store owns all of the above; store.Close()
+//     frees everything in one call.
+//   - After createComputeResources(): m.cachedCtx / m.cachedSched are owned by
+//     the model; cleanupOnError frees them before closing store.
+type genericModelBuilder struct {
+	// Inputs
+	memStats  ggml.MemoryStats
+	maxSeqLen int
+	reader    ModelReader
+	def       *ArchDef
+	modelPath string
+
+	// Resolved architecture
+	params      *ResolvedParams
+	weights     *ResolvedWeights
+	headDim     int
+	canonicalMM *ModuleMap
+	tensorDims  TensorDimsMap
+
+	// Backends + weight arena — ownership transfers to store once built.
+	gpu               *ggml.Backend
+	cpu               *ggml.Backend
+	weightCtx         *ggml.GraphContext
+	weightBuf         *ggml.Buffer
+	weightTensorIndex map[string]ggml.Tensor
+
+	// Built model — owns the store and compute resources from phase H onward.
+	store *WeightStore
+	m     *GenericModel
+}
+
+func (b *genericModelBuilder) build() (m *GenericModel, err error) {
+	defer b.reader.Close()
+	defer func() {
+		if err != nil {
+			b.cleanupOnError()
 		}
-	}
-	if gf.TensorDataStartOffset == 0 && len(gf.TensorInfos) > 0 {
-		return nil, fmt.Errorf("split GGUF files are not supported (use a single-file model)")
-	}
-	tensorSpecs := buildTensorSpecs(gf)
-	reader := &goGGUFReader{kvs: gf.Header.MetadataKV, tensorSpecs: tensorSpecs}
+	}()
 
-	// 2. Resolve params
-	params, err := ResolveParams(def, reader)
+	if err = b.checkMemory(); err != nil {
+		return nil, err
+	}
+	if err = b.resolveArch(); err != nil {
+		return nil, err
+	}
+	if err = b.initBackendsAndArena(); err != nil {
+		return nil, err
+	}
+	if err = b.uploadWeights(); err != nil {
+		return nil, err
+	}
+	if err = b.buildWeightStore(); err != nil {
+		return nil, err
+	}
+	if err = b.assignBuilders(); err != nil {
+		return nil, err
+	}
+	if err = b.createComputeResources(); err != nil {
+		return nil, err
+	}
+	return b.m, nil
+}
+
+// cleanupOnError releases any resources the builder has allocated so far.
+// Safe to call at any phase — uses store ownership as the cut line.
+func (b *genericModelBuilder) cleanupOnError() {
+	// Model-scoped compute resources (created after store).
+	if b.m != nil {
+		if b.m.cachedSched != nil {
+			b.m.cachedSched.Free()
+			b.m.cachedSched = nil
+		}
+		if b.m.cachedCtx != nil {
+			b.m.cachedCtx.Free()
+			b.m.cachedCtx = nil
+		}
+		b.m.rlb.Free()
+	}
+	// Store owns gpu/cpu/weightCtx/weightBuf — its Close frees everything.
+	if b.store != nil {
+		b.store.Close()
+		return
+	}
+	// Store not yet built — free raw resources individually.
+	if b.weightBuf != nil {
+		b.weightBuf.Free()
+	}
+	if b.weightCtx != nil {
+		b.weightCtx.Free()
+	}
+	if b.gpu != nil {
+		b.gpu.Free()
+	}
+	if b.cpu != nil {
+		b.cpu.Free()
+	}
+}
+
+// checkMemory verifies the model fits in available VRAM/RAM.
+func (b *genericModelBuilder) checkMemory() error {
+	memReq := b.reader.MinMemoryRequired(b.maxSeqLen)
+	if b.memStats.IsUMA {
+		if memReq.UnifiedRAM() > uint64(b.memStats.VRAM.Available()) {
+			return fmt.Errorf("insufficient unified RAM min required: %d  available: %d",
+				memReq.UnifiedRAM(),
+				b.memStats.VRAM.Available(),
+			)
+		}
+		return nil
+	}
+	if memReq.TotalVRAM() >= uint64(b.memStats.VRAM.Available()) || memReq.OverheadRAM >= uint64(b.memStats.RAM.Available()) {
+		return fmt.Errorf("insufficient VRAM/RAM min required: %d/%d  available: %d/%d",
+			memReq.TotalVRAM(), memReq.OverheadRAM,
+			b.memStats.VRAM.Available(), b.memStats.RAM.Available(),
+		)
+	}
+	return nil
+}
+
+// resolveArch resolves params, weights, and builds the canonical module map
+// and tensor dims (used by per-query culling).
+func (b *genericModelBuilder) resolveArch() error {
+	params, err := ResolveParams(b.def, b.reader)
 	if err != nil {
-		return nil, fmt.Errorf("resolving params: %w", err)
+		return fmt.Errorf("resolving params: %w", err)
 	}
-
-	// 3. Resolve weights
-	weights, err := ResolveWeights(def, params)
+	weights, err := ResolveWeights(b.def, params)
 	if err != nil {
-		return nil, fmt.Errorf("resolving weights: %w", err)
+		return fmt.Errorf("resolving weights: %w", err)
 	}
-
-	// 4. Build canonical module map and supporting data for per-query culling.
-	headDim := params.Ints["head_dim"]
-	canonicalMM := BuildModuleMap(weights)
-	tensorDims := BuildTensorDimsMap(weights, func(name string) (int64, int64, int64, bool) {
-		if s, ok := tensorSpecs[name]; ok {
+	b.params = params
+	b.weights = weights
+	b.headDim = params.Ints["head_dim"]
+	b.canonicalMM = BuildModuleMap(weights)
+	b.tensorDims = BuildTensorDimsMap(weights, func(name string) (int64, int64, int64, bool) {
+		if s, ok := b.reader.TensorSpec(name); ok {
 			return s.Ne[0], s.Ne[1], int64(s.Size), true
 		}
 		return 0, 0, 0, false
-	}, params.Ints["head_dim"])
+	}, b.headDim)
+	return nil
+}
 
-	// 5. Init backends
-	metal := ggml.MetalInit()
-	if metal == nil {
-		return nil, fmt.Errorf("failed to init GPU backend")
+// initBackendsAndArena brings up the GPU/CPU backends, creates the weight
+// context, builds the tensor-name → tensor index from reader specs, and
+// allocates all weight storage on the GPU.
+func (b *genericModelBuilder) initBackendsAndArena() error {
+	b.gpu = ggml.GPUInit()
+	if b.gpu == nil {
+		return fmt.Errorf("failed to init GPU backend")
 	}
-	cpu := ggml.CPUInit()
+	b.cpu = ggml.CPUInit()
 
-	// 6. Build tensor context: all tensors loaded into VRAM (culling is per-query, not load-time).
-	nTensors := int64(len(gf.TensorInfos))
-
+	nTensors := int64(b.reader.TensorCount())
 	ctxSize := int64(ggml.TensorOverhead())*nTensors + 1*1024*1024
-	weightCtx := ggml.NewGraphContext(int(ctxSize))
-	if weightCtx == nil {
-		metal.Free()
-		cpu.Free()
-		return nil, fmt.Errorf("failed to create weight context")
+	b.weightCtx = ggml.NewGraphContext(int(ctxSize), ggml.AllocPermDisallow)
+	if b.weightCtx == nil {
+		return fmt.Errorf("failed to create weight context")
 	}
 
-	weightTensorIndex := make(map[string]ggml.Tensor, nTensors)
-	for _, ti := range gf.TensorInfos {
-		spec := tensorSpecs[ti.Name]
-		t := makeTensorFromSpec(weightCtx, spec.Type, spec.Ne[0], spec.Ne[1], spec.Ne[2], spec.Ne[3])
-		ggml.SetName(t, ti.Name)
-		weightTensorIndex[ti.Name] = t
-	}
-
-	// 7. Allocate all tensors on GPU
-	weightBuf := ggml.AllocCtxTensors(weightCtx, metal)
-	if weightBuf == nil {
-		weightCtx.Free()
-		metal.Free()
-		cpu.Free()
-		return nil, fmt.Errorf("failed to alloc GPU VRAM")
-	}
-
-	// 8. Load tensor data from file
-	f, ferr := os.Open(modelPath)
-	if ferr != nil {
-		weightBuf.Free()
-		weightCtx.Free()
-		metal.Free()
-		cpu.Free()
-		return nil, fmt.Errorf("failed to open model file: %w", ferr)
-	}
-	defer f.Close()
-
-	dataOffset := gf.TensorDataStartOffset
-	for _, ti := range gf.TensorInfos {
-		t, ok := weightTensorIndex[ti.Name]
+	b.weightTensorIndex = make(map[string]ggml.Tensor, nTensors)
+	for _, name := range b.reader.TensorNames() {
+		spec, ok := b.reader.TensorSpec(name)
 		if !ok {
 			continue
 		}
-		size := int(ti.Bytes())
-		buf := make([]byte, size)
-		if _, err := f.ReadAt(buf, dataOffset+int64(ti.Offset)); err != nil {
-			return nil, fmt.Errorf("read tensor %s: %w", ti.Name, err)
+		t := makeTensorFromSpec(b.weightCtx, spec.Type, spec.Ne[0], spec.Ne[1], spec.Ne[2], spec.Ne[3])
+		ggml.SetName(t, name)
+		b.weightTensorIndex[name] = t
+	}
+
+	b.weightBuf = ggml.AllocCtxTensors(b.weightCtx, b.gpu)
+	if b.weightBuf == nil {
+		return fmt.Errorf("failed to alloc GPU VRAM")
+	}
+	return nil
+}
+
+// uploadWeights reads each tensor's raw bytes from the reader, runs
+// ggml_validate_row_data on them, and uploads them to GPU VRAM.
+//
+// ggml_validate_row_data inspects each block's scale and delta fields for
+// NaN/Inf at near-zero cost on quantized types; for float types it scans every
+// element. A single bad block scale in a Q4_K weight propagates silently to
+// every output row that block touches during inference, producing the "first
+// token EOS / garbage text" symptom that took hours to diagnose in the
+// safetensors load path. Catching it here turns that into a loud one-line
+// load-time error naming the offending tensor.
+func (b *genericModelBuilder) uploadWeights() error {
+	for _, name := range b.reader.TensorNames() {
+		t, ok := b.weightTensorIndex[name]
+		if !ok {
+			continue
+		}
+		spec, _ := b.reader.TensorSpec(name)
+		buf := make([]byte, spec.Size)
+		if err := b.reader.ReadTensor(name, buf); err != nil {
+			return fmt.Errorf("read tensor %s: %w", name, err)
+		}
+		if !ggml.ValidateRowData(spec.Type, buf) {
+			return fmt.Errorf("tensor %s failed ggml_validate_row_data "+
+				"(NaN/Inf in raw bytes — see stderr for offending block index; "+
+				"likely cause: corrupted weight file or reader type/shape mismatch)", name)
 		}
 		ggml.TensorSetBytes(t, buf, 0)
 	}
+	return nil
+}
 
-	// 9. Build weight store — all tensors present (culling is per-query via MaskedLayer).
+// buildWeightStore wraps the backends + weight arena in a WeightStore,
+// resolves global and per-layer tensor maps, handles tied embeddings, and
+// validates that each block builder's required weights are present.
+//
+// On success, the store takes ownership of gpu, cpu, weightCtx, weightBuf —
+// subsequent cleanup runs through store.Close() only.
+func (b *genericModelBuilder) buildWeightStore() error {
 	store := &WeightStore{
 		global: make(map[string]ggml.Tensor),
-		ctx:    weightCtx,
-		Buffer: weightBuf,
-		GPU:    metal,
-		CPU:    cpu,
+		ctx:    b.weightCtx,
+		Buffer: b.weightBuf,
+		GPU:    b.gpu,
+		CPU:    b.cpu,
 	}
 
-	// Resolve global tensors
-	for logicalName, tensorName := range weights.Global {
-		t, ok := weightTensorIndex[tensorName]
+	for logicalName, tensorName := range b.weights.Global {
+		t, ok := b.weightTensorIndex[tensorName]
 		if !ok {
 			t = ggml.NilTensor()
 		}
 		store.global[logicalName] = t
 	}
 
-	// Handle tied embeddings
-	if def.Architecture.TiedEmbeddings && store.Global("output").IsNil() {
-		store.global["output"] = store.global["token_embd"]
+	if b.def.Architecture.TiedEmbeddings && store.Global("output").IsNil() {
+		store.global["output"] = store.Global("token_embd")
 	}
+
+	// Transfer ownership to store before any error return so cleanupOnError
+	// uses store.Close() instead of double-freeing via individual fields.
+	b.store = store
 
 	if store.Global("token_embd").IsNil() || store.Global("output_norm").IsNil() {
-		store.Close()
-		return nil, fmt.Errorf("missing global tensors")
+		return fmt.Errorf("missing required global weight tensor: token_embd or output_norm")
+	}
+	if store.Global("output").IsNil() {
+		return fmt.Errorf("missing required global weight tensor: output")
 	}
 
-	// Resolve per-layer tensors
-	nLayers := params.Ints["n_layers"]
+	nLayers := b.params.Ints["n_layers"]
 	store.layers = make([]map[string]ggml.Tensor, nLayers)
 
-	for i, lw := range weights.Layers {
+	for i, lw := range b.weights.Layers {
 		lt := make(map[string]ggml.Tensor)
 
 		for logicalName, tensorName := range lw.Common {
-			t, ok := weightTensorIndex[tensorName]
+			t, ok := b.weightTensorIndex[tensorName]
 			if !ok {
 				t = ggml.NilTensor()
 			}
 			lt[logicalName] = t
 		}
 
-		blockDef := def.Blocks[lw.BlockName]
+		blockDef := b.def.Blocks[lw.BlockName]
 		for logicalName, tensorName := range lw.Block {
-			t, ok := weightTensorIndex[tensorName]
+			t, ok := b.weightTensorIndex[tensorName]
 			if !ok {
 				// Fallback: try the raw suffix as a global tensor name (e.g. rope_freqs.weight)
 				if suffix, has := blockDef.Weights[logicalName]; has {
-					t, ok = weightTensorIndex[suffix]
+					t, ok = b.weightTensorIndex[suffix]
 				}
 			}
 			if !ok {
@@ -199,10 +367,10 @@ func NewGenericModel(archName, modelPath, archDir string, gf *ggufparser.GGUFFil
 			lt[logicalName] = t
 		}
 
-		// n_kv_shared_layers: non-KV layers still have weights in the GGUF but
+		// n_kv_shared_layers: non-KV layers still have weights in the model but
 		// must NOT compute their own K/V or write to cache. Null out K/V weights
 		// so the builder's hasKV check correctly identifies them as non-KV.
-		if nKVShared, ok := params.Ints["n_kv_shared_layers"]; ok && nKVShared > 0 {
+		if nKVShared, ok := b.params.Ints["n_kv_shared_layers"]; ok && nKVShared > 0 {
 			nKVFromStart := nLayers - nKVShared
 			if i >= nKVFromStart {
 				lt["attn_k"] = ggml.NilTensor()
@@ -211,7 +379,7 @@ func NewGenericModel(archName, modelPath, archDir string, gf *ggufparser.GGUFFil
 		}
 
 		for logicalName, tensorName := range lw.FFN {
-			t, ok := weightTensorIndex[tensorName]
+			t, ok := b.weightTensorIndex[tensorName]
 			if !ok {
 				t = ggml.NilTensor()
 			}
@@ -220,7 +388,7 @@ func NewGenericModel(archName, modelPath, archDir string, gf *ggufparser.GGUFFil
 
 		// FFN alt weights (also prefixed with ffn_)
 		for logicalName, tensorName := range lw.FFNAlt {
-			t, ok := weightTensorIndex[tensorName]
+			t, ok := b.weightTensorIndex[tensorName]
 			if !ok {
 				t = ggml.NilTensor()
 			}
@@ -228,55 +396,78 @@ func NewGenericModel(archName, modelPath, archDir string, gf *ggufparser.GGUFFil
 		}
 
 		store.layers[i] = lt
+
+		// Validate that all required weights for this layer's block builder are present.
+		if bb, ok := GetBlockBuilder(blockDef.Builder); ok {
+			contract := bb.Contract()
+			for _, req := range contract.RequiredWeights {
+				if lt[req].IsNil() {
+					return fmt.Errorf("layer %d (block %q): required weight %q is missing from model", i, lw.BlockName, req)
+				}
+			}
+		}
 	}
 
-	// 10. Build model struct
+	return nil
+}
+
+// assignBuilders instantiates the model struct, assigns per-layer block and
+// FFN builders (including per-layer alt-FFN routing via layerHasAltFFN), and
+// emits the load summary log.
+func (b *genericModelBuilder) assignBuilders() error {
+	nLayers := b.params.Ints["n_layers"]
+
 	m := &GenericModel{
-		Def:     def,
-		Params:  params,
-		Weights: weights,
-		Store:   store,
+		Def:                b.def,
+		Params:             b.params,
+		Weights:            b.weights,
+		Store:              b.store,
+		CanonicalModuleMap: b.canonicalMM,
+		HeadDim:            b.headDim,
+		TensorDims:         b.tensorDims,
+		ModelPath:          b.modelPath,
 	}
+	b.m = m
 
 	m.LayerBlockNames = make([]string, nLayers)
 	m.BlockBuilders = make([]BlockBuilder, nLayers)
-
-	for i, lw := range weights.Layers {
+	for i, lw := range b.weights.Layers {
 		m.LayerBlockNames[i] = lw.BlockName
-		bb, ok := GetBlockBuilder(def.Blocks[lw.BlockName].Builder)
+		bb, ok := GetBlockBuilder(b.def.Blocks[lw.BlockName].Builder)
 		if !ok {
-			store.Close()
-			return nil, fmt.Errorf("layer %d: unknown block builder %q", i, def.Blocks[lw.BlockName].Builder)
+			return fmt.Errorf("layer %d: unknown block builder %q", i, b.def.Blocks[lw.BlockName].Builder)
 		}
 		m.BlockBuilders[i] = bb
 	}
 
-	// Resolve per-layer FFN builders
-	fb, ok := GetFFNBuilder(def.FFN.Builder)
+	fb, ok := GetFFNBuilder(b.def.FFN.Builder)
 	if !ok {
-		store.Close()
-		return nil, fmt.Errorf("unknown FFN builder %q", def.FFN.Builder)
+		return fmt.Errorf("unknown FFN builder %q", b.def.FFN.Builder)
 	}
 	var fbAlt FFNBuilder
-	if def.FFNAlt != nil {
-		fbAlt, ok = GetFFNBuilder(def.FFNAlt.Builder)
+	if b.def.FFNAlt != nil {
+		fbAlt, ok = GetFFNBuilder(b.def.FFNAlt.Builder)
 		if !ok {
-			store.Close()
-			return nil, fmt.Errorf("unknown FFN alt builder %q", def.FFNAlt.Builder)
+			return fmt.Errorf("unknown FFN alt builder %q", b.def.FFNAlt.Builder)
 		}
 	}
 	m.FFNBuilders = make([]FFNBuilder, nLayers)
 	m.FFNConfigs = make([]map[string]any, nLayers)
-	for i, lw := range weights.Layers {
-		// Use alt FFN if this layer has alt weights in the GGUF
-		if fbAlt != nil && len(lw.FFNAlt) > 0 && layerHasAltFFN(store, lw) {
+	for i, lw := range b.weights.Layers {
+		// Use alt FFN if this layer has alt weights in the model
+		if fbAlt != nil && len(lw.FFNAlt) > 0 && layerHasAltFFN(b.store, lw) {
 			m.FFNBuilders[i] = fbAlt
-			m.FFNConfigs[i] = def.FFNAlt.Config
+			m.FFNConfigs[i] = b.def.FFNAlt.Config
 		} else {
 			m.FFNBuilders[i] = fb
-			m.FFNConfigs[i] = def.FFN.Config
+			m.FFNConfigs[i] = b.def.FFN.Config
 		}
 	}
+
+	// Compute block boundaries for per-block RLB. InitBlockRanges is a no-op
+	// when full_attn_interval is absent or zero; the per-block driver then
+	// falls back to a single block covering all layers.
+	m.rlb.InitBlockRanges(nLayers, b.params.Ints["full_attn_interval"])
 
 	blockCounts := make(map[string]int)
 	for _, name := range m.LayerBlockNames {
@@ -290,60 +481,41 @@ func NewGenericModel(archName, modelPath, archDir string, gf *ggufparser.GGUFFil
 		blockSummary += fmt.Sprintf("%d %s", count, name)
 	}
 	log.Info("%s: %d layers (%s), n_embd=%d, n_heads=%d/%d, head_dim=%d",
-		def.Architecture.Name, nLayers, blockSummary,
-		params.Ints["n_embd"], params.Ints["n_heads"], params.Ints["n_kv_heads"], params.Ints["head_dim"])
-
-	// Store canonical module map and supporting data for per-query culling.
-	m.CanonicalModuleMap = canonicalMM
-	m.HeadDim = headDim
-	m.TensorDims = tensorDims
-	m.ModelPath = modelPath
-
-	m.cachedCtx = ggml.NewGraphContext(graphCtxSize(nLayers))
-	if m.cachedCtx == nil {
-		store.Close()
-		return nil, fmt.Errorf("failed to create cached graph context")
-	}
-	m.cachedSched = ggml.NewSched(store.GPU, store.CPU, 16384)
-	if m.cachedSched == nil {
-		m.cachedCtx.Free()
-		store.Close()
-		return nil, fmt.Errorf("failed to create cached scheduler")
-	}
-
-	m.ffnScratch = make(map[string]ggml.Tensor)
-	m.logitBuf = make([]float32, params.Ints["n_vocab"])
-
-	return m, nil
+		b.def.Architecture.Name, nLayers, blockSummary,
+		b.params.Ints["n_embd"], b.params.Ints["n_heads"], b.params.Ints["n_kv_heads"], b.params.Ints["head_dim"])
+	return nil
 }
 
-// ResolveWeightLayout loads an architecture definition and resolves the complete weight
-// name mapping for a model file. Reads GGUF metadata but does not allocate GPU memory.
-// Useful for tools (e.g. gen-modulemap) that need the weight structure without loading the model.
-func ResolveWeightLayout(archName, modelPath, archDir string) (*ResolvedWeights, error) {
-	def, err := Load(archDir, archName)
-	if err != nil {
-		return nil, fmt.Errorf("loading arch def %q: %w", archName, err)
+// createComputeResources allocates the cached forward-pass graph context,
+// scheduler, and scratch buffers reused across decode tokens.
+func (b *genericModelBuilder) createComputeResources() error {
+	b.m.cachedCtx = ggml.NewGraphContext(graphCtxSize(), ggml.AllocPermDisallow)
+	if b.m.cachedCtx == nil {
+		return fmt.Errorf("failed to create cached graph context")
 	}
-
-	gf, err := ggufparser.ParseGGUFFile(modelPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse GGUF: %w", err)
+	b.m.cachedSched = ggml.NewSched(b.store.GPU, b.store.CPU, maxGraphNodes)
+	if b.m.cachedSched == nil {
+		return fmt.Errorf("failed to create cached scheduler")
 	}
-	tensorSpecs := buildTensorSpecs(gf)
-	reader := &goGGUFReader{kvs: gf.Header.MetadataKV, tensorSpecs: tensorSpecs}
+	b.m.ffnScratch = make(map[string]ggml.Tensor)
+	b.m.logitBuf = make([]float32, b.params.Ints["n_vocab"])
+	return nil
+}
 
-	params, err := ResolveParams(def, reader)
-	if err != nil {
-		return nil, fmt.Errorf("resolving params: %w", err)
+// MemoryStats returns the model's current memory allocation.
+func (m *GenericModel) MemoryStats() (weightBytes uint64, cacheBytes uint64) {
+	if m.Store == nil || m.Store.Buffer == nil {
+		return 0, 0
 	}
+	// WeightStore.Buffer.Size() returns the total allocated GPU buffer.
+	bufSize := m.Store.Buffer.Size()
 
-	weights, err := ResolveWeights(def, params)
-	if err != nil {
-		return nil, fmt.Errorf("resolving weights: %w", err)
-	}
-
-	return weights, nil
+	// We don't have a precise split between weights and cache in the buffer,
+	// but we can estimate: weight size is the sum of all tensor specs.
+	// For now, the whole buffer is reported as allocated.
+	weightBytes = uint64(bufSize)
+	cacheBytes = 0 // Cache is included in the same buffer; no separate accounting.
+	return weightBytes, cacheBytes
 }
 
 // layerHasAltFFN checks if the alt FFN weights actually exist in the GGUF for this layer.
@@ -384,6 +556,7 @@ func (m *GenericModel) Close() {
 		m.cachedCtx.Free()
 		m.cachedCtx = nil
 	}
+	m.rlb.Free()
 	if m.Store != nil {
 		m.Store.Close()
 		m.Store = nil
@@ -395,9 +568,9 @@ func (m *GenericModel) Close() {
 // tensorSpec holds tensor metadata extracted from gguf-parser-go,
 // replacing the C shape context. Dimensions are padded to 4 elements (unused = 1).
 type tensorSpec struct {
-	Type int      // ggml type int (matches ggml.NewTensor*D)
-	Ne   [4]int64 // dims; unused = 1
-	Size int      // total bytes
+	Type ggml.GGMLType // ggml type (matches ggml.NewTensor*D)
+	Ne   [4]int64      // dims; unused = 1
+	Size int           // total bytes
 }
 
 // goGGUFReader implements GGUFReader using gguf-parser-go metadata.
@@ -498,11 +671,10 @@ func buildTensorSpecs(f *ggufparser.GGUFFile) map[string]tensorSpec {
 			ne[d] = int64(ti.Dimensions[d])
 		}
 		specs[ti.Name] = tensorSpec{
-			Type: int(ti.Type),
+			Type: ggml.GGMLType(ti.Type),
 			Ne:   ne,
 			Size: int(ti.Bytes()),
 		}
 	}
 	return specs
 }
-

@@ -15,6 +15,7 @@ type ResolvedWeights struct {
 type ResolvedLayerWeights struct {
 	Index     int
 	BlockName string            // which block this layer uses (e.g. "recurrent_ssm", "full_attention")
+	Prefix    string            // expanded per-layer prefix (e.g. "blk.5.") — canonical, from [layers].prefix in TOML
 	Common    map[string]string // logical name → GGUF tensor name
 	Block     map[string]string // block-specific weights
 	FFN       map[string]string // FFN weights
@@ -56,6 +57,7 @@ func ResolveWeights(def *ArchDef, params *ResolvedParams) (*ResolvedWeights, err
 		lw := ResolvedLayerWeights{
 			Index:     i,
 			BlockName: blockName,
+			Prefix:    prefix,
 			Common:    make(map[string]string, len(def.Layers.CommonWeights)),
 			Block:     make(map[string]string, len(block.Weights)),
 			FFN:       make(map[string]string, len(def.FFN.Weights)),
@@ -140,6 +142,7 @@ func ResolveWeightsFromDef(def *ArchDef, nLayers int) *ResolvedWeights {
 		lw := ResolvedLayerWeights{
 			Index:     i,
 			BlockName: blockName,
+			Prefix:    prefix,
 			Common:    make(map[string]string, len(def.Layers.CommonWeights)),
 			Block:     make(map[string]string, len(block.Weights)),
 			FFN:       make(map[string]string, len(def.FFN.Weights)),

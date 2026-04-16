@@ -22,6 +22,26 @@ const (
 	CacheSSMState  = "ssm_state"
 )
 
+// Common weight key names. Canonical logical names used in [layers].common_weights
+// across arch TOMLs. Keep literal strings localized to this one place.
+const (
+	WeightAttnNorm = "attn_norm"
+	WeightFFNNorm  = "ffn_norm"
+)
+
+// maxGraphNodes is the per-pass ggml cgraph node budget. Sized for the
+// widest forward-pass we build (stateless + cached paths, all architectures).
+// Drives both the context arena (via graphCtxSize) and the NewGraph/NewSched
+// node allocations — all three must agree.
+const maxGraphNodes = 16384
+
+// graphCtxSize returns the minimum ggml context arena size needed to build a
+// graph of up to maxGraphNodes nodes. Computed from ggml's own accounting
+// (cgraph overhead + per-node tensor overhead) via ggml.GraphContextSize.
+func graphCtxSize() int {
+	return ggml.GraphContextSize(maxGraphNodes)
+}
+
 // rmsNormApply applies RMS normalization and optional weight scaling.
 // If weight is nil, returns the plain normalized tensor.
 func rmsNormApply(ctx *ggml.GraphContext, tensor, weight ggml.Tensor, eps float32) ggml.Tensor {
@@ -33,7 +53,11 @@ func rmsNormApply(ctx *ggml.GraphContext, tensor, weight ggml.Tensor, eps float3
 }
 
 // projectReshape3D projects input through weight and reshapes to 3D.
+// Returns NilTensor if weight is nil to prevent C-level segfaults.
 func projectReshape3D(ctx *ggml.GraphContext, weight, input ggml.Tensor, d0, d1, d2 int64) ggml.Tensor {
+	if weight.IsNil() {
+		return ggml.NilTensor()
+	}
 	return ggml.Reshape3D(ctx, ggml.MulMat(ctx, weight, input), d0, d1, d2)
 }
 

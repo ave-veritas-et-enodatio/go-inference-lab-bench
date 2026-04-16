@@ -38,15 +38,17 @@ else
   MSG="${*}"
 fi
 
-PORT=${PORT:-auto}
-if [[ ${PORT} == "auto" ]]; then
-  # parse the port out of server config
-  PORT=$(awk '/^[ \t]*port[ \t]*=/ { gsub("=", " "); print $2; exit(0); }' config/api_config.toml)
-  # echo PORT=${PORT} && exit 0
-fi
-SERVER_BASE_URL=${SERVER_BASE_URL:-"http://localhost:${PORT}"}
-CTL_BASE_URL=${CTL_BASE_URL:-"${SERVER_BASE_URL}/ctl"}
-API_BASE_URL=${API_BASE_URL:-"${SERVER_BASE_URL}/api/v1"}
+# parse the port out of server config
+BENCH_PORT=$(awk '/^[ \t]*port[ \t]*=/ { gsub("=", " "); print $2; exit(0); }' config/api_config.toml)
+BENCH_BASE_URL=http://localhost:${BENCH_PORT}
+BENCH_API_BASE_URL=${BENCH_BASE_URL}/api/v1
+BENCH_CTL_URL=${BENCH_BASE_URL}/ctl
+
+LLAMA_PORT=${LLAMA_PORT:-8080}
+LLAMA_BASE_URL=http://localhost:${LLAMA_PORT}
+LLAMA_API_BASE_URL=${LLAMA_BASE_URL}/v1
+
+
 STATELESS=${STATELESS:-null}
 # CULL_METHOD: null (no culling, use server config), "none", or "random".
 CULL_METHOD=${CULL_METHOD:-null}
@@ -56,22 +58,6 @@ FLASH=${FLASH:-null}
 MAX_TOKENS=${MAX_TOKENS:-4096}
 TEMPERATURE=${TEMPERATURE:-0}
 MODEL=${MODEL:-default}
-if [[ ${MODEL} == "default" && "${ALL_MODELS}" != "true" ]]; then
-  # parse the default model out of server config
-  MODEL=$(awk '
-    /^\[models\]/ { IN_MODELS = 1; next; }
-    /^[ \t]*default[ \t]*=/ {
-      if (IN_MODELS != 1) {
-        next;
-      }
-      gsub(/[=\""]/, " ");
-      print $2;
-      exit(0);
-    }
-    /^\[/ { if(IN_MODELS == 1) exit(0); }
-    ' config/api_config.toml)
-    #echo "MODEL=${MODEL}"
-fi
 STREAM=${STREAM:-false}
 DEBUG_POST=${DEBUG_POST:-false}
 DEBUG_RESPONSE=${DEBUG_RESPONSE:-false}
@@ -84,9 +70,11 @@ LLAMA_DIFFUSION_NGL=${LLAMA_DIFUSE_NGL:-99}
 # llama-diffusion-cli microbatch size (we don't implement microbatching yet)
 LLAMA_DIFFUSION_UB=${LLAMA_DIFUSE_UB:-512}
 FORCE_DIFFUSION_CLI=${FORCE_DIFFUSION_CLI:-false}
+
 # Collect arch names that declare generation = "diffusion" from the arch TOMLs.
 DIFFUSION_ARCH_NAMES=$(grep -rl 'generation\s*=\s*"diffusion"' models/arch/*.arch.toml 2>/dev/null \
   | sed 's|.*/||; s|\.arch\.toml||' | tr '\n' ' ')
+DIFFUSION_ARCH_NAMES=${DIFFUSION_ARCH_NAMES% }
 
 PYTHON=$(which python3 2> /dev/null) || \
   PYTHON=$(which python 2>/dev/null) || \
@@ -131,7 +119,12 @@ if "choices" in resp_all:
   otps = usage.get("completion_tokens_per_sec", 0.0)
   ttps = usage.get("total_tokens_per_sec", 0.0)
   secs = usage.get("total_seconds", 0.0)
-  print(f"{resp_text} {{itps:{itps:.2f}, otps:{otps:.2f}, ttps:{ttps:.2f}, s:{secs:.2f}}}")
+  ctok = usage.get("completion_tokens", 0)
+  ttok = usage.get("thinking_tokens", 0)
+  stats = f"itps:{itps:.2f}, otps:{otps:.2f}, ttps:{ttps:.2f}, s:{secs:.2f}"
+  if ctok > 0:
+    stats += f", otok:{ctok}, think:{ttok}"
+  print(f"{resp_text} {{{stats}}}")
   printed = True
   logprobs = resp_all.get("choices", [])
   if logprobs := (logprobs[0] if logprobs else {}).get("logprobs", {}):
@@ -172,7 +165,8 @@ function query_one_diffusion_cli() {
   local msg="${1}"
 
   local model_path="models/${MODEL}.gguf"
-  [[ -f "${model_path}" ]] || { echo "[ERR] model file not found: ${model_path}" 1>&2; return 1; }
+  [[ -f "${model_path}" ]] || model_path="models/${MODEL}.st"
+  [[ -d "${model_path}" ]] || { echo "[ERR] model ${MODEL} not found as .gguf or .st" 1>&2; return 1; }
 
   local cli_args=(-m "${model_path}" -p "${msg}")
   cli_args+=(-n "${DIFFUSION_TOKENS}")
@@ -209,33 +203,33 @@ function query_one() {
     return
   fi
 
-  if ${USE_LLAMA}; then
-    ext_params=$(printf '
-      "chat_template_kwargs": { "enable_thinking": %s },
-    ' \
+  # chat_template_kwargs is the llama.cpp-compatible shape for template
+  # variables like enable_thinking; both bench and llama-server accept it.
+  if [[ ${THINK} != null ]]; then
+    ext_params+=$(printf '
+      "chat_template_kwargs": { "enable_thinking": %s },' \
     "${THINK}")
-  else
-    ext_params=$(printf '
-      "enable_thinking": %s,
-      "stateless": %s,
-      "cull_method": %s,
-      "elide_thinking": %s,
-      "flash_attention": %s,' \
-    "${THINK}" \
-    "${STATELESS}" \
-    "${CULL_METHOD}" \
-    "${ELIDE_THINK}" \
-    "${FLASH}" \
-    )
+  fi
+
+  if ! ${USE_LLAMA}; then
+    local bench_params
+
+    [[ -n "${STATELESS}" && "${STATELESS}" != "null" ]] && bench_params+="\"stateless\": ${STATELESS},"
+    [[ -n "${CULL_METHOD}" && "${CULL_METHOD}" != "null" ]] && bench_params+="\"cull_method\": \"${CULL_METHOD}\","
+    [[ -n "${ELIDE_THINK}" && "${ELIDE_THINK}" != "null" ]] && bench_params+="\"elide_thinking\": ${ELIDE_THINK},"
+    [[ -n "${FLASH}" && "${FLASH}" != "null" ]] && bench_params+="\"flash_attention\": ${FLASH},"
 
     if ${is_diffusion}; then
       local diffusion_inner
       diffusion_inner+="\"steps\": ${DIFFUSION_STEPS},"
       diffusion_inner+="\"block_length\": ${DIFFUSION_BLOCK_LENGTH},"
-      # trim trailing comma
-      ext_params+="\"diffusion\": {${diffusion_inner%,}},"
+      bench_params+="\"diffusion\": {${diffusion_inner%,}},"
       # local alias only
       MAX_TOKENS=${DIFFUSION_TOKENS}
+    fi
+
+    if [[ -n "${bench_params}" ]]; then
+      ext_params+="\"bench_custom\": {${bench_params%,}},"
     fi
   fi
 
@@ -249,19 +243,26 @@ function query_one() {
 
   local payload=$(printf '{
       "messages": [{"role":"user","content":"%s"}],
+      %s
       "model": "%s",
       "max_tokens": %s,
       "temperature": %s,
-      "stream": %s,%s
+      "stream": %s
     }' \
     "${msg}" \
+    "${ext_params%}" \
     "${MODEL}" \
     "${MAX_TOKENS}" \
     "${TEMPERATURE}" \
     "${STREAM}" \
-    "${ext_params%,}" \
     )
-  local completions_url=${COMPLETIONS_URL:-"${API_BASE_URL}/chat/completions"}
+  local _payload
+  _payload=$(python -c 'import json,sys; print(json.dumps(json.loads(sys.stdin.read()), indent=2))' <<< "${payload%}") || {
+    echo "${payload}"
+    return 1
+  }
+  payload=${_payload} && unset _payload
+  local completions_url=${API_BASE_URL}/chat/completions
   ${DEBUG_POST} && echo "[DBG] ${completions_url} POST payload: ${payload}" || true
   local resp=$(curl -s -X POST "${completions_url}" \
     -H 'Content-Type: application/json' \
@@ -272,7 +273,7 @@ function query_one() {
 function query() {
   local model
   if ${ALL_MODELS}; then
-    for model in ${MODEL_LIST%default}; do
+    for model in ${MODEL_LIST}; do
       echo "${model} <-- \"${*}\""
       MODEL=${model} query_one "${@}"
       # llama server tries to hold all models in memory and fails
@@ -300,18 +301,27 @@ Acontextual Loop Mode
 /stateless: toggle stateless mode (currently: ${STATELESS})
 /cull [method]: set cull method (currently: ${CULL_METHOD}); "random", "none", or null
 /think: toggle think mode (currently: ${THINK})
-/elide-think; toggle elision of thinking output (currently: ${ELIDE_THINK})
+/elide-think: toggle elision of thinking output (currently: ${ELIDE_THINK})
 /max-tokens [token_count]: show or set MAX_TOKENS (currently: ${MAX_TOKENS})
 /diffusion-steps [steps]: show or set DIFFUSION_STEPS (currently: ${DIFFUSION_STEPS})
 /diffusion-block-length [length]: show or set DIFFUSION_BLOCK_LENGTH (currently: ${DIFFUSION_BLOCK_LENGTH})
 /diffusion-tokens [count]: show or set DIFFUSION_TOKENS (currently: ${DIFFUSION_TOKENS})
 /model [index]: show or set current model (currently: ${MODEL})
 /temperature [temperature]: show or set TEMPERATURE (currently: ${TEMPERATURE})
-/quit or /exit: exit loop mode
+/cls: clear the screen
+/new-server: shuts down old server and starts a new one.
+/llama: toggle between using llama-server and bench serve-api. (currently: USE_LLAMA=${USE_LLAMA})
+/quit: exit loop mode
 
+__EOF
+
+  ! ${USE_LLAMA} || {
+    cat << ____EOF
 Note: with USE_LLAMA=true, diffusion models (${DIFFUSION_ARCH_NAMES}) invoke llama-diffusion-cli
 fresh for each prompt — no persistent server, so each query loads the model from scratch.
-__EOF
+
+____EOF
+  }
 }
 
 function toggle() {
@@ -329,14 +339,34 @@ function rotate() {
   esac
 }
 
+function force_cycle_server() {
+  quit_api_server
+  quit_llama_server
+  if ${USE_LLAMA}; then
+    start_llama_server && echo "new llama server started." || echo "failed to start llama server."
+  else
+    start_api_server && echo "new api server started." || echo "failed to start api server."
+  fi
+}
+
 function loop_mode() {
+  local line
   loop_help
   while true; do
     read -e -p "> " line || break
+    line=${line% }
     [[ -n "${line}" ]] && history -s "${line}"
     case "${line}" in
       quit|exit)
         break;;
+      /new-server)
+        force_cycle_server
+        continue;;
+      /llama)
+        USE_LLAMA=$(toggle "${USE_LLAMA}")
+        echo "USE_LLAMA=${USE_LLAMA}"
+        force_cycle_server
+        continue;;
       /help|/)
         loop_help
         continue;;
@@ -345,7 +375,7 @@ function loop_mode() {
         if [[ "${MI:-0}" -gt 0 ]]; then
           MODEL=$(set ${MODEL_LIST}; eval "echo \$${MI}")
         else
-          detect_models
+          update_model_list
           show_models
         fi
         echo "MODEL=${MODEL}"
@@ -361,6 +391,9 @@ function loop_mode() {
       /stateless)
         STATELESS=$(rotate "${STATELESS}")
         echo "STATELESS=${STATELESS}"
+        continue;;
+      /cls)
+        clear
         continue;;
       /cull*)
         local CM=$(set ${line}; echo ${2})
@@ -439,36 +472,42 @@ function loop_mode() {
   done
 }
 
-function detect_models() {
+function query_models() {
+  curl -sf "${API_BASE_URL}/models"
+}
+
+function update_model_list() {
   local model
   local models
   local use_api=false
 
   (${LOGPROBS} || ${USE_LLAMA}) || use_api=true
-  ! ${FORCE_USE_API:-false} || use_api=true
 
-  # if using llama (which publishes models besides our ggufs
+  # if using llama (which publishes models besides what's in models/
   # or trying to pull logits for comparison, ensure consistent model order
-  ${use_api} && {
-    models=$(curl -sf "${API_BASE_URL}/models") || return 1
+  if ${use_api}; then
+    models=$(query_models) || return 1
     models=$(parse_models <<< "${models}")
-    MODEL_LIST="${models} default"
-  } || {
-    MODEL_LIST=$(cd models; ls *.gguf | sort)
-    MODEL_LIST=${MODEL_LIST//\.gguf/}
-  }
+  else
+    models=$(find models \( -iname \*.gguf -o -iname \*.st \) -print)
+  fi
 
-  models=""
+  models=${models//models\//}
+  models=${models//\.gguf/}
+  models=${models//\.st/}
+  models=$(sort -u <<< "${models}")
+
   if ${ALL_MODELS_NO_DIFFUSION}; then
-    for model in ${MODEL_LIST}; do
-      is_diffusion_model "${model}" || models+=" ${model}"
+    for model in ${models}; do
+      is_diffusion_model "${model}" || MODEL_LIST+="${model} "
     done
   else
-    for model in ${MODEL_LIST}; do
-      models+=" ${model}"
+    for model in ${models}; do
+      MODEL_LIST+="${model} "
     done
   fi
-  MODEL_LIST="${models/ /}"
+  MODEL_LIST=${MODEL_LIST% }
+  [[ ${MODEL} == "default" ]] && MODEL=$(set ${MODEL_LIST}; echo $1)
 }
 
 function show_models() {
@@ -487,18 +526,20 @@ function show_models() {
 function wait_for_starting_server() {
   # Wait for server to be ready (up to 30s)
   for _i in $(seq 1 60); do
-    if FORCE_USE_API=true detect_models; then
+    if query_models > /dev/null; then
+      update_model_list
       return 0
     fi
     sleep 0.5
   done
-  echo "failed getting models from ${API_BASE_URL}" 1>&2
+  echo "failed getting models from ${API_BASE_URL}/models" 1>&2
   return 1
 }
 
 function start_api_server() {
-  [[ -x "./bin/bench" ]] || { echo "./bin/bench binary missing. 'make all' first." 1>&2; exit 1; }
-  ./bin/bench serve-api serve-api --log ${LOG:-"bin/test_inference.log"} --log-level NONE &
+  [[ -x "./bin/bench" ]] || { echo "./bin/bench binary missing. 'make all' first." 1>&2; return 1; }
+  API_BASE_URL=${BENCH_API_BASE_URL}
+  ./bin/bench serve-api --log ${LOG:-"bin/test_inference.log"} --log-level NONE &
   SERVER_PID=$!
   wait_for_starting_server
 }
@@ -508,33 +549,30 @@ function run_llama_server() {
 }
 
 function start_llama_server() {
-  (which llama-server 2>&1) > /dev/null || { echo "llama-server not installed." 1>&2; exit 1; }
+  (which llama-server 2>&1) > /dev/null || { echo "llama-server not installed." 1>&2; return 1; }
+  API_BASE_URL=${LLAMA_API_BASE_URL}
   run_llama_server >> ${LOG:-"bin/test_inference_llama.log"} &
   LLAMA_PID=$!
-  API_BASE_URL=${LLAMA_BASE_URL}/v1
-  SERVER_BASE_URL=${LLAMA_BASE_URL}
-  PORT=${LLAMA_PORT}
   wait_for_starting_server
 }
 
 function quit_api_server() {
-  (curl -s "${CTL_BASE_URL}/?quit&now" > /dev/null && sleep 1) || {
+  (curl -s "${BENCH_CTL_URL}/?quit&now" > /dev/null && sleep 1) || {
     ps aux | awk '/awk/ { next; } /bin\/bench/{ print $2; }' | xargs kill
   }
+  SERVER_PID=
 }
 
 function quit_llama_server() {
   # blunt instrument
   ps aux | awk '/awk/ { next; } /llama-server/ { print $2; }' | xargs kill
+  LLAMA_PID=
 }
 
 function quit_server() {
   [[ -n "${SERVER_PID}" ]] && quit_api_server || true
   [[ -n "${LLAMA_PID}" ]] && quit_llama_server || true
 }
-
-LLAMA_PORT=${LLAMA_PORT:-8080}
-LLAMA_BASE_URL="http://localhost:${LLAMA_PORT}"
 
 function cycle_server() {
     quit_server
@@ -552,7 +590,8 @@ if ${FORCE_NEW_SERVER:-false}; then
     start_api_server
   fi
 else
-  detect_models
+  ${USE_LLAMA} && API_BASE_URL=${LLAMA_API_BASE_URL} || API_BASE_URL=${BENCH_API_BASE_URL}
+  update_model_list
 fi
 
 if ${LOOP_MODE}; then

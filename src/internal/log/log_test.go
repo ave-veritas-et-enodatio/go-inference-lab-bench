@@ -28,8 +28,9 @@ func TestPreInitSafety(t *testing.T) {
 	defer restoreGlobal(t)()
 	// Re-assign to the default stderr logger (same as package init) to simulate
 	// a "never initialized" state.
-	l := Logger(&compactLogger{stderrW: os.Stderr, stderrLevel: LevelInfo})
-	global.Store(&l)
+	cl := &compactLogger{stderrW: os.Stderr}
+	cl.stderrLevel.Store(uint32(LevelInfo))
+	global.Store(cl)
 	// None of these must panic.
 	Info("pre-init info %d", 1)
 	Warn("pre-init warn %d", 2)

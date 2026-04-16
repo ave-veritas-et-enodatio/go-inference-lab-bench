@@ -1,9 +1,33 @@
 package inference
 
 import (
+	"fmt"
 	"math"
 	"sort"
 )
+
+// ValidateLogits scans a logits slice for NaN or Inf values and returns an
+// error identifying the first offending index. Intended as a sanity check at
+// the sampling chokepoint: any numerical corruption upstream (bad positional
+// encoding, divide-by-zero normalization, overflowing attention) manifests as
+// NaN/Inf in the final logits, and catching it here turns a silent "first
+// token is EOS / garbage output" symptom into a loud, one-line diagnosis at
+// the earliest point the corruption is observable.
+//
+// Cost: one linear scan of n_vocab (~256KB at 64k vocab) per generated token.
+// Memory-bandwidth bound and utterly negligible next to a full forward pass.
+func ValidateLogits(logits []float32) error {
+	for i, v := range logits {
+		f := float64(v)
+		if math.IsNaN(f) {
+			return fmt.Errorf("logits[%d] is NaN — numerical corruption upstream of sampling", i)
+		}
+		if math.IsInf(f, 0) {
+			return fmt.Errorf("logits[%d] is %+v — numerical overflow upstream of sampling", i, v)
+		}
+	}
+	return nil
+}
 
 // Greedy returns the token ID with the highest logit.
 func Greedy(logits []float32) int32 {

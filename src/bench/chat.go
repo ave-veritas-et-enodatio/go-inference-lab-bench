@@ -39,7 +39,10 @@ func runChat(cmd *cobra.Command, args []string) error {
 	if err := log.InitLogger(chatLogPath, level, chatLogFileLine); err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
-	paths := util.ResolvePaths()
+	paths, err := util.ResolvePaths()
+	if err != nil {
+		log.Fatal("resolve paths: %v", err)
+	}
 	return chatclient.Run(chatclient.Options{
 		ConfigPath:    filepath.Join(paths.ConfigDir, "chat_config.toml"),
 		ApiConfigPath: filepath.Join(paths.ConfigDir, "api_config.toml"),
