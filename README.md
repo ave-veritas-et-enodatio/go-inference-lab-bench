@@ -109,10 +109,10 @@ See `bin/bench` without arguments for complete help. For detailed config options
 
 - [ggml](https://github.com/ggml-org/ggml.git) — Georgi Gerganov's C++ tensor library (inference backend via thin binding layer)
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) — Georgi Gerganov's C++ inference engine (reference for block implementations; equivalence testing)
-- [gguf-parser-go](github.com/gpustack/gguf-parser-go) — Frank Mai's Pure Go GGUF file parser
-- [gonja](github.com/nikolalohinski/gonja) — Nikola Lohinski's Go Jinja2 template engine (chat template execution from GGUF metadata)
-- [BurntSushi/toml](github.com/BurntSushi/toml) — Andrew Gallant's TOML parser (architecture DSL and config files)
-- [go-chi](github.com/go-chi/chi) — HTTP router (OpenAI API implementation)
+- [gguf-parser-go](https://github.com/gpustack/gguf-parser-go) — Frank Mai's Pure Go GGUF file parser
+- [gonja](https://github.com/nikolalohinski/gonja) — Nikola Lohinski's Go Jinja2 template engine (chat template execution from GGUF metadata)
+- [BurntSushi/toml](https://github.com/BurntSushi/toml) — Andrew Gallant's TOML parser (architecture DSL and config files)
+- [go-chi](https://github.com/go-chi/chi) — HTTP router (OpenAI API implementation)
 - [go-sqlite3](https://github.com/mattn/go-sqlite3) — Matt N.'s sqlite3 driver (chat client history)
-- [langchaingo](github.com/tmc/langchaingo) — Travis Cline's OpenAI client library (chat client)
-- [cobra](github.com/spf13/cobra) — Steve Francia's CLI framework
+- [langchaingo](https://github.com/tmc/langchaingo) — Travis Cline's OpenAI client library (chat client)
+- [cobra](https://github.com/spf13/cobra) — Steve Francia's CLI framework
