@@ -227,18 +227,20 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 	bw.WriteString("  </g>\n")
 	cursor += logitsBoxH + 30
 
-	// Footer: routing rule + syntax legend
-	fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" fill=\"%s\">", margin, cursor, pal["ui.text_sec"])
-	fmt.Fprintf(bw, "<tspan font-weight=\"600\">Routing:</tspan>")
-	if def.Layers.Routing.Pattern != "" {
-		fmt.Fprintf(bw, " <tspan font-family=\"monospace\" fill=\"%s\">${%s}[@{layer_idx}]</tspan>",
-			pal["ui.text_head"], def.Layers.Routing.Pattern)
-	} else {
-		fmt.Fprintf(bw, " <tspan font-family=\"monospace\" fill=\"%s\">%s</tspan>",
-			pal["ui.text_head"], def.Layers.Routing.Rule)
+	// Footer: routing rule (omitted when trivial — single block type)
+	if !isTrivialRouting(def) {
+		fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" fill=\"%s\">", margin, cursor, pal["ui.text_sec"])
+		fmt.Fprintf(bw, "<tspan font-weight=\"600\">Routing:</tspan>")
+		if def.Layers.Routing.Pattern != "" {
+			fmt.Fprintf(bw, " <tspan font-family=\"monospace\" fill=\"%s\">${%s}[@{layer_idx}]</tspan>",
+				pal["ui.text_head"], def.Layers.Routing.Pattern)
+		} else {
+			fmt.Fprintf(bw, " <tspan font-family=\"monospace\" fill=\"%s\">%s</tspan>",
+				pal["ui.text_head"], def.Layers.Routing.Rule)
+		}
+		fmt.Fprintf(bw, " -> true: %s / false: %s", def.Layers.Routing.IfTrue, def.Layers.Routing.IfFalse)
+		bw.WriteString("</text>\n")
 	}
-	fmt.Fprintf(bw, " -> true: %s / false: %s", def.Layers.Routing.IfTrue, def.Layers.Routing.IfFalse)
-	bw.WriteString("</text>\n")
 
 	// Tokens info box (bottom-right)
 	if def.Tokens.ThinkOpen != "" {
@@ -268,28 +270,33 @@ func collectRoutingPaths(def *ArchDef) []routingPath {
 	r := def.Layers.Routing
 	var paths []routingPath
 
-	// Build condition text depending on routing type
-	var trueCondition, falseCondition string
-	if r.Pattern != "" {
-		// Pattern routing: indexed by bool array param
-		trueCondition = fmt.Sprintf("${%s}[@{layer_idx}] is true", r.Pattern)
-		falseCondition = fmt.Sprintf("${%s}[@{layer_idx}] is false", r.Pattern)
-	} else if r.Rule != "" {
-		trueCondition = r.Rule
-		falseCondition = fmt.Sprintf("NOT (%s)", r.Rule)
+	// Uniform routing: single block type, no conditions
+	if r.Uniform != "" {
+		paths = append(paths, routingPath{blockName: r.Uniform, label: formatBuilderName(r.Uniform)})
+		return paths
 	}
 
-	// if_true path first (typically the more common one)
+	// Build condition text depending on routing type.
+	// Keep labels short — the full rule/pattern is in the TOML, not the diagram.
+	var trueCondition, falseCondition string
+	if r.Pattern != "" || r.Rule != "" {
+		trueCondition = "routing rule is true"
+		falseCondition = "routing rule is false"
+	}
+
+	// if_true path first (typically the more common one).
+	// When routing is trivial (single block type), omit the condition — it's noise.
+	trivial := isTrivialRouting(def)
 	if r.IfTrue != "" {
 		label := formatBuilderName(r.IfTrue)
-		if trueCondition != "" {
+		if !trivial && trueCondition != "" {
 			label += " — when: " + trueCondition
 		}
 		paths = append(paths, routingPath{blockName: r.IfTrue, label: label})
 	}
 	if r.IfFalse != "" && r.IfFalse != r.IfTrue {
 		label := formatBuilderName(r.IfFalse)
-		if falseCondition != "" {
+		if !trivial && falseCondition != "" {
 			label += " — when: " + falseCondition
 		}
 		paths = append(paths, routingPath{blockName: r.IfFalse, label: label})
@@ -642,4 +649,11 @@ func emitGlobalBox(bw *bufio.Writer, x, y, width, height int, title, label strin
 
 func formatBuilderName(name string) string {
 	return strings.ReplaceAll(name, "_", " ")
+}
+
+// isTrivialRouting returns true when all layers use the same block type,
+// making the routing rule pure noise in the diagram.
+func isTrivialRouting(def *ArchDef) bool {
+	r := def.Layers.Routing
+	return r.Uniform != "" || r.IfTrue == r.IfFalse || (r.IfTrue != "" && r.IfFalse == "") || (r.IfFalse != "" && r.IfTrue == "")
 }

@@ -108,11 +108,16 @@ type LayersDef struct {
 	CommonWeights map[string]string       `toml:"common_weights"`
 }
 
-// RoutingDef defines binary per-layer block routing.
-// Either Rule (expression) or Pattern (array param indexed by layer) must be set, not both.
+// RoutingDef defines per-layer block routing.
+//
+// Three mutually exclusive modes:
+//   - Uniform: all layers use the named block type (no routing logic)
+//   - Rule: expression evaluated per-layer; nonzero → if_true block, zero → if_false
+//   - Pattern: array param indexed by layer; nonzero → if_true, zero → if_false
 type RoutingDef struct {
+	Uniform string `toml:"uniform"` // all layers use this block type
 	Rule    string `toml:"rule"`
-	Pattern string `toml:"pattern"`  // array param name — nonzero → if_true, zero → if_false
+	Pattern string `toml:"pattern"` // array param name — nonzero → if_true, zero → if_false
 	IfTrue  string `toml:"if_true"`
 	IfFalse string `toml:"if_false"`
 }
@@ -215,26 +220,36 @@ func Validate(def *ArchDef) []ValidationError {
 		add("layers.prefix", "must contain @{layer_idx}")
 	}
 	r := def.Layers.Routing
-	if r.Rule == "" && r.Pattern == "" {
-		add("layers.routing", "either rule or pattern is required")
-	}
-	if r.Rule != "" && r.Pattern != "" {
-		add("layers.routing", "rule and pattern are mutually exclusive")
-	}
-	if r.IfTrue == "" {
-		add("layers.routing.if_true", "required")
-	}
-	if r.IfFalse == "" {
-		add("layers.routing.if_false", "required")
-	}
-	if r.IfTrue != "" {
-		if _, ok := def.Blocks[r.IfTrue]; !ok {
-			add("layers.routing.if_true", fmt.Sprintf("no such block %q", r.IfTrue))
+	if r.Uniform != "" {
+		// Uniform mode: all layers use one block type. Mutually exclusive with rule/pattern/if_true/if_false.
+		if r.Rule != "" || r.Pattern != "" || r.IfTrue != "" || r.IfFalse != "" {
+			add("layers.routing", "uniform is mutually exclusive with rule, pattern, if_true, if_false")
 		}
-	}
-	if r.IfFalse != "" {
-		if _, ok := def.Blocks[r.IfFalse]; !ok {
-			add("layers.routing.if_false", fmt.Sprintf("no such block %q", r.IfFalse))
+		if _, ok := def.Blocks[r.Uniform]; !ok {
+			add("layers.routing.uniform", fmt.Sprintf("no such block %q", r.Uniform))
+		}
+	} else {
+		if r.Rule == "" && r.Pattern == "" {
+			add("layers.routing", "one of uniform, rule, or pattern is required")
+		}
+		if r.Rule != "" && r.Pattern != "" {
+			add("layers.routing", "rule and pattern are mutually exclusive")
+		}
+		if r.IfTrue == "" {
+			add("layers.routing.if_true", "required")
+		}
+		if r.IfFalse == "" {
+			add("layers.routing.if_false", "required")
+		}
+		if r.IfTrue != "" {
+			if _, ok := def.Blocks[r.IfTrue]; !ok {
+				add("layers.routing.if_true", fmt.Sprintf("no such block %q", r.IfTrue))
+			}
+		}
+		if r.IfFalse != "" {
+			if _, ok := def.Blocks[r.IfFalse]; !ok {
+				add("layers.routing.if_false", fmt.Sprintf("no such block %q", r.IfFalse))
+			}
 		}
 	}
 

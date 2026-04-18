@@ -35,7 +35,7 @@ func (e *Engine) generateStateless(
 		}
 		// Live engagement SVG update (every forward pass in stateless mode).
 		if engagement != nil {
-			culling.WriteEngagementDiag(e.diagDir, e.model.CanonicalModuleMap, e.model.ModelPath, e.model.TensorDims, engagement)
+			culling.WriteEngagementDiag(e.diagDir, e.model.CanonicalModuleMap, e.model.ModelPath, e.model.TensorDims, engagement, e.model.Def.Architecture.NonCausal, e.model.Def.Architecture.Generation)
 		}
 		nextID, err := e.sample(logits, params)
 		if err != nil {

@@ -37,13 +37,13 @@ func diagramPalette() map[string]string {
 		"full_attention.grad_bottom": "#bbdefb",
 
 		// swa (sliding-window attention) blocks — uses alt-attention green (same family as recurrent)
-		"swa.stroke":      "#66BB6A",
+		"swa.stroke":      "#4E9650",
 		"swa.fill":        "#c8eac8",
 		"swa.grad_top":    "#e8f5e9",
 		"swa.grad_bottom": "#c8e6c9",
 
 		// recurrent blocks (recurrent_ssm, recurrent_delta_net, etc.)
-		"recurrent.stroke":      "#66BB6A",
+		"recurrent.stroke":      "#4E9650",
 		"recurrent.fill":        "#c8eac8",
 		"recurrent.stroke_de":   "#70A068",
 		"recurrent.fill_de":     "#BDDABA",
