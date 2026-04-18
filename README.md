@@ -2,7 +2,11 @@
 
 From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-model API server, data-driven architecture definition via TOML DSL, KV-cached and stateless inference, weight culling infrastructure, and visualization tooling.
 
-<a href="models/arch/qwen35.arch.svg"><image src="models/arch/qwen35.arch.svg" height="600" alt="Qwen 3.5 Architecture"></a><a href="models/arch/qwen35.layers.svg"><image src="models/arch/qwen35.layers.svg" height="600" alt="Qwen 3.5 Layers"></a>
+<a href="models/arch/gemma4.arch.svg"><image src="models/arch/gemma4.arch.svg" height="600" alt="Gemma4 Architecture"></a><a href="models/arch/gemma4.layers.svg"><image src="models/arch/gemma4.layers.svg" height="600" alt="Gemma4 Layers"></a>
+
+[Write-up 1/2](https://bennherrera.dev/writing/go-inference-lab-bench/) 
+
+[Write-up 2/2](https://bennherrera.dev/writing/inference-lab-bench-part-2/)
 
 ## Features
 
