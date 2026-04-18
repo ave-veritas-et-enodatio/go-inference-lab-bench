@@ -1,4 +1,4 @@
-<svg viewBox="0 0 580 1169" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 588 1226" xmlns="http://www.w3.org/2000/svg">
 <style>
   text { font-family: 'Courier New', monospace; }
   .title { font-size: 20px; font-weight: bold; fill: #333333; font-family: system-ui, -apple-system, sans-serif; }
@@ -39,16 +39,29 @@
   <rect x="17" y="28" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
   <text class="tlbl" x="34" y="33">V</text>
   <line x1="52" y1="0" x2="52" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
-  <rect x="54" y="8" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="71" y="13">Kn</text>
-  <rect x="54" y="21" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="71" y="26">Qn</text>
+  <rect x="54" y="2" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="71" y="7">Kn</text>
+  <rect x="54" y="15" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="71" y="20">Qn</text>
+  <rect x="54" y="28" width="34" height="10" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="71" y="33">rope</text>
   <line x1="89" y1="0" x2="89" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
   <rect x="91" y="3" width="17" height="34" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
   <text class="tlbl" x="99" y="20">out</text>
-  <line x1="113" y1="20" x2="113" y2="44" stroke="#1976D2" stroke-width="0.8"/>
-  <path d="M 113,44 L -10,44" fill="none" stroke="#1976D2" stroke-width="1.0" stroke-dasharray="2,3"/>
-  <polyline points="-6,42 -10,44 -6,46" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  </symbol>
+  <symbol id="blk-attention-desc" overflow="visible">
+  <use href="#blk-attention"/>
+  <line x1="117" y1="20" x2="117" y2="44" stroke="#1976D2" stroke-width="0.8"/>
+  <path d="M 117,44 L -10,44" fill="none" stroke="#1976D2" stroke-width="1.0" stroke-dasharray="2,3"/>
+  <circle cx="-10" cy="44" r="4" fill="#AAAAAA"/>
+  <text x="-10" y="44" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="bold" fill="#1976D2">+</text>
+  </symbol>
+  <symbol id="blk-attention-asc" overflow="visible">
+  <use href="#blk-attention"/>
+  <line x1="117" y1="20" x2="117" y2="-4" stroke="#1976D2" stroke-width="0.8"/>
+  <path d="M 117,-4 L -10,-4" fill="none" stroke="#1976D2" stroke-width="1.0" stroke-dasharray="2,3"/>
+  <circle cx="-10" cy="-4" r="4" fill="#AAAAAA"/>
+  <text x="-10" y="-4" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="bold" fill="#1976D2">+</text>
   </symbol>
   <symbol id="ffn-moe" overflow="visible">
   <rect x="0" y="0" width="98" height="40" fill="url(#zm_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="2"/>
@@ -65,33 +78,47 @@
   <polygon points="69,12 74,7 95,7 90,12" fill="#ffe8cc" stroke="#EF6C00" stroke-width="0.5"/>
   <text class="tlbl" x="79" y="22">Ux</text>
   <line x1="98" y1="20" x2="108" y2="20" stroke="#AAAAAA" stroke-width="0.8"/>
-  <circle cx="108" cy="20" r="2" fill="#888888"/>
-  <path d="M 108,20 L 108,52 L -126,52" fill="none" stroke="#EF6C00" stroke-width="1.0" stroke-dasharray="2,3"/>
-  <polyline points="-122,50 -126,52 -122,54" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <polygon points="104,18 108,20 104,22" fill="#AAAAAA"/>
+  </symbol>
+  <symbol id="ffn-moe-desc" overflow="visible">
+  <use href="#ffn-moe"/>
+  <line x1="108" y1="20" x2="108" y2="52" stroke="#EF6C00" stroke-width="1.0"/>
+  <path d="M 108,52 L -134,52" fill="none" stroke="#EF6C00" stroke-width="1.0" stroke-dasharray="2,3"/>
+  <circle cx="-134" cy="52" r="4" fill="#AAAAAA"/>
+  <text x="-134" y="52" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="bold" fill="#EF6C00">+</text>
+  </symbol>
+  <symbol id="ffn-moe-asc" overflow="visible">
+  <use href="#ffn-moe"/>
+  <line x1="108" y1="20" x2="108" y2="-12" stroke="#EF6C00" stroke-width="1.0"/>
+  <path d="M 108,-12 L -134,-12" fill="none" stroke="#EF6C00" stroke-width="1.0" stroke-dasharray="2,3"/>
+  <circle cx="-134" cy="-12" r="4" fill="#AAAAAA"/>
+  <text x="-134" y="-12" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="bold" fill="#EF6C00">+</text>
   </symbol>
   <symbol id="row-chrome" overflow="visible">
   <circle cx="26" cy="0" r="2.5" fill="#888888"/>
   <line x1="26" y1="0" x2="36" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
-  <line x1="146" y1="0" x2="152" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
-  <polygon points="148,-2 152,0 148,2" fill="#AAAAAA"/>
+  <polygon points="32,-2 36,0 32,2" fill="#AAAAAA"/>
+  <line x1="146" y1="0" x2="160" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
+  <polygon points="156,-2 160,0 156,2" fill="#AAAAAA"/>
+  <polygon points="40,-2 36,0 40,2" fill="#AAAAAA"/>
   </symbol>
   <symbol id="global-row" overflow="visible">
   <line x1="26" y1="0" x2="36" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
   <polyline points="32,-2 36,0 32,2" fill="none" stroke="#AAAAAA" stroke-width="0.8"/>
-  <rect x="36" y="-20" width="214" height="40" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
-  <rect x="38" y="-17" width="69" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="72" y="0">out</text>
-  <rect x="108" y="-17" width="69" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="142" y="0">norm</text>
-  <rect x="178" y="-17" width="69" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="212" y="0">embd</text>
-  <line x1="143" y1="-20" x2="143" y2="-36" stroke="#AAAAAA" stroke-width="0.8"/>
-  <polyline points="140,-30 143,-36 146,-30" fill="none" stroke="#AAAAAA" stroke-width="1"/>
-  <text class="io" x="143" y="-42">OUT</text>
+  <rect x="36" y="-20" width="222" height="40" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
+  <rect x="38" y="-17" width="71" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="73" y="0">out</text>
+  <rect x="110" y="-17" width="71" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="145" y="0">norm</text>
+  <rect x="182" y="-17" width="71" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="217" y="0">embd</text>
+  <line x1="147" y1="-20" x2="147" y2="-36" stroke="#AAAAAA" stroke-width="0.8"/>
+  <polyline points="144,-30 147,-36 150,-30" fill="none" stroke="#AAAAAA" stroke-width="1"/>
+  <text class="io" x="147" y="-42">OUT</text>
   </symbol>
   <symbol id="legend" overflow="visible">
   <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Legend</text>
-  <rect width="178" height="84" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <rect width="170" height="84" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
   <rect x="4" y="10" width="10" height="10" fill="url(#zm_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="1"/>
   <text class="ltxt" x="18" y="15">attention</text>
   <rect x="4" y="26" width="10" height="10" fill="url(#zm_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="1"/>
@@ -103,7 +130,7 @@
   </symbol>
   <symbol id="summary" overflow="visible">
   <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Summary</text>
-  <rect width="178" height="96" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <rect width="170" height="96" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
   <text class="shdr" x="4" y="11">65 modules</text>
   <text class="ltxt" x="4" y="24">  0 culled (0%)</text>
   <text class="shdr" x="4" y="41">387 tensors</text>
@@ -112,143 +139,214 @@
   <text class="ltxt" x="4" y="84">  0 elided (0%)</text>
   </symbol>
 </defs>
-  <rect width="580" height="1169" fill="#fafafa" rx="8"/>
+  <rect width="588" height="1226" fill="#fafafa" rx="8"/>
 
-  <text class="title" x="275" y="32" text-anchor="middle">Llada-Moe Layers</text>
-  <line x1="26" y1="54" x2="26" y2="1006" stroke="#AAAAAA" stroke-width="1.5"/>
-  <text class="io" x="26" y="48">IN</text>
-  <path d="M 26,1006 L 26,1031 L 316,1031" fill="none" stroke="#AAAAAA" stroke-width="1.5"/>
-  <line x1="316" y1="1031" x2="316" y2="1006" stroke="#AAAAAA" stroke-width="1.5"/>
-  <line x1="316" y1="1006" x2="316" y2="122" stroke="#AAAAAA" stroke-width="1.5"/>
-  <use href="#row-chrome" transform="translate(0,64)"/>
-  <text class="lbl" x="21" y="64">0</text>
-  <use href="#blk-attention" transform="translate(36,44)"/>
-  <use href="#ffn-moe" transform="translate(152,44)"/>
-  <use href="#row-chrome" transform="translate(0,122)"/>
-  <text class="lbl" x="21" y="122">1</text>
-  <use href="#blk-attention" transform="translate(36,102)"/>
-  <use href="#ffn-moe" transform="translate(152,102)"/>
-  <use href="#row-chrome" transform="translate(0,180)"/>
-  <text class="lbl" x="21" y="180">2</text>
-  <use href="#blk-attention" transform="translate(36,160)"/>
-  <use href="#ffn-moe" transform="translate(152,160)"/>
-  <use href="#row-chrome" transform="translate(0,238)"/>
-  <text class="lbl" x="21" y="238">3</text>
-  <use href="#blk-attention" transform="translate(36,218)"/>
-  <use href="#ffn-moe" transform="translate(152,218)"/>
-  <use href="#row-chrome" transform="translate(0,296)"/>
-  <text class="lbl" x="21" y="296">4</text>
-  <use href="#blk-attention" transform="translate(36,276)"/>
-  <use href="#ffn-moe" transform="translate(152,276)"/>
-  <use href="#row-chrome" transform="translate(0,354)"/>
-  <text class="lbl" x="21" y="354">5</text>
-  <use href="#blk-attention" transform="translate(36,334)"/>
-  <use href="#ffn-moe" transform="translate(152,334)"/>
-  <use href="#row-chrome" transform="translate(0,412)"/>
-  <text class="lbl" x="21" y="412">6</text>
-  <use href="#blk-attention" transform="translate(36,392)"/>
-  <use href="#ffn-moe" transform="translate(152,392)"/>
-  <use href="#row-chrome" transform="translate(0,470)"/>
-  <text class="lbl" x="21" y="470">7</text>
-  <use href="#blk-attention" transform="translate(36,450)"/>
-  <use href="#ffn-moe" transform="translate(152,450)"/>
-  <use href="#row-chrome" transform="translate(0,528)"/>
-  <text class="lbl" x="21" y="528">8</text>
-  <use href="#blk-attention" transform="translate(36,508)"/>
-  <use href="#ffn-moe" transform="translate(152,508)"/>
-  <use href="#row-chrome" transform="translate(0,586)"/>
-  <text class="lbl" x="21" y="586">9</text>
-  <use href="#blk-attention" transform="translate(36,566)"/>
-  <use href="#ffn-moe" transform="translate(152,566)"/>
-  <use href="#row-chrome" transform="translate(0,644)"/>
-  <text class="lbl" x="21" y="644">10</text>
-  <use href="#blk-attention" transform="translate(36,624)"/>
-  <use href="#ffn-moe" transform="translate(152,624)"/>
-  <use href="#row-chrome" transform="translate(0,702)"/>
-  <text class="lbl" x="21" y="702">11</text>
-  <use href="#blk-attention" transform="translate(36,682)"/>
-  <use href="#ffn-moe" transform="translate(152,682)"/>
-  <use href="#row-chrome" transform="translate(0,760)"/>
-  <text class="lbl" x="21" y="760">12</text>
-  <use href="#blk-attention" transform="translate(36,740)"/>
-  <use href="#ffn-moe" transform="translate(152,740)"/>
-  <use href="#row-chrome" transform="translate(0,818)"/>
-  <text class="lbl" x="21" y="818">13</text>
-  <use href="#blk-attention" transform="translate(36,798)"/>
-  <use href="#ffn-moe" transform="translate(152,798)"/>
-  <use href="#row-chrome" transform="translate(0,876)"/>
-  <text class="lbl" x="21" y="876">14</text>
-  <use href="#blk-attention" transform="translate(36,856)"/>
-  <use href="#ffn-moe" transform="translate(152,856)"/>
-  <use href="#row-chrome" transform="translate(0,934)"/>
-  <text class="lbl" x="21" y="934">15</text>
-  <use href="#blk-attention" transform="translate(36,914)"/>
-  <use href="#ffn-moe" transform="translate(152,914)"/>
-  <use href="#row-chrome" transform="translate(0,992)"/>
-  <text class="lbl" x="21" y="992">16</text>
-  <use href="#blk-attention" transform="translate(36,972)"/>
-  <use href="#ffn-moe" transform="translate(152,972)"/>
-  <use href="#row-chrome" transform="translate(290,992)"/>
-  <text class="lbl" x="311" y="992">17</text>
-  <use href="#blk-attention" transform="translate(326,972)"/>
-  <use href="#ffn-moe" transform="translate(442,972)"/>
-  <use href="#row-chrome" transform="translate(290,934)"/>
-  <text class="lbl" x="311" y="934">18</text>
-  <use href="#blk-attention" transform="translate(326,914)"/>
-  <use href="#ffn-moe" transform="translate(442,914)"/>
-  <use href="#row-chrome" transform="translate(290,876)"/>
-  <text class="lbl" x="311" y="876">19</text>
-  <use href="#blk-attention" transform="translate(326,856)"/>
-  <use href="#ffn-moe" transform="translate(442,856)"/>
-  <use href="#row-chrome" transform="translate(290,818)"/>
-  <text class="lbl" x="311" y="818">20</text>
-  <use href="#blk-attention" transform="translate(326,798)"/>
-  <use href="#ffn-moe" transform="translate(442,798)"/>
-  <use href="#row-chrome" transform="translate(290,760)"/>
-  <text class="lbl" x="311" y="760">21</text>
-  <use href="#blk-attention" transform="translate(326,740)"/>
-  <use href="#ffn-moe" transform="translate(442,740)"/>
-  <use href="#row-chrome" transform="translate(290,702)"/>
-  <text class="lbl" x="311" y="702">22</text>
-  <use href="#blk-attention" transform="translate(326,682)"/>
-  <use href="#ffn-moe" transform="translate(442,682)"/>
-  <use href="#row-chrome" transform="translate(290,644)"/>
-  <text class="lbl" x="311" y="644">23</text>
-  <use href="#blk-attention" transform="translate(326,624)"/>
-  <use href="#ffn-moe" transform="translate(442,624)"/>
-  <use href="#row-chrome" transform="translate(290,586)"/>
-  <text class="lbl" x="311" y="586">24</text>
-  <use href="#blk-attention" transform="translate(326,566)"/>
-  <use href="#ffn-moe" transform="translate(442,566)"/>
-  <use href="#row-chrome" transform="translate(290,528)"/>
-  <text class="lbl" x="311" y="528">25</text>
-  <use href="#blk-attention" transform="translate(326,508)"/>
-  <use href="#ffn-moe" transform="translate(442,508)"/>
-  <use href="#row-chrome" transform="translate(290,470)"/>
-  <text class="lbl" x="311" y="470">26</text>
-  <use href="#blk-attention" transform="translate(326,450)"/>
-  <use href="#ffn-moe" transform="translate(442,450)"/>
-  <use href="#row-chrome" transform="translate(290,412)"/>
-  <text class="lbl" x="311" y="412">27</text>
-  <use href="#blk-attention" transform="translate(326,392)"/>
-  <use href="#ffn-moe" transform="translate(442,392)"/>
-  <use href="#row-chrome" transform="translate(290,354)"/>
-  <text class="lbl" x="311" y="354">28</text>
-  <use href="#blk-attention" transform="translate(326,334)"/>
-  <use href="#ffn-moe" transform="translate(442,334)"/>
-  <use href="#row-chrome" transform="translate(290,296)"/>
-  <text class="lbl" x="311" y="296">29</text>
-  <use href="#blk-attention" transform="translate(326,276)"/>
-  <use href="#ffn-moe" transform="translate(442,276)"/>
-  <use href="#row-chrome" transform="translate(290,238)"/>
-  <text class="lbl" x="311" y="238">30</text>
-  <use href="#blk-attention" transform="translate(326,218)"/>
-  <use href="#ffn-moe" transform="translate(442,218)"/>
-  <use href="#row-chrome" transform="translate(290,180)"/>
-  <text class="lbl" x="311" y="180">31</text>
-  <use href="#blk-attention" transform="translate(326,160)"/>
-  <use href="#ffn-moe" transform="translate(442,160)"/>
-  <use href="#global-row" transform="translate(290,122)"/>
-  <use href="#legend" transform="translate(22,1061)"/>
-  <use href="#summary" transform="translate(312,1061)"/>
+  <text class="title" x="279" y="32" text-anchor="middle">Llada-Moe Layers</text>
+  <text x="279" y="46" text-anchor="middle" font-size="11" font-weight="600" fill="#999999">(diffusion — iterative denoising, bidirectional)</text>
+  <line x1="26" y1="90" x2="26" y2="1076" stroke="#AAAAAA" stroke-width="1.5"/>
+  <text class="io" x="26" y="86">IN</text>
+  <path d="M 26,1076 L 26,1088 L 316,1088" fill="none" stroke="#AAAAAA" stroke-width="1.5"/>
+  <polygon points="119,1085 125,1088 119,1091" fill="#AAAAAA"/>
+  <polygon points="222,1085 216,1088 222,1091" fill="#AAAAAA"/>
+  <line x1="316" y1="1088" x2="316" y2="1076" stroke="#AAAAAA" stroke-width="1.5"/>
+  <line x1="316" y1="1076" x2="316" y2="158" stroke="#AAAAAA" stroke-width="1.5"/>
+  <polygon points="313,164 316,170 319,164" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,100)"/>
+  <text class="lbl" x="21" y="100">0</text>
+  <use href="#blk-attention-desc" transform="translate(36,80)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,80)"/>
+  <polygon points="23,118 26,112 29,118" fill="#AAAAAA"/>
+  <polygon points="23,138 26,144 29,138" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,158)"/>
+  <text class="lbl" x="21" y="158">1</text>
+  <use href="#blk-attention-desc" transform="translate(36,138)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,138)"/>
+  <polygon points="23,176 26,170 29,176" fill="#AAAAAA"/>
+  <polygon points="23,196 26,202 29,196" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,216)"/>
+  <text class="lbl" x="21" y="216">2</text>
+  <use href="#blk-attention-desc" transform="translate(36,196)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,196)"/>
+  <polygon points="23,234 26,228 29,234" fill="#AAAAAA"/>
+  <polygon points="23,254 26,260 29,254" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,274)"/>
+  <text class="lbl" x="21" y="274">3</text>
+  <use href="#blk-attention-desc" transform="translate(36,254)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,254)"/>
+  <polygon points="23,292 26,286 29,292" fill="#AAAAAA"/>
+  <polygon points="23,312 26,318 29,312" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,332)"/>
+  <text class="lbl" x="21" y="332">4</text>
+  <use href="#blk-attention-desc" transform="translate(36,312)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,312)"/>
+  <polygon points="23,350 26,344 29,350" fill="#AAAAAA"/>
+  <polygon points="23,370 26,376 29,370" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,390)"/>
+  <text class="lbl" x="21" y="390">5</text>
+  <use href="#blk-attention-desc" transform="translate(36,370)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,370)"/>
+  <polygon points="23,408 26,402 29,408" fill="#AAAAAA"/>
+  <polygon points="23,428 26,434 29,428" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,448)"/>
+  <text class="lbl" x="21" y="448">6</text>
+  <use href="#blk-attention-desc" transform="translate(36,428)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,428)"/>
+  <polygon points="23,466 26,460 29,466" fill="#AAAAAA"/>
+  <polygon points="23,486 26,492 29,486" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,506)"/>
+  <text class="lbl" x="21" y="506">7</text>
+  <use href="#blk-attention-desc" transform="translate(36,486)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,486)"/>
+  <polygon points="23,524 26,518 29,524" fill="#AAAAAA"/>
+  <polygon points="23,544 26,550 29,544" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,564)"/>
+  <text class="lbl" x="21" y="564">8</text>
+  <use href="#blk-attention-desc" transform="translate(36,544)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,544)"/>
+  <polygon points="23,582 26,576 29,582" fill="#AAAAAA"/>
+  <polygon points="23,602 26,608 29,602" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,622)"/>
+  <text class="lbl" x="21" y="622">9</text>
+  <use href="#blk-attention-desc" transform="translate(36,602)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,602)"/>
+  <polygon points="23,640 26,634 29,640" fill="#AAAAAA"/>
+  <polygon points="23,660 26,666 29,660" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,680)"/>
+  <text class="lbl" x="21" y="680">10</text>
+  <use href="#blk-attention-desc" transform="translate(36,660)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,660)"/>
+  <polygon points="23,698 26,692 29,698" fill="#AAAAAA"/>
+  <polygon points="23,718 26,724 29,718" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,738)"/>
+  <text class="lbl" x="21" y="738">11</text>
+  <use href="#blk-attention-desc" transform="translate(36,718)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,718)"/>
+  <polygon points="23,756 26,750 29,756" fill="#AAAAAA"/>
+  <polygon points="23,776 26,782 29,776" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,796)"/>
+  <text class="lbl" x="21" y="796">12</text>
+  <use href="#blk-attention-desc" transform="translate(36,776)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,776)"/>
+  <polygon points="23,814 26,808 29,814" fill="#AAAAAA"/>
+  <polygon points="23,834 26,840 29,834" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,854)"/>
+  <text class="lbl" x="21" y="854">13</text>
+  <use href="#blk-attention-desc" transform="translate(36,834)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,834)"/>
+  <polygon points="23,872 26,866 29,872" fill="#AAAAAA"/>
+  <polygon points="23,892 26,898 29,892" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,912)"/>
+  <text class="lbl" x="21" y="912">14</text>
+  <use href="#blk-attention-desc" transform="translate(36,892)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,892)"/>
+  <polygon points="23,930 26,924 29,930" fill="#AAAAAA"/>
+  <polygon points="23,950 26,956 29,950" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,970)"/>
+  <text class="lbl" x="21" y="970">15</text>
+  <use href="#blk-attention-desc" transform="translate(36,950)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,950)"/>
+  <polygon points="23,988 26,982 29,988" fill="#AAAAAA"/>
+  <polygon points="23,1008 26,1014 29,1008" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(0,1028)"/>
+  <text class="lbl" x="21" y="1028">16</text>
+  <use href="#blk-attention-desc" transform="translate(36,1008)"/>
+  <use href="#ffn-moe-desc" transform="translate(160,1008)"/>
+  <polygon points="23,1046 26,1040 29,1046" fill="#AAAAAA"/>
+  <polygon points="23,1066 26,1072 29,1066" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,1028)"/>
+  <text class="lbl" x="311" y="1028">17</text>
+  <use href="#blk-attention-asc" transform="translate(326,1008)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,1008)"/>
+  <polygon points="313,990 316,984 319,990" fill="#AAAAAA"/>
+  <polygon points="313,1010 316,1016 319,1010" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,970)"/>
+  <text class="lbl" x="311" y="970">18</text>
+  <use href="#blk-attention-asc" transform="translate(326,950)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,950)"/>
+  <polygon points="313,932 316,926 319,932" fill="#AAAAAA"/>
+  <polygon points="313,952 316,958 319,952" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,912)"/>
+  <text class="lbl" x="311" y="912">19</text>
+  <use href="#blk-attention-asc" transform="translate(326,892)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,892)"/>
+  <polygon points="313,874 316,868 319,874" fill="#AAAAAA"/>
+  <polygon points="313,894 316,900 319,894" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,854)"/>
+  <text class="lbl" x="311" y="854">20</text>
+  <use href="#blk-attention-asc" transform="translate(326,834)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,834)"/>
+  <polygon points="313,816 316,810 319,816" fill="#AAAAAA"/>
+  <polygon points="313,836 316,842 319,836" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,796)"/>
+  <text class="lbl" x="311" y="796">21</text>
+  <use href="#blk-attention-asc" transform="translate(326,776)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,776)"/>
+  <polygon points="313,758 316,752 319,758" fill="#AAAAAA"/>
+  <polygon points="313,778 316,784 319,778" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,738)"/>
+  <text class="lbl" x="311" y="738">22</text>
+  <use href="#blk-attention-asc" transform="translate(326,718)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,718)"/>
+  <polygon points="313,700 316,694 319,700" fill="#AAAAAA"/>
+  <polygon points="313,720 316,726 319,720" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,680)"/>
+  <text class="lbl" x="311" y="680">23</text>
+  <use href="#blk-attention-asc" transform="translate(326,660)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,660)"/>
+  <polygon points="313,642 316,636 319,642" fill="#AAAAAA"/>
+  <polygon points="313,662 316,668 319,662" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,622)"/>
+  <text class="lbl" x="311" y="622">24</text>
+  <use href="#blk-attention-asc" transform="translate(326,602)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,602)"/>
+  <polygon points="313,584 316,578 319,584" fill="#AAAAAA"/>
+  <polygon points="313,604 316,610 319,604" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,564)"/>
+  <text class="lbl" x="311" y="564">25</text>
+  <use href="#blk-attention-asc" transform="translate(326,544)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,544)"/>
+  <polygon points="313,526 316,520 319,526" fill="#AAAAAA"/>
+  <polygon points="313,546 316,552 319,546" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,506)"/>
+  <text class="lbl" x="311" y="506">26</text>
+  <use href="#blk-attention-asc" transform="translate(326,486)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,486)"/>
+  <polygon points="313,468 316,462 319,468" fill="#AAAAAA"/>
+  <polygon points="313,488 316,494 319,488" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,448)"/>
+  <text class="lbl" x="311" y="448">27</text>
+  <use href="#blk-attention-asc" transform="translate(326,428)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,428)"/>
+  <polygon points="313,410 316,404 319,410" fill="#AAAAAA"/>
+  <polygon points="313,430 316,436 319,430" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,390)"/>
+  <text class="lbl" x="311" y="390">28</text>
+  <use href="#blk-attention-asc" transform="translate(326,370)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,370)"/>
+  <polygon points="313,352 316,346 319,352" fill="#AAAAAA"/>
+  <polygon points="313,372 316,378 319,372" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,332)"/>
+  <text class="lbl" x="311" y="332">29</text>
+  <use href="#blk-attention-asc" transform="translate(326,312)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,312)"/>
+  <polygon points="313,294 316,288 319,294" fill="#AAAAAA"/>
+  <polygon points="313,314 316,320 319,314" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,274)"/>
+  <text class="lbl" x="311" y="274">30</text>
+  <use href="#blk-attention-asc" transform="translate(326,254)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,254)"/>
+  <polygon points="313,236 316,230 319,236" fill="#AAAAAA"/>
+  <polygon points="313,256 316,262 319,256" fill="#AAAAAA"/>
+  <use href="#row-chrome" transform="translate(290,216)"/>
+  <text class="lbl" x="311" y="216">31</text>
+  <use href="#blk-attention-asc" transform="translate(326,196)"/>
+  <use href="#ffn-moe-asc" transform="translate(450,196)"/>
+  <polygon points="313,178 316,172 319,178" fill="#AAAAAA"/>
+  <polygon points="313,198 316,204 319,198" fill="#AAAAAA"/>
+  <use href="#global-row" transform="translate(290,158)"/>
+  <path d="M 437,110 L 437,54 L 26,54 L 26,78" fill="none" stroke="#AAAAAA" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <polygon points="23,72 26,78 29,72" fill="#AAAAAA"/>
+  <text x="433" y="64" text-anchor="end" font-size="8" font-style="italic" fill="#999999">unmask &amp; re-run (T steps)</text>
+  <use href="#legend" transform="translate(22,1118)"/>
+  <use href="#summary" transform="translate(312,1118)"/>
 </svg>

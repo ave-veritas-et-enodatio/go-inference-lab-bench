@@ -54,7 +54,7 @@ func engageOpacity(engagement float64) float64 {
 	return math.Sqrt(engagement) * maxOpacity
 }
 
-func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, dims TensorDimsMap, engagement *EngagementData) error {
+func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, dims TensorDimsMap, engagement *EngagementData, nonCausal bool, generation string) error {
 	svgPath := moduleMapPath
 	if !strings.HasSuffix(moduleMapPath, ".svg") {
 		svgPath = svgPath + ".svg"
@@ -193,11 +193,11 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		spineX     = 26
 		cellX1     = 36  // block cell absolute left edge
 		blockCellW = 110
-		cellGap    = 6
-		cellX2     = cellX1 + blockCellW + cellGap // 152 — FFN cell absolute left edge
+		cellGap    = 14
+		cellX2     = cellX1 + blockCellW + cellGap // 160 — FFN cell absolute left edge
 		ffnCellW   = 98
-		returnRailX = cellX2 + ffnCellW + 10       // 260
-		legendX    = returnRailX + 22              // 282
+		returnRailX = cellX2 + ffnCellW + 10       // 268
+		legendX    = returnRailX + 22              // 290
 		cellH      = 40
 		pitch      = 58
 		cellPad    = 3
@@ -216,7 +216,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 
 		// Block symbol: residual return arrow geometry (relative to cell top-left)
 		blkSpineRel = spineX - cellX1          // -10 — spine x in symbol coords
-		blkGapCX   = blockCellW + cellGap/2    // 113 — gap center x in symbol coords
+		blkGapCX   = blockCellW + cellGap/2    // 117 — gap center x in symbol coords
 		blkGapCY   = cellH / 2                 // 20 — cell vertical center
 
 		// FFN symbol: relative slot positions (origin = FFN cell top-left)
@@ -230,7 +230,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		ffnDownW  = 22
 
 		// FFN symbol: return rail geometry (relative to FFN cell top-left)
-		ffnSpineRel      = spineX - cellX2           // -126 — spine x in FFN symbol coords
+		ffnSpineRel      = spineX - cellX2           // -134 — spine x in FFN symbol coords
 		ffnReturnRailRel = returnRailX - cellX2       // 108 — return rail x in FFN symbol coords
 	)
 
@@ -252,6 +252,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		"attn_q_norm":         "Qn",
 		"attn_k_norm":         "Kn",
 		"rope_freqs":          "rope",
+		"rope":                "rope",
 		"post_attention_norm": "norm",
 		"ffn_norm":            "norm",
 		"ffn_gate":            "G",
@@ -315,8 +316,8 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	}
 
 	// --- buildBlockSymbol: render the SVG body for one block type and collect slot geometry.
-	// The symbol origin is the cell top-left (0,0). Residual arrows use overflow="visible"
-	// to extend outside the cell into the gap and toward the spine.
+	// The symbol origin is the cell top-left (0,0). Residual return features are in
+	// separate -res-desc / -res-asc symbols (see buildBlockResidual).
 	buildBlockSymbol := func(blockType string, m *Module) symbolDef {
 		id := "blk-" + blockType
 		var sb strings.Builder
@@ -342,6 +343,19 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 				} else if !coreSet[w] {
 					extras = append(extras, w)
 				}
+			}
+			// RoPE is always part of the attention compute graph. If rope_freqs
+			// is not a stored weight (most models compute frequencies from params),
+			// inject a synthetic entry so the diagram represents the full compute path.
+			hasRoPE := false
+			for _, e := range extras {
+				if e == "rope_freqs" {
+					hasRoPE = true
+					break
+				}
+			}
+			if !hasRoPE {
+				extras = append(extras, "rope")
 			}
 			sort.Strings(extras)
 
@@ -421,11 +435,6 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 				x += postNormW + 1
 			}
 
-			// Visual indicator for sliding-window attention blocks
-			if strings.Contains(blockType, "swa") {
-				fmt.Fprintf(&sb, "  <text x=\"%d\" y=\"%d\" font-size=\"6\" font-weight=\"700\" fill=\"%s\" text-anchor=\"end\">SW</text>\n",
-					blockCellW-2, 8, pal[pp+".stroke"])
-			}
 		} else {
 			// Generic: attn_norm as left norm slot, remaining weights as equal sub-rects.
 			var normWt string
@@ -459,24 +468,41 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 			}
 		}
 
-		// Block residual return arrow.
-		// Extends from the gap center (blkGapCX, blkGapCY) down, then dashes left to spine.
-		// Uses overflow="visible" on the symbol to extend outside the cell bounds.
+		return symbolDef{id: id, slots: slots, svg: sb.String()}
+	}
+
+	// --- buildBlockCompound: compound symbol = <use> of base block + residual return features.
+	// Descending (-desc): gap center → down → dashes left to spine + addition indicator.
+	// Ascending (-asc): gap center → up → dashes left to spine (over the top).
+	buildBlockCompound := func(blockType string, ascending bool) symbolDef {
+		suffix := "-desc"
+		if ascending {
+			suffix = "-asc"
+		}
+		baseID := "blk-" + blockType
+		id := baseID + suffix
+		pp := palPrefix(blockType)
 		retCol := pal[pp+".stroke"]
 		retY := cellH + 4
+		if ascending {
+			retY = -4
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "  <use href=\"#%s\"/>\n", baseID)
 		fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.8\"/>\n",
 			blkGapCX, blkGapCY, blkGapCX, retY, retCol)
 		fmt.Fprintf(&sb, "  <path d=\"M %d,%d L %d,%d\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.0\" stroke-dasharray=\"2,3\"/>\n",
 			blkGapCX, retY, blkSpineRel, retY, retCol)
-		fmt.Fprintf(&sb, "  <polyline points=\"%d,%d %d,%d %d,%d\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.0\"/>\n",
-			blkSpineRel+4, retY-2, blkSpineRel, retY, blkSpineRel+4, retY+2, retCol)
-
-		return symbolDef{id: id, slots: slots, svg: sb.String()}
+		fmt.Fprintf(&sb, "  <circle cx=\"%d\" cy=\"%d\" r=\"4\" fill=\"%s\"/>\n",
+			blkSpineRel, retY, pal["ui.spine"])
+		fmt.Fprintf(&sb, "  <text x=\"%d\" y=\"%d\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"8\" font-weight=\"bold\" fill=\"%s\">+</text>\n",
+			blkSpineRel, retY, retCol)
+		return symbolDef{id: id, svg: sb.String()}
 	}
 
 	// --- buildFFNSymbol: render the SVG body for one FFN type and collect slot geometry.
-	// The symbol origin is the FFN cell top-left (0,0). The return rail and dashed path
-	// extend to the right and left respectively using overflow="visible".
+	// The symbol origin is the FFN cell top-left (0,0). The return rail extends to the
+	// right using overflow="visible". Residual dashes are in separate -res-desc/-res-asc symbols.
 	buildFFNSymbol := func(sk string, m *Module) symbolDef {
 		id := "ffn-" + sk
 		isMoE := sk == "moe"
@@ -591,35 +617,72 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 			}
 		}
 
-		// FFN return rail: stub from right edge to returnRail, then dashes down + left to spine.
-		ffnRetY := cellH + 12
+		// FFN return rail: stub from right edge to returnRail with arrowhead.
 		fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.8\"/>\n",
 			ffnCellW, cellH/2, ffnReturnRailRel, cellH/2, pal["ui.spine"])
-		fmt.Fprintf(&sb, "  <circle cx=\"%d\" cy=\"%d\" r=\"2\" fill=\"%s\"/>\n",
-			ffnReturnRailRel, cellH/2, pal["ui.dot"])
-		fmt.Fprintf(&sb, "  <path d=\"M %d,%d L %d,%d L %d,%d\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.0\" stroke-dasharray=\"2,3\"/>\n",
-			ffnReturnRailRel, cellH/2, ffnReturnRailRel, ffnRetY, ffnSpineRel, ffnRetY, pal["ffn.stroke"])
-		fmt.Fprintf(&sb, "  <polyline points=\"%d,%d %d,%d %d,%d\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.0\"/>\n",
-			ffnSpineRel+4, ffnRetY-2, ffnSpineRel, ffnRetY, ffnSpineRel+4, ffnRetY+2, pal["ffn.stroke"])
+		// Arrowhead at return rail pointing right (output direction)
+		fmt.Fprintf(&sb, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+			ffnReturnRailRel-4, cellH/2-2, ffnReturnRailRel, cellH/2, ffnReturnRailRel-4, cellH/2+2, pal["ui.spine"])
 
 		return symbolDef{id: id, slots: slots, svg: sb.String()}
+	}
+
+	// --- buildFFNCompound: compound symbol = <use> of base FFN + residual return features.
+	// Solid vertical from return rail to retY, then dashed horizontal to spine + indicator.
+	// The vertical segment is solid (not dashed) so the horizontal dashes align with
+	// block residual dashes — both start from fresh horizontal paths.
+	buildFFNCompound := func(sk string, ascending bool) symbolDef {
+		suffix := "-desc"
+		if ascending {
+			suffix = "-asc"
+		}
+		baseID := "ffn-" + sk
+		id := baseID + suffix
+		ffnRetY := cellH + 12
+		if ascending {
+			ffnRetY = -12
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "  <use href=\"#%s\"/>\n", baseID)
+		// Solid vertical from return rail to residual Y
+		fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"1.0\"/>\n",
+			ffnReturnRailRel, cellH/2, ffnReturnRailRel, ffnRetY, pal["ffn.stroke"])
+		// Dashed horizontal from return rail to spine
+		fmt.Fprintf(&sb, "  <path d=\"M %d,%d L %d,%d\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.0\" stroke-dasharray=\"2,3\"/>\n",
+			ffnReturnRailRel, ffnRetY, ffnSpineRel, ffnRetY, pal["ffn.stroke"])
+		// Residual addition indicator: gray circle with colored +
+		fmt.Fprintf(&sb, "  <circle cx=\"%d\" cy=\"%d\" r=\"4\" fill=\"%s\"/>\n",
+			ffnSpineRel, ffnRetY, pal["ui.spine"])
+		fmt.Fprintf(&sb, "  <text x=\"%d\" y=\"%d\" text-anchor=\"middle\" dominant-baseline=\"central\" font-size=\"8\" font-weight=\"bold\" fill=\"%s\">+</text>\n",
+			ffnSpineRel, ffnRetY, pal["ffn.stroke"])
+		return symbolDef{id: id, svg: sb.String()}
 	}
 
 	// --- Collect unique block/FFN symbols from module list ---
 	// Uses the first module of each type to build the symbol; all same-type modules
 	// have identical weight structure within a model.
-	blockSymbols := make(map[string]symbolDef) // blockType → def
-	ffnSymbols := make(map[string]symbolDef)   // "dense"/"moe" → def
+	// Base symbols contain cell content only. Compound -desc/-asc symbols compose
+	// <use> of the base + direction-specific residual return features.
+	blockSymbols := make(map[string]symbolDef)  // blockType → base
+	blockDesc := make(map[string]symbolDef)     // blockType → compound descending
+	blockAsc := make(map[string]symbolDef)      // blockType → compound ascending
+	ffnSymbols := make(map[string]symbolDef)    // "dense"/"moe" → base
+	ffnDesc := make(map[string]symbolDef)       // "dense"/"moe" → compound descending
+	ffnAsc := make(map[string]symbolDef)        // "dense"/"moe" → compound ascending
 	for i := range mm.Modules {
 		m := &mm.Modules[i]
 		if strings.HasPrefix(m.Name, "block_") && m.BlockName != "" {
 			if _, seen := blockSymbols[m.BlockName]; !seen {
 				blockSymbols[m.BlockName] = buildBlockSymbol(m.BlockName, m)
+				blockDesc[m.BlockName] = buildBlockCompound(m.BlockName, false)
+				blockAsc[m.BlockName] = buildBlockCompound(m.BlockName, true)
 			}
 		} else if strings.HasPrefix(m.Name, "ffn_") {
 			sk := ffnSymKey(m)
 			if _, seen := ffnSymbols[sk]; !seen {
 				ffnSymbols[sk] = buildFFNSymbol(sk, m)
+				ffnDesc[sk] = buildFFNCompound(sk, false)
+				ffnAsc[sk] = buildFFNCompound(sk, true)
 			}
 		}
 	}
@@ -660,10 +723,19 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	fmt.Fprintf(&rowChromeSVG, "  <circle cx=\"%d\" cy=\"0\" r=\"2.5\" fill=\"%s\"/>\n", spineX, pal["ui.dot"])
 	fmt.Fprintf(&rowChromeSVG, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"0\" stroke=\"%s\" stroke-width=\"0.8\"/>\n",
 		spineX, cellX1, pal["ui.spine"])
+	// Input arrowhead at block cell left edge
+	fmt.Fprintf(&rowChromeSVG, "  <polygon points=\"%d,-2 %d,0 %d,2\" fill=\"%s\"/>\n",
+		cellX1-4, cellX1, cellX1-4, pal["ui.spine"])
 	fmt.Fprintf(&rowChromeSVG, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"0\" stroke=\"%s\" stroke-width=\"0.8\"/>\n",
 		cellX1+blockCellW, cellX2, pal["ui.spine"])
+	// Input arrowhead at FFN cell left edge
 	fmt.Fprintf(&rowChromeSVG, "  <polygon points=\"%d,-2 %d,0 %d,2\" fill=\"%s\"/>\n",
 		cellX2-4, cellX2, cellX2-4, pal["ui.spine"])
+	if nonCausal {
+		// Reverse arrowhead at block cell left edge (bidirectional flow)
+		fmt.Fprintf(&rowChromeSVG, "  <polygon points=\"%d,-2 %d,0 %d,2\" fill=\"%s\"/>\n",
+			cellX1+4, cellX1, cellX1+4, pal["ui.spine"])
+	}
 
 	// --- Build global-row symbol (spine turn + cell + sub-rects + OUT stub) ---
 	// Origin at (0, 0) = globalCY. Placed with translate(0, globalCY).
@@ -814,11 +886,21 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	const rightColOffset = 290 // horizontal offset for right column
 
 	// Vertical layout
+	isDiffusion := generation == "diffusion"
 	spineY1 := 54
+	if nonCausal {
+		spineY1 = 72 // extra room for subtitle
+	}
+	if isDiffusion {
+		spineY1 = 90 // extra room for loop-back arrow above title
+	}
 	firstRowCY := spineY1 + 10
 	colRows := leftCount // left column always has >= right column rows
 	bottomCY := firstRowCY + (colRows-1)*pitch
 	turnY := bottomCY + pitch/2 + 10 // U-turn Y below the bottom row
+	if nonCausal {
+		turnY = bottomCY + 60 // extra room for bidirectional arrows below last layer
+	}
 
 	// Right column: layers ascend from bottom to top
 	// rightLayers[0] at bottomCY, rightLayers[last] near the top
@@ -879,20 +961,22 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		fmt.Fprintf(&b, "  </linearGradient>\n")
 	}
 
-	// Block symbols
+	// Block symbols: base, then compound -desc/-asc (which reference the base via <use>)
 	for _, bt := range blockTypes {
-		sym := blockSymbols[bt]
-		fmt.Fprintf(&b, "  <symbol id=\"%s\" overflow=\"visible\">\n", sym.id)
-		fmt.Fprint(&b, sym.svg)
-		fmt.Fprintf(&b, "  </symbol>\n")
+		for _, sym := range []symbolDef{blockSymbols[bt], blockDesc[bt], blockAsc[bt]} {
+			fmt.Fprintf(&b, "  <symbol id=\"%s\" overflow=\"visible\">\n", sym.id)
+			fmt.Fprint(&b, sym.svg)
+			fmt.Fprintf(&b, "  </symbol>\n")
+		}
 	}
 
-	// FFN symbols
+	// FFN symbols: base, then compound -desc/-asc (which reference the base via <use>)
 	for _, fk := range ffnKeys {
-		sym := ffnSymbols[fk]
-		fmt.Fprintf(&b, "  <symbol id=\"%s\" overflow=\"visible\">\n", sym.id)
-		fmt.Fprint(&b, sym.svg)
-		fmt.Fprintf(&b, "  </symbol>\n")
+		for _, sym := range []symbolDef{ffnSymbols[fk], ffnDesc[fk], ffnAsc[fk]} {
+			fmt.Fprintf(&b, "  <symbol id=\"%s\" overflow=\"visible\">\n", sym.id)
+			fmt.Fprint(&b, sym.svg)
+			fmt.Fprintf(&b, "  </symbol>\n")
+		}
 	}
 
 	// Row chrome symbol
@@ -923,27 +1007,73 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 	// Title (centered over the U)
 	titleCX := (rightColOffset + returnRailX) / 2
 	fmt.Fprintf(&b, "  <text class=\"title\" x=\"%d\" y=\"32\" text-anchor=\"middle\">%s</text>\n", titleCX, title)
+	if nonCausal {
+		subtitle := "(bidirectional / non-causal)"
+		if generation == "diffusion" {
+			subtitle = "(diffusion — iterative denoising, bidirectional)"
+		}
+		fmt.Fprintf(&b, "  <text x=\"%d\" y=\"46\" text-anchor=\"middle\" font-size=\"11\" font-weight=\"600\" fill=\"%s\">%s</text>\n",
+			titleCX, pal["ui.text_hint"], subtitle)
+	}
 
 	// U-shaped spine
 	rightSpineX := rightColOffset + spineX
 	leftSpineBottom := bottomCY + pitch/4
+	if nonCausal {
+		leftSpineBottom = bottomCY + 48 // extend past last layer's down arrowhead
+	}
 	rightSpineBottom := leftSpineBottom
 	rightSpineTop := globalCY
 
 	// Left spine (descending)
 	fmt.Fprintf(&b, "  <line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"1.5\"/>\n",
 		spineX, spineY1, spineX, leftSpineBottom, pal["ui.spine"])
-	fmt.Fprintf(&b, "  <text class=\"io\" x=\"%d\" y=\"%d\">IN</text>\n", spineX, spineY1-6)
+	// IN label + downward arrowhead at spine start
+	inLabelY := spineY1 - 12
+	if isDiffusion {
+		inLabelY = spineY1 - 4 // below the loop-back arrow landing
+	}
+	fmt.Fprintf(&b, "  <text class=\"io\" x=\"%d\" y=\"%d\">IN</text>\n", spineX, inLabelY)
+	if !isDiffusion {
+		// Spine start arrowhead — omitted for diffusion where the loop arrow already points down.
+		fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+			spineX-3, spineY1, spineX, spineY1+6, spineX+3, spineY1, pal["ui.spine"])
+	}
+	if nonCausal && !isDiffusion {
+		// Upward arrowhead on left spine (reverse flow) — omitted for diffusion
+		// where the loop-back arrow already conveys return flow.
+		fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+			spineX-3, spineY1+18, spineX, spineY1+12, spineX+3, spineY1+18, pal["ui.spine"])
+	}
 
 	// U-turn at bottom (left spine → right spine)
 	fmt.Fprintf(&b, "  <path d=\"M %d,%d L %d,%d L %d,%d\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.5\"/>\n",
 		spineX, leftSpineBottom, spineX, turnY, rightSpineX, turnY, pal["ui.spine"])
+	if nonCausal {
+		// Bidirectional U-turn: right arrowhead at 1/3, left arrowhead at 2/3
+		turnSpan := rightSpineX - spineX
+		turnRightX := spineX + turnSpan/3
+		turnLeftX := spineX + 2*turnSpan/3
+		fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+			turnRightX-3, turnY-3, turnRightX+3, turnY, turnRightX-3, turnY+3, pal["ui.spine"])
+		fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+			turnLeftX+3, turnY-3, turnLeftX-3, turnY, turnLeftX+3, turnY+3, pal["ui.spine"])
+	} else {
+		turnMidX := (spineX + rightSpineX) / 2
+		fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+			turnMidX-3, turnY-3, turnMidX+3, turnY, turnMidX-3, turnY+3, pal["ui.spine"])
+	}
 	fmt.Fprintf(&b, "  <line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"1.5\"/>\n",
 		rightSpineX, turnY, rightSpineX, rightSpineBottom, pal["ui.spine"])
 
 	// Right spine (ascending)
 	fmt.Fprintf(&b, "  <line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"1.5\"/>\n",
 		rightSpineX, rightSpineBottom, rightSpineX, rightSpineTop, pal["ui.spine"])
+	if nonCausal {
+		// Downward arrowhead on right spine (reverse flow)
+		fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+			rightSpineX-3, rightSpineTop+6, rightSpineX, rightSpineTop+12, rightSpineX+3, rightSpineTop+6, pal["ui.spine"])
+	}
 
 	// --- Left column layers (descending) ---
 	// engageLabel formats an engagement value for the SVG annotation.
@@ -955,7 +1085,7 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		return fmt.Sprintf("%.4f", e)
 	}
 
-	emitLayerRow := func(l int, lr *layerEntry, cy, xOff int) {
+	emitLayerRow := func(l int, lr *layerEntry, cy, xOff int, ascending, skipSpineArrow bool) {
 		rowY := cy - cellH/2
 		fmt.Fprintf(&b, "  <use href=\"#row-chrome\" transform=\"translate(%d,%d)\"/>\n", xOff, cy)
 		fmt.Fprintf(&b, "  <text class=\"lbl\" x=\"%d\" y=\"%d\">%d</text>\n", xOff+spineX-5, cy, l)
@@ -963,7 +1093,11 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 		if lr.hasBlock {
 			m := moduleByID[lr.blockID]
 			sym := blockSymbols[m.BlockName]
-			fmt.Fprintf(&b, "  <use href=\"#%s\" transform=\"translate(%d,%d)\"/>\n", sym.id, xOff+cellX1, rowY)
+			comp := blockDesc[m.BlockName]
+			if ascending {
+				comp = blockAsc[m.BlockName]
+			}
+			fmt.Fprintf(&b, "  <use href=\"#%s\" transform=\"translate(%d,%d)\"/>\n", comp.id, xOff+cellX1, rowY)
 			if hasEngagement && l < len(engagement.BlockCosSim) {
 				e := float64(1 - engagement.BlockCosSim[l])
 				if !math.IsNaN(e) {
@@ -984,7 +1118,11 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 			m := moduleByID[lr.ffnID]
 			sk := ffnSymKey(m)
 			sym := ffnSymbols[sk]
-			fmt.Fprintf(&b, "  <use href=\"#%s\" transform=\"translate(%d,%d)\"/>\n", sym.id, xOff+cellX2, rowY)
+			ffnComp := ffnDesc[sk]
+			if ascending {
+				ffnComp = ffnAsc[sk]
+			}
+			fmt.Fprintf(&b, "  <use href=\"#%s\" transform=\"translate(%d,%d)\"/>\n", ffnComp.id, xOff+cellX2, rowY)
 			if hasEngagement && l < len(engagement.FFNCosSim) {
 				e := float64(1 - engagement.FFNCosSim[l])
 				if !math.IsNaN(e) {
@@ -1000,21 +1138,82 @@ func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, d
 				}
 			}
 		}
+
+		// Spine directional arrow between layers.
+		// Arrow body centered midway between FFN residual return and next layer's tap.
+		if !skipSpineArrow {
+			sx := xOff + spineX
+			if nonCausal {
+				// Bidirectional: arrows hugging the circle-+ indicators.
+				// Up arrow above the top circle-+, down arrow below the bottom circle-+.
+				const circR = 4 // circle-+ radius
+				const gap = 2  // gap between circle edge and arrow base
+				if ascending {
+					// Top circle-+ is FFN at cy - 32, bottom is block at cy - 24
+					upTip := cy - 32 - circR - gap - 6 // tip above FFN circle
+					dnTip := cy - 24 + circR + gap + 6 // tip below block circle
+					fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+						sx-3, upTip+6, sx, upTip, sx+3, upTip+6, pal["ui.spine"])
+					fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+						sx-3, dnTip-6, sx, dnTip, sx+3, dnTip-6, pal["ui.spine"])
+				} else {
+					// Top circle-+ is block at cy + 24, bottom is FFN at cy + 32
+					upTip := cy + 24 - circR - gap - 6 // tip above block circle
+					dnTip := cy + 32 + circR + gap + 6 // tip below FFN circle
+					fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+						sx-3, upTip+6, sx, upTip, sx+3, upTip+6, pal["ui.spine"])
+					fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+						sx-3, dnTip-6, sx, dnTip, sx+3, dnTip-6, pal["ui.spine"])
+				}
+			} else {
+				// Autoregressive: single arrow midway between FFN return and next tap.
+				ffnReturnOfs := cellH/2 + 12
+				arrowCenter := (ffnReturnOfs + pitch) / 2
+				const arrowHalf = 3
+				if ascending {
+					arrowY := cy - arrowCenter - arrowHalf
+					fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+						sx-3, arrowY+6, sx, arrowY, sx+3, arrowY+6, pal["ui.spine"])
+				} else {
+					arrowY := cy + arrowCenter + arrowHalf
+					fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+						sx-3, arrowY-6, sx, arrowY, sx+3, arrowY-6, pal["ui.spine"])
+				}
+			}
+		}
 	}
 
 	for i, l := range leftLayers {
 		cy := firstRowCY + i*pitch
-		emitLayerRow(l, layerMap[l], cy, 0)
+		emitLayerRow(l, layerMap[l], cy, 0, false, i == len(leftLayers)-1 && !nonCausal)
 	}
 
 	// --- Right column layers (ascending — rightLayers[0] at bottom, last at top) ---
 	for j, l := range rightLayers {
 		cy := bottomCY - j*pitch
-		emitLayerRow(l, layerMap[l], cy, rightColOffset)
+		emitLayerRow(l, layerMap[l], cy, rightColOffset, true, false)
 	}
 
 	// Global row at top of right column
 	fmt.Fprintf(&b, "  <use href=\"#global-row\" transform=\"translate(%d,%d)\"/>\n", rightColOffset, globalCY)
+
+	// Diffusion iteration loop: curved return arrow from OUT back to IN
+	if isDiffusion && globalModule != nil {
+		gw := blockCellW + cellGap + ffnCellW
+		outAbsX := rightColOffset + cellX1 + gw/2
+		outAbsY := globalCY - cellH/2 - 28 // above OUT label to avoid transecting it
+		inAbsY := spineY1 - 12             // just above IN label
+		loopY := 54                         // horizontal segment Y (below subtitle at y=46)
+		// Squared path from OUT up, across, and down to IN.
+		fmt.Fprintf(&b, "  <path d=\"M %d,%d L %d,%d L %d,%d L %d,%d\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.2\" stroke-dasharray=\"4,3\"/>\n",
+			outAbsX, outAbsY, outAbsX, loopY, spineX, loopY, spineX, inAbsY, pal["ui.spine"])
+		// Arrowhead pointing down at IN
+		fmt.Fprintf(&b, "  <polygon points=\"%d,%d %d,%d %d,%d\" fill=\"%s\"/>\n",
+			spineX-3, inAbsY-6, spineX, inAbsY, spineX+3, inAbsY-6, pal["ui.spine"])
+		// Label below the horizontal segment, right-justified near the output vertical
+		fmt.Fprintf(&b, "  <text x=\"%d\" y=\"%d\" text-anchor=\"end\" font-size=\"8\" font-style=\"italic\" fill=\"%s\">unmask &amp; re-run (T steps)</text>\n",
+			outAbsX-4, loopY+10, pal["ui.text_hint"])
+	}
 
 	// Legend (bottom-left) + Summary (bottom-right, top-aligned with legend)
 	fmt.Fprintf(&b, "  <use href=\"#legend\" transform=\"translate(%d,%d)\"/>\n", spineX-4, legBoxY)

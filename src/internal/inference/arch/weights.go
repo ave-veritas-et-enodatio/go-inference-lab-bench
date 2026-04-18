@@ -115,7 +115,8 @@ func ResolveWeightsFromDef(def *ArchDef, nLayers int) *ResolvedWeights {
 		IntArr: make(map[string][]int),
 	}
 
-	// For pattern routing, generate a simple alternating pattern for diagram
+	// For pattern routing, generate a simple alternating pattern for diagram.
+	// (Uniform routing needs no fallback params — resolveBlockName handles it directly.)
 	if def.Layers.Routing.Pattern != "" {
 		pattern := make([]int, nLayers)
 		for i := range pattern {
@@ -131,7 +132,10 @@ func ResolveWeightsFromDef(def *ArchDef, nLayers int) *ResolvedWeights {
 
 		blockName, err := resolveBlockName(def, i, fallbackParams)
 		if err != nil {
-			blockName = def.Layers.Routing.IfTrue
+			blockName = def.Layers.Routing.Uniform
+			if blockName == "" {
+				blockName = def.Layers.Routing.IfTrue
+			}
 			if blockName == "" {
 				blockName = def.Layers.Routing.IfFalse
 			}
@@ -188,6 +192,11 @@ func expandPrefix(tmpl string, layerIdx int) string {
 
 func resolveBlockName(def *ArchDef, layerIdx int, params *ResolvedParams) (string, error) {
 	r := &def.Layers.Routing
+
+	// Uniform routing: all layers use the same block type
+	if r.Uniform != "" {
+		return r.Uniform, nil
+	}
 
 	// Pattern-based routing: index into IntArr by layer
 	if r.Pattern != "" {

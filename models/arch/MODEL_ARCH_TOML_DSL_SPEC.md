@@ -361,7 +361,7 @@ output   = down @ (gate_out * up_out)     # [n_embd, n_tokens]
 
 ---
 
-## Builder: `moe_with_shared`
+## Builder: `moe`
 
 Mixture-of-Experts FFN with optional shared expert and optional expert selection bias.
 
@@ -394,6 +394,56 @@ Multi-head Latent Attention (DeepSeek V2 / GLM-4). Low-rank Q and KV compression
 Q path: compress → norm → expand → split (nope + pe) → RoPE on pe → absorb nope into KV latent space via k_b.
 KV path: compress → split (compressed + pe) → norm → RoPE on pe → concat.
 Post-attention: V decompression via batched per-head matmul with v_b.
+
+---
+
+## Layer Routing (`[layers.routing]`)
+
+Determines which `[blocks.*]` definition each layer uses. Three mutually exclusive modes:
+
+### Uniform
+
+All layers use a single block type. No routing expression needed.
+
+```toml
+[layers.routing]
+uniform = "attention"        # must name a [blocks.*] key
+```
+
+Used when every layer has the same block structure (e.g. Llama, DeepSeek2 MLA).
+
+### Rule
+
+An expression evaluated per-layer. Nonzero result selects `if_true`, zero selects `if_false`.
+
+```toml
+[layers.routing]
+rule     = "(@{layer_idx} + 1) % ${full_attn_interval} != 0"
+if_true  = "recurrent_ssm"
+if_false = "full_attention"
+```
+
+The expression uses the standard expression language (see below). `@{layer_idx}` is a builtin (0-based layer index). `${name}` dereferences a resolved param.
+
+### Pattern
+
+An integer array param indexed by layer. Nonzero elements select `if_true`, zero elements select `if_false`.
+
+```toml
+[layers.routing]
+pattern  = "swa_pattern"     # param name resolving to int[] from GGUF
+if_true  = "swa_attention"
+if_false = "full_attention"
+```
+
+Used when routing is driven by an opaque per-layer array in the GGUF metadata (e.g. Gemma4 ISWA).
+
+### Validation
+
+- Exactly one of `uniform`, `rule`, or `pattern` must be set.
+- `uniform` is mutually exclusive with `rule`, `pattern`, `if_true`, and `if_false`.
+- `rule` and `pattern` both require `if_true` and `if_false`.
+- The value of `uniform`, `if_true`, and `if_false` must each name a `[blocks.*]` key.
 
 ---
 

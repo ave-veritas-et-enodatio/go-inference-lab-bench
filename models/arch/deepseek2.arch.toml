@@ -48,10 +48,7 @@ count  = "n_layers"
 prefix = "blk.@{layer_idx}."
 
 [layers.routing]
-# All layers use the same attention block (MLA); only FFN differs per layer
-rule     = "1 == 1"
-if_true  = "mla"
-if_false = "mla"
+uniform = "mla"
 
 [layers.common_weights]
 attn_norm = "attn_norm.weight"
