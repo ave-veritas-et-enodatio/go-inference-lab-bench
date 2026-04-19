@@ -23,3 +23,4 @@ nohup.out
 .claude/worktrees/
 
 src/third_party/ggml/
+tools/llama.cpp/

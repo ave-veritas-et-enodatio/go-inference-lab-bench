@@ -1,3 +1,6 @@
+tools/convert_hf_to_gguf.py linguist-vendored
+tools/gguf/**/*.py linguist-vendored
+
 *.gguf filter=lfs diff=lfs merge=lfs -text
 *.glb filter=lfs diff=lfs merge=lfs -text
 *.pdf filter=lfs diff=lfs merge=lfs -text
