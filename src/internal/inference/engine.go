@@ -348,7 +348,7 @@ func (e *Engine) Generate(
 
 	// Write diagnostic files.
 	if cullMap != nil {
-		culling.WriteCullDiagnostics(e.diagDir, cullMap, e.model.ModelPath, e.model.TensorDims, metrics.Engagement, e.model.Def.Architecture.NonCausal, e.model.Def.Architecture.Generation)
+		culling.WriteCullDiagnostics(e.diagDir, e.model.Def, cullMap, e.model.ModelPath, e.model.TensorDims, metrics.Engagement, e.model.Def.Architecture.NonCausal, e.model.Def.Architecture.Generation)
 	}
 
 	return metrics, genErr

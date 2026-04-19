@@ -174,9 +174,9 @@
   <rect width="170" height="96" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
   <text class="shdr" x="4" y="11">61 modules</text>
   <text class="ltxt" x="4" y="24">  0 culled (0%)</text>
-  <text class="shdr" x="4" y="41">538 tensors</text>
+  <text class="shdr" x="4" y="41">522 tensors</text>
   <text class="ltxt" x="4" y="54">  0 culled (0%)</text>
-  <text class="shdr" x="4" y="71">538 weights</text>
+  <text class="shdr" x="4" y="71">522 weights</text>
   <text class="ltxt" x="4" y="84">  0 elided (0%)</text>
   </symbol>
 </defs>
@@ -197,37 +197,37 @@
   <polygon points="23,106 26,112 29,106" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,122)"/>
   <text class="lbl" x="21" y="122">1</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,102)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,102)"/>
   <use href="#ffn-dense-desc" transform="translate(160,102)"/>
   <polygon points="23,164 26,170 29,164" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,180)"/>
   <text class="lbl" x="21" y="180">2</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,160)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,160)"/>
   <use href="#ffn-dense-desc" transform="translate(160,160)"/>
   <polygon points="23,222 26,228 29,222" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,238)"/>
   <text class="lbl" x="21" y="238">3</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,218)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,218)"/>
   <use href="#ffn-dense-desc" transform="translate(160,218)"/>
   <polygon points="23,280 26,286 29,280" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,296)"/>
   <text class="lbl" x="21" y="296">4</text>
-  <use href="#blk-swa_attention-desc" transform="translate(36,276)"/>
+  <use href="#blk-full_attention-desc" transform="translate(36,276)"/>
   <use href="#ffn-dense-desc" transform="translate(160,276)"/>
   <polygon points="23,338 26,344 29,338" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,354)"/>
   <text class="lbl" x="21" y="354">5</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,334)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,334)"/>
   <use href="#ffn-dense-desc" transform="translate(160,334)"/>
   <polygon points="23,396 26,402 29,396" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,412)"/>
   <text class="lbl" x="21" y="412">6</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,392)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,392)"/>
   <use href="#ffn-dense-desc" transform="translate(160,392)"/>
   <polygon points="23,454 26,460 29,454" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,470)"/>
   <text class="lbl" x="21" y="470">7</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,450)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,450)"/>
   <use href="#ffn-dense-desc" transform="translate(160,450)"/>
   <polygon points="23,512 26,518 29,512" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,528)"/>
@@ -242,12 +242,12 @@
   <polygon points="23,628 26,634 29,628" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,644)"/>
   <text class="lbl" x="21" y="644">10</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,624)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,624)"/>
   <use href="#ffn-dense-desc" transform="translate(160,624)"/>
   <polygon points="23,686 26,692 29,686" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,702)"/>
   <text class="lbl" x="21" y="702">11</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,682)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,682)"/>
   <use href="#ffn-dense-desc" transform="translate(160,682)"/>
   <polygon points="23,744 26,750 29,744" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,760)"/>
@@ -257,7 +257,7 @@
   <polygon points="23,802 26,808 29,802" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,818)"/>
   <text class="lbl" x="21" y="818">13</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,798)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,798)"/>
   <use href="#ffn-dense-desc" transform="translate(160,798)"/>
   <polygon points="23,860 26,866 29,860" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,876)"/>
@@ -267,7 +267,7 @@
   <polygon points="23,918 26,924 29,918" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(0,934)"/>
   <text class="lbl" x="21" y="934">15</text>
-  <use href="#blk-full_attention-desc" transform="translate(36,914)"/>
+  <use href="#blk-swa_attention-desc" transform="translate(36,914)"/>
   <use href="#ffn-dense-desc" transform="translate(160,914)"/>
   <use href="#row-chrome" transform="translate(290,934)"/>
   <text class="lbl" x="311" y="934">16</text>
@@ -276,12 +276,12 @@
   <polygon points="313,892 316,886 319,892" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,876)"/>
   <text class="lbl" x="311" y="876">17</text>
-  <use href="#blk-full_attention-asc" transform="translate(326,856)"/>
+  <use href="#blk-swa_attention-asc" transform="translate(326,856)"/>
   <use href="#ffn-dense-asc" transform="translate(450,856)"/>
   <polygon points="313,834 316,828 319,834" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,818)"/>
   <text class="lbl" x="311" y="818">18</text>
-  <use href="#blk-full_attention-asc" transform="translate(326,798)"/>
+  <use href="#blk-swa_attention-asc" transform="translate(326,798)"/>
   <use href="#ffn-dense-asc" transform="translate(450,798)"/>
   <polygon points="313,776 316,770 319,776" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,760)"/>
@@ -296,37 +296,37 @@
   <polygon points="313,660 316,654 319,660" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,644)"/>
   <text class="lbl" x="311" y="644">21</text>
-  <use href="#blk-full_attention-asc" transform="translate(326,624)"/>
+  <use href="#blk-swa_attention-asc" transform="translate(326,624)"/>
   <use href="#ffn-dense-asc" transform="translate(450,624)"/>
   <polygon points="313,602 316,596 319,602" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,586)"/>
   <text class="lbl" x="311" y="586">22</text>
-  <use href="#blk-full_attention-asc" transform="translate(326,566)"/>
+  <use href="#blk-swa_attention-asc" transform="translate(326,566)"/>
   <use href="#ffn-dense-asc" transform="translate(450,566)"/>
   <polygon points="313,544 316,538 319,544" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,528)"/>
   <text class="lbl" x="311" y="528">23</text>
-  <use href="#blk-full_attention-asc" transform="translate(326,508)"/>
+  <use href="#blk-swa_attention-asc" transform="translate(326,508)"/>
   <use href="#ffn-dense-asc" transform="translate(450,508)"/>
   <polygon points="313,486 316,480 319,486" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,470)"/>
   <text class="lbl" x="311" y="470">24</text>
-  <use href="#blk-swa_attention-asc" transform="translate(326,450)"/>
+  <use href="#blk-full_attention-asc" transform="translate(326,450)"/>
   <use href="#ffn-dense-asc" transform="translate(450,450)"/>
   <polygon points="313,428 316,422 319,428" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,412)"/>
   <text class="lbl" x="311" y="412">25</text>
-  <use href="#blk-full_attention-asc" transform="translate(326,392)"/>
+  <use href="#blk-swa_attention-asc" transform="translate(326,392)"/>
   <use href="#ffn-dense-asc" transform="translate(450,392)"/>
   <polygon points="313,370 316,364 319,370" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,354)"/>
   <text class="lbl" x="311" y="354">26</text>
-  <use href="#blk-full_attention-asc" transform="translate(326,334)"/>
+  <use href="#blk-swa_attention-asc" transform="translate(326,334)"/>
   <use href="#ffn-dense-asc" transform="translate(450,334)"/>
   <polygon points="313,312 316,306 319,312" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,296)"/>
   <text class="lbl" x="311" y="296">27</text>
-  <use href="#blk-full_attention-asc" transform="translate(326,276)"/>
+  <use href="#blk-swa_attention-asc" transform="translate(326,276)"/>
   <use href="#ffn-dense-asc" transform="translate(450,276)"/>
   <polygon points="313,254 316,248 319,254" fill="#AAAAAA"/>
   <use href="#row-chrome" transform="translate(290,238)"/>

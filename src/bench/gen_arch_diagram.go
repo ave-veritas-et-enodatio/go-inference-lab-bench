@@ -81,7 +81,8 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 		}
 		mm := arch.BuildModuleMap(weights)
 		layersPath := filepath.Join(filepath.Dir(outputPath), def.Architecture.Name+".layers.svg")
-		if err := arch.RenderModuleMapDiagram(mm, layersPath, strings.Title(def.Architecture.Name)+" Layers", nil, nil, def.Architecture.NonCausal, def.Architecture.Generation); err != nil {
+		subtitle := " Layers"
+		if err := arch.RenderModuleMapDiagram(def, mm, layersPath, subtitle, nil, nil); err != nil {
 			log.Fatal("generating layers SVG: %v", err)
 		}
 		log.Info("wrote %s", layersPath)
@@ -112,8 +113,8 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 			altMM := arch.BuildModuleMap(altWeights)
 			altLayersPath := filepath.Join(filepath.Dir(outputPath),
 				def.Architecture.Name+altSuffix+".layers.svg")
-			if err := arch.RenderModuleMapDiagram(altMM, altLayersPath,
-				strings.Title(def.Architecture.Name)+" Layers ("+def.FFNAlt.Builder+" variant)", nil, nil, def.Architecture.NonCausal, def.Architecture.Generation); err != nil {
+			subtitle := " Layers ("+def.FFNAlt.Builder+" variant)"
+			if err := arch.RenderModuleMapDiagram(def, altMM, altLayersPath, subtitle, nil, nil); err != nil {
 				log.Fatal("generating alt layers SVG: %v", err)
 			}
 			log.Info("wrote %s", altLayersPath)

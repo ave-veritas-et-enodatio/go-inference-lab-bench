@@ -172,4 +172,4 @@ extra_eos    = ["<end_of_turn>"]
 # Diagram-only example values; no effect on inference.
 [example]
 n_layers       = 30
-full_attn_every = 5
+attn_pattern_false_every = 5

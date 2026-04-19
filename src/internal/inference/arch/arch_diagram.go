@@ -519,13 +519,18 @@ func emitLayerPattern(w *bufio.Writer, def *ArchDef, nLayers, x, y, width, heigh
 	pal := diagramPalette()
 	fmt.Fprintf(w, "  <g transform=\"translate(%d, %d)\">\n", x, y)
 	fmt.Fprintf(w, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"%s\" stroke=\"%s\" stroke-width=\"1\" filter=\"url(#shadow)\"/>\n", width, height, pal["ui.box_bg"], pal["ui.box_border"])
-	interval := diagramFallbackInterval
-	if def.Example.FullAttnEvery > 0 {
-		interval = def.Example.FullAttnEvery
-	}
+	interval := 0
 	title := fmt.Sprintf("Layer Pattern (example: %d layers", nLayers)
-	if def.Layers.Routing.IfTrue != def.Layers.Routing.IfFalse {
-		title += fmt.Sprintf(", full attention every %d", interval)
+	if !isTrivialRouting(def) {
+		if def.Example.FullAttnEvery > 0 {
+			title += fmt.Sprintf(", full attention every %d", def.Example.FullAttnEvery)
+		} else if def.Example.AttnPatternTrueEvery > 0 {
+			interval = def.Example.AttnPatternTrueEvery
+			title += fmt.Sprintf(", attention pattern true every %d", interval)
+		} else if def.Example.AttnPatternFalseEvery > 0 {
+			interval = def.Example.AttnPatternFalseEvery
+			title += fmt.Sprintf(", attention pattern false every %d", interval)
+		}
 	}
 	title += ")"
 	fmt.Fprintf(w, "    <text x=\"%d\" y=\"19\" text-anchor=\"middle\" font-size=\"12\" font-weight=\"600\" fill=\"%s\">%s</text>\n", width/2, pal["ui.text_head"], title)
@@ -567,33 +572,43 @@ func emitLayerPattern(w *bufio.Writer, def *ArchDef, nLayers, x, y, width, heigh
 	w.WriteString("  </g>\n")
 }
 
-// diagramFallbackInterval is the example full-attention interval used in diagrams
-// when no GGUF is available. Used by both diagramFallbackParams and emitLayerPattern.
-const diagramFallbackInterval = 4
-
 // diagramFallbackParams builds ResolvedParams for diagram rendering without GGUF.
 // Covers both rule-based routing (Qwen3.5: full_attn_interval) and pattern-based
 // routing (Gemma4: swa_pattern as every-Nth-layer example).
 func diagramFallbackParams(def *ArchDef, nLayers int) *ResolvedParams {
-	interval := diagramFallbackInterval
-	if def.Example.FullAttnEvery > 0 {
-		interval = def.Example.FullAttnEvery
-	}
 	rp := &ResolvedParams{
-		Ints:    map[string]int{"full_attn_interval": interval},
+		Ints:    map[string]int{},
 		Floats:  map[string]float32{},
 		Strings: map[string]string{},
 		IntArr:  map[string][]int{},
 	}
-	// For pattern routing, generate a representative pattern.
-	// Use every-Nth-layer (1-based: (i+1) % interval == 0) as if_true, rest as if_false.
-	// Matches Gemma4's convention (global at layers 4,9,14... in 0-based = every 5th in 1-based)
-	// and Qwen's routing rule (@{layer_idx} + 1) % full_attn_interval != 0.
-	if def.Layers.Routing.Pattern != "" {
+
+	if def.Example.FullAttnEvery > 0 {
+		// TODO: hard-coded magic string is bad.
+		rp.Ints["full_attn_interval"] = def.Example.FullAttnEvery
+	}
+
+	// For pattern routing (fully recorded bool pattern), generate a pattern
+	// at intervals
+	if def.Example.AttnPatternTrueEvery > 0 || def.Example.AttnPatternFalseEvery > 0 {
+		var interval int
+		var baseValue int
+		var intervalValue int
+		if def.Example.AttnPatternTrueEvery > 0 {
+			interval = def.Example.AttnPatternTrueEvery
+			intervalValue = 1
+			baseValue = 0
+		} else {
+			interval = def.Example.AttnPatternFalseEvery
+			intervalValue = 0
+			baseValue = 1
+		}
 		pattern := make([]int, nLayers)
 		for i := range pattern {
 			if (i+1)%interval == 0 {
-				pattern[i] = 1
+				pattern[i] = intervalValue
+			} else {
+				pattern[i] = baseValue
 			}
 		}
 		rp.IntArr[def.Layers.Routing.Pattern] = pattern
@@ -622,6 +637,7 @@ func weightNameOrDefault(weights map[string]string, key string) string {
 	if name := weights[key]; name != "" {
 		return name
 	}
+	// hard coded magic string is bad.
 	return key + ".weight"
 }
 

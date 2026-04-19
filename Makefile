@@ -1,7 +1,7 @@
-GRAPH_TARGETS  := $(patsubst models/arch/%.arch.toml,models/arch/%.arch.svg,$(wildcard models/arch/*.arch.toml))
+DIAGRAM_TARGETS  := $(patsubst models/arch/%.arch.toml,models/arch/%.arch.svg,$(wildcard models/arch/*.arch.toml))
 ST_TOK_TARGETS  := $(patsubst models/%.st/tokenizer.json,models/%.st/tokenizer.gguf,$(wildcard models/*.st/tokenizer.json))
 ST_GGUF_TARGETS := $(patsubst models/%.st,models/%.gguf,$(wildcard models/*.st))
-.PHONY: all build test integration-test equiv-test update-dependencies serve chat model-diagrams clean st-tok-ggufs st-ggufs
+.PHONY: all arch-diagrams arch-diagram-targets build test integration-test equiv-test update-dependencies serve chat model-diagrams clean agents st-tok-ggufs st-ggufs
 
 all: build
 
@@ -37,7 +37,10 @@ models/arch/%.arch.svg: models/arch/%.arch.toml
 	@[[ -x ./bin/bench ]] || (echo "make build first." 1>&2 && exit 1)
 	./bin/bench gen-arch-diagram $(<) $(@)
 
-arch-diagrams: build $(GRAPH_TARGETS)
+arch-diagram-targets: $(DIAGRAM_TARGETS)
+
+arch-diagrams: build
+	@$(MAKE) -B arch-diagram-targets
 
 update-attributions:
 	claude -p "read AGENTS.md and ARCHITECTURE.md, then read the direct imports section of src/go.mod and update 'Third Party Acknowledgements' at the end of README.md" \

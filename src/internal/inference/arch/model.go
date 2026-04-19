@@ -467,6 +467,8 @@ func (b *genericModelBuilder) assignBuilders() error {
 	// Compute block boundaries for per-block RLB. InitBlockRanges is a no-op
 	// when full_attn_interval is absent or zero; the per-block driver then
 	// falls back to a single block covering all layers.
+	// TODO: hard-coded magic string is bad. all of these hard-coded keys are bad.
+	//       a set of const declarations is needed.
 	m.rlb.InitBlockRanges(nLayers, b.params.Ints["full_attn_interval"])
 
 	blockCounts := make(map[string]int)

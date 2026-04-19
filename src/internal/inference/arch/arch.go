@@ -31,6 +31,8 @@ type ArchDef struct {
 type ExampleDef struct {
 	NLayers       int `toml:"n_layers"`        // example layer count for layer-pattern strip
 	FullAttnEvery int `toml:"full_attn_every"` // interval: layer (i+1) % N == 0 is full/global attention
+	AttnPatternTrueEvery int `toml:"attn_pattern_true_every"` //  pattern[n] = ((i+1) % N) == 0
+	AttnPatternFalseEvery int `toml:"attn_pattern_false_every"` // pattern[n] = ((i+1) % N) != 0
 }
 
 type TokensDef struct {
@@ -435,6 +437,17 @@ func Validate(def *ArchDef) []ValidationError {
 						fmt.Sprintf("no KV-producing block (with attn_k) found for group %q", group))
 				}
 			}
+		}
+	}
+
+	// validate example values
+  ex := def.Example
+	if ex.AttnPatternTrueEvery > 0 || ex.AttnPatternFalseEvery > 0 {
+		if ex.AttnPatternTrueEvery > 0 && ex.AttnPatternFalseEvery > 0 {
+			add("example.attn_pattern_false_every", "mutually exclusive with example.attn_pattern_true_every")
+		}
+		if ex.FullAttnEvery > 0 {
+			add("example.FullAttnEvery", "mutually exclusive with example.attn_pattern_true_every and example.attn_pattern_false_every")
 		}
 	}
 
