@@ -25,7 +25,7 @@ type GenericCache struct {
 
 // NewGenericCache creates a cache from the architecture definition.
 func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
-	nLayers := m.Params.Ints["n_layers"]
+	nLayers := m.Params.Ints[ParamNLayers]
 
 	// Count tensors needed
 	nTensors := 0
@@ -52,7 +52,7 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 
 	// n_kv_shared_layers: layers past (nLayers - nKVShared) reuse the last KV
 	// layer's cache for their block type. General-purpose mechanism driven by GGUF param.
-	nKVShared, _ := m.Params.Ints["n_kv_shared_layers"]
+	nKVShared, _ := m.Params.Ints[ParamNKVSharedLayers]
 	nKVFromStart := nLayers
 	if nKVShared > 0 {
 		nKVFromStart = nLayers - nKVShared
@@ -101,8 +101,7 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 				cacheCtx.Free()
 				return nil, fmt.Errorf("layer %d cache %q: %w", i, cacheName, err)
 			}
-			// TODO: use spec.Dtype when non-F32 cache types are needed.
-			dtype := ggml.TypeF32
+			dtype := ggml.TypeF32 // TODO: use spec.Dtype when non-F32 cache types are needed
 
 			var t ggml.Tensor
 			switch len(dims) {
@@ -187,7 +186,7 @@ func evalCacheDim(expr string, params *ResolvedParams, maxSeqLen int) (int, erro
 	expr = strings.TrimSpace(expr)
 
 	// Special token
-	if expr == "max_seq_len" {
+	if expr == CacheDimMaxSeqLen {
 		return maxSeqLen, nil
 	}
 
@@ -208,7 +207,7 @@ func evalCacheDim(expr string, params *ResolvedParams, maxSeqLen int) (int, erro
 	for k, v := range params.Ints {
 		pCopy.Ints[k] = v
 	}
-	pCopy.Ints["max_seq_len"] = maxSeqLen
+	pCopy.Ints[CacheDimMaxSeqLen] = maxSeqLen
 	v, err := evalExpr(expr, &pCopy)
 	if err != nil {
 		return 0, err

@@ -41,10 +41,10 @@ func (b *MLAAttentionBuilder) Contract() BuilderContract {
 			"attn_q_a", "attn_q_a_norm", "attn_q_b",
 			"attn_kv_a_mqa", "attn_kv_a_norm",
 			"attn_k_b", "attn_v_b",
-			"attn_output",
+			WeightAttnOutput,
 		},
 		RequiredParams: []string{
-			"n_heads", "rms_eps", "rope_n_rot", "rope_freq_base",
+			ParamNHeads, ParamRMSEps, ParamRoPENRot, ParamRoPEFreqBase,
 			"kv_lora_rank", "head_k_dim_mla",
 		},
 	}
@@ -55,13 +55,13 @@ func (b *MLAAttentionBuilder) BuildStateless(
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	zeroFill *[]ggml.Tensor) ggml.Tensor {
 
-	nHeads := int64(params.Ints["n_heads"])
-	rmsEps := params.Floats["rms_eps"]
+	nHeads := int64(params.Ints[ParamNHeads])
+	rmsEps := params.Floats[ParamRMSEps]
 	nTokens := inputs.NTokens
 	kvLoraRank := int64(params.Ints["kv_lora_rank"])
 	headKDim := int64(params.Ints["head_k_dim_mla"])
-	ropeDim := int64(params.Ints["rope_n_rot"])
-	freqBase := params.Floats["rope_freq_base"]
+	ropeDim := int64(params.Ints[ParamRoPENRot])
+	freqBase := params.Floats[ParamRoPEFreqBase]
 
 	qFinal := buildMLAQueryPath(ctx, cur, weights, inputs.InpPos,
 		nHeads, headKDim, ropeDim, nTokens, rmsEps, freqBase)
@@ -109,7 +109,7 @@ func (b *MLAAttentionBuilder) BuildStateless(
 	headVDim := decompressed.Ne(0)
 	merged := ggml.Permute(ctx, decompressed, 0, 2, 1, 3) // [headVDim, nHeads, nTokens]
 	cur = ggml.Cont2D(ctx, merged, headVDim*nHeads, nTokens)
-	cur = ggml.MulMat(ctx, weights["attn_output"], cur)
+	cur = ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
 	return cur
 }
 
@@ -118,15 +118,15 @@ func (b *MLAAttentionBuilder) BuildCached(
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	cache *LayerCache) ggml.Tensor {
 
-	nHeads := int64(params.Ints["n_heads"])
-	rmsEps := params.Floats["rms_eps"]
+	nHeads := int64(params.Ints[ParamNHeads])
+	rmsEps := params.Floats[ParamRMSEps]
 	nNew := inputs.NTokens
 	nKV := inputs.NKV
 	seqPos := inputs.SeqPos
 	kvLoraRank := int64(params.Ints["kv_lora_rank"])
 	headKDim := int64(params.Ints["head_k_dim_mla"])
-	ropeDim := int64(params.Ints["rope_n_rot"])
-	freqBase := params.Floats["rope_freq_base"]
+	ropeDim := int64(params.Ints[ParamRoPENRot])
+	freqBase := params.Floats[ParamRoPEFreqBase]
 	kDim := kvLoraRank + ropeDim // total K cache dim per entry
 
 	qFinal := buildMLAQueryPath(ctx, cur, weights, inputs.InpPos,
@@ -185,6 +185,6 @@ func (b *MLAAttentionBuilder) BuildCached(
 	headVDim := decompressed.Ne(0)
 	merged := ggml.Permute(ctx, decompressed, 0, 2, 1, 3) // [headVDim, nHeads, nNew]
 	cur = ggml.Cont2D(ctx, merged, headVDim*nHeads, nNew)
-	cur = ggml.MulMat(ctx, weights["attn_output"], cur)
+	cur = ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
 	return cur
 }

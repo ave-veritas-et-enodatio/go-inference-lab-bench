@@ -118,11 +118,11 @@ func diagramPalette() map[string]string {
 func palPrefixBuilder(builderName string) string {
 	switch {
 	case strings.Contains(builderName, "attention"):
-		return "full_attention"
+		return TypeFullAttention
 	case strings.Contains(builderName, "swiglu") || strings.Contains(builderName, "moe") || strings.Contains(builderName, "geglu"):
-		return "ffn"
+		return TypeFFN
 	default:
-		return "recurrent"
+		return TypeRecurrent
 	}
 }
 
@@ -131,16 +131,16 @@ func palPrefixBuilder(builderName string) string {
 // everything else (recurrent_ssm, recurrent_delta_net, …) → "recurrent".
 func palPrefix(blockType string) string {
 	switch {
-	case strings.HasPrefix(blockType, "swa"):
-		return "swa"
+	case strings.HasPrefix(blockType, TypeSWA):
+		return TypeSWA
 	case strings.Contains(blockType, "attention"):
-		return "full_attention"
-	case blockType == "ffn" || blockType == "ffn_moe":
-		return "ffn"
-	case blockType == "global":
-		return "global"
+		return TypeFullAttention
+	case blockType == TypeFFN || blockType == TypeFFNMoE:
+		return TypeFFN
+	case blockType == ModuleGlobal:
+		return ModuleGlobal
 	default:
-		return "recurrent"
+		return TypeRecurrent
 	}
 }
 

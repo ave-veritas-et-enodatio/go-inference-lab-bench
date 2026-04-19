@@ -4,13 +4,15 @@ Companion to `AGENTS.md`: codebase structure, data flows, and invariants.
 
 ---
 
-## Central Invariant
+## Central Invariants
 
 **Zero model-specific Go code.** Every supported architecture is fully described by
 `models/arch/<name>.arch.toml`. No Go code mentions "llama", "qwen", "deepseek" by name
 except inside arch TOML files and tests. Adding a new model that uses existing block
 builders requires only a new `.arch.toml`. Writing `if arch == "qwen35"` in Go is the
 worst category of mistake in this codebase — that logic belongs in the TOML DSL.
+
+**Zero magic hard-coded values** - any string or number that must agree in multiple places must be defined as a constant and referenced only via the constant name. Renaming a map key or DSL file format symbol must be doable via a single edit of a value rather than a global search and replace.
 
 ---
 

@@ -76,11 +76,11 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 
 	for i := range mm.Modules {
 		m := &mm.Modules[i]
-		if m.Name == "global" {
+		if m.Name == ModuleGlobal {
 			globalModule = m
 			continue
 		}
-		if after, ok := strings.CutPrefix(m.Name, "block_"); ok {
+		if after, ok := strings.CutPrefix(m.Name, PrefixBlock); ok {
 			if l, err := strconv.Atoi(after); err == nil {
 				if layerMap[l] == nil {
 					layerMap[l] = &layerEntry{}
@@ -88,7 +88,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 				layerMap[l].blockID = m.ID
 				layerMap[l].hasBlock = true
 			}
-		} else if after, ok := strings.CutPrefix(m.Name, "ffn_"); ok {
+		} else if after, ok := strings.CutPrefix(m.Name, PrefixFFN); ok {
 			if l, err := strconv.Atoi(after); err == nil {
 				if layerMap[l] == nil {
 					layerMap[l] = &layerEntry{}
@@ -139,18 +139,20 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 
 	// VRAM stats
 	dimsKeyForModule := func(m *Module) string {
-		if m.Name == "global" {
-			return "global"
+		if m.Name == ModuleGlobal {
+			return ModuleGlobal
 		}
 		if m.BlockName != "" {
 			return m.BlockName
 		}
+		// TODO: what is this magic? this looks like a heuristic that happens to work for the current set of supported architectures
+		//       almost certainly should either be a value from .arch.toml or a cleaner MoE detection approach
 		for _, w := range m.Weights {
-			if strings.Contains(w, "_exps") {
-				return "ffn_moe"
+			if strings.Contains(w, SuffixExps) {
+				return TypeFFNMoE
 			}
 		}
-		return "ffn"
+		return TypeFFN
 	}
 	moduleNbytes := func(m *Module) int64 {
 		dk := dimsKeyForModule(m)
@@ -241,37 +243,37 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 	// --- Helpers ---
 
 	isFFNNorm := func(name string) bool {
-		return name == "ffn_norm"
+		return name == WeightFFNNorm
 	}
 	isNormWeight := func(name string) bool {
-		return name == "attn_norm" || name == "post_attention_norm" || name == "output_norm" || name == "ssm_norm" || isFFNNorm(name)
+		return name == WeightAttnNorm || name == WeightPostAttnNorm || name == WeightOutputNorm || name == WeightSSMNorm || isFFNNorm(name)
 	}
 
 	tensorLabels := map[string]string{
-		"attn_norm":           "norm",
-		"attn_q":              "Q",
-		"attn_k":              "K",
-		"attn_v":              "V",
-		"attn_output":         "out",
-		"attn_q_norm":         "Qn",
-		"attn_k_norm":         "Kn",
-		"rope_freqs":          "rope",
-		"rope":                "rope",
-		"post_attention_norm": "norm",
-		"ffn_norm":            "norm",
-		"ffn_gate":            "G",
-		"ffn_up":              "U",
-		"ffn_down":            "D",
-		"ffn_gate_exps":       "Gx",
-		"ffn_up_exps":         "Ux",
-		"ffn_down_exps":       "Dx",
-		"ffn_gate_shexp":      "Gs",
-		"ffn_up_shexp":        "Us",
-		"ffn_down_shexp":      "Ds",
-		"output_norm":         "norm",
-		"ssm_norm":            "norm",
-		"token_embd":          "embd",
-		"output":              "out",
+		WeightAttnNorm:     "norm",
+		WeightAttnQ:        "Q",
+		WeightAttnK:        "K",
+		WeightAttnV:        "V",
+		WeightAttnOutput:   "out",
+		WeightAttnQNorm:    "Qn",
+		WeightAttnKNorm:    "Kn",
+		WeightRoPEFreqs:    "rope",
+		WeightRoPE:         "rope",
+		WeightPostAttnNorm: "norm",
+		WeightFFNNorm:      "norm",
+		WeightFFNGate:      "G",
+		WeightFFNUp:        "U",
+		WeightFFNDown:      "D",
+		WeightFFNGateExps:  "Gx",
+		WeightFFNUpExps:    "Ux",
+		WeightFFNDownExps:  "Dx",
+		WeightFFNGateShexp: "Gs",
+		WeightFFNUpShexp:   "Us",
+		WeightFFNDownShexp: "Ds",
+		WeightOutputNorm:   "norm",
+		WeightSSMNorm:      "norm",
+		WeightTokenEmbd:    "embd",
+		WeightOutput:       "out",
 	}
 	derivedLabel := func(shortName string) string {
 		if lbl, ok := tensorLabels[shortName]; ok {
@@ -285,14 +287,14 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 		return last
 	}
 
-	// ffnSymKey maps an FFN module to its symbol key: "dense" or "moe".
+	// ffnSymKey maps an FFN module to its symbol key: FFNSymDense or FFNSymMoE.
 	ffnSymKey := func(m *Module) string {
 		for _, w := range m.Weights {
-			if strings.Contains(w, "_exps") {
-				return "moe"
+			if strings.Contains(w, SuffixExps) {
+				return FFNSymMoE
 			}
 		}
-		return "dense"
+		return FFNSymDense
 	}
 	// --- drawBaseRect: render one tensor sub-rect + label into a builder; return its slot.
 	// Draws the active (full-color) version only — trim overlays are applied separately.
@@ -338,11 +340,11 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 			// Classify weights into data-flow columns:
 			//   norm | Q,K,V | Qn,Kn,rope (pre-attn extras) | out | post_norm
 			// This matches the actual computation order in prepareQKV → attention → output → post-norm.
-			coreSet := map[string]bool{"attn_norm": true, "attn_q": true, "attn_k": true, "attn_v": true, "attn_output": true, "post_attention_norm": true}
+			coreSet := map[string]bool{WeightAttnNorm: true, WeightAttnQ: true, WeightAttnK: true, WeightAttnV: true, WeightAttnOutput: true, WeightPostAttnNorm: true}
 			hasPostNorm := false
 			var extras []string
 			for _, w := range m.Weights {
-				if w == "post_attention_norm" {
+				if w == WeightPostAttnNorm {
 					hasPostNorm = true
 				} else if !coreSet[w] {
 					extras = append(extras, w)
@@ -353,13 +355,13 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 			// inject a synthetic entry so the diagram represents the full compute path.
 			hasRoPE := false
 			for _, e := range extras {
-				if e == "rope_freqs" {
+				if e == WeightRoPEFreqs {
 					hasRoPE = true
 					break
 				}
 			}
 			if !hasRoPE {
-				extras = append(extras, "rope")
+				extras = append(extras, WeightRoPE)
 			}
 			sort.Strings(extras)
 
@@ -393,7 +395,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 			}
 
 			x := blkNormX
-			slots = append(slots, drawBaseRect(&sb, x, normY, inputNormW, normH, blockType, "attn_norm"))
+			slots = append(slots, drawBaseRect(&sb, x, normY, inputNormW, normH, blockType, WeightAttnNorm))
 			x += inputNormW + 1
 			fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
 				x, x, cellH, pal["ui.divider"])
@@ -402,7 +404,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 			// QKV column
 			total3H := 3*subRowH + 2*subRowGap
 			qStartY := (cellH - total3H) / 2
-			for qi, qn := range []string{"attn_q", "attn_k", "attn_v"} {
+			for qi, qn := range []string{WeightAttnQ, WeightAttnK, WeightAttnV} {
 				qy := qStartY + qi*(subRowH+subRowGap)
 				slots = append(slots, drawBaseRect(&sb, x, qy, qkvW, subRowH, blockType, qn))
 			}
@@ -427,7 +429,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 			}
 
 			// Output projection
-			slots = append(slots, drawBaseRect(&sb, x, normY, outW, normH, blockType, "attn_output"))
+			slots = append(slots, drawBaseRect(&sb, x, normY, outW, normH, blockType, WeightAttnOutput))
 			x += outW + 1
 
 			// Post-attention norm (applied after output projection, in graph.go)
@@ -435,7 +437,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 				fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
 					x, x, cellH, pal["ui.divider"])
 				x += 2
-				slots = append(slots, drawBaseRect(&sb, x, normY, postNormW, normH, blockType, "post_attention_norm"))
+				slots = append(slots, drawBaseRect(&sb, x, normY, postNormW, normH, blockType, WeightPostAttnNorm))
 				x += postNormW + 1
 			}
 
@@ -444,7 +446,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 			var normWt string
 			remaining := make([]string, 0, len(m.Weights))
 			for _, w := range m.Weights {
-				if w == "attn_norm" {
+				if w == WeightAttnNorm {
 					normWt = w
 				} else {
 					remaining = append(remaining, w)
@@ -509,7 +511,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 	// right using overflow="visible". Residual dashes are in separate -res-desc/-res-asc symbols.
 	buildFFNSymbol := func(sk string, m *Module) symbolDef {
 		id := "ffn-" + sk
-		isMoE := sk == "moe"
+		isMoE := sk == FFNSymMoE
 		var sb strings.Builder
 		var slots []tensorSlot
 		normH := cellH - 2*cellPad
@@ -528,7 +530,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 			}
 		}
 		if normWt != "" {
-			slots = append(slots, drawBaseRect(&sb, ffnNormXr, normY, ffnNormW, normH, "ffn", normWt))
+			slots = append(slots, drawBaseRect(&sb, ffnNormXr, normY, ffnNormW, normH, TypeFFN, normWt))
 			fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
 				ffnNDivr, ffnNDivr, cellH, pal["ui.divider"])
 		}
@@ -537,11 +539,11 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 			// Dense: gate/up stacked | down
 			total2H := 2*subRowH + 1*subRowGap
 			guStartY := (cellH - total2H) / 2
-			for gi, gn := range []string{"ffn_gate", "ffn_up"} {
+			for gi, gn := range []string{WeightFFNGate, WeightFFNUp} {
 				gy := guStartY + gi*(subRowH+subRowGap)
-				slots = append(slots, drawBaseRect(&sb, ffnGUXr, gy, ffnGUW, subRowH, "ffn", gn))
+				slots = append(slots, drawBaseRect(&sb, ffnGUXr, gy, ffnGUW, subRowH, TypeFFN, gn))
 			}
-			slots = append(slots, drawBaseRect(&sb, ffnDownXr, normY, ffnDownW, normH, "ffn", "ffn_down"))
+			slots = append(slots, drawBaseRect(&sb, ffnDownXr, normY, ffnDownW, normH, TypeFFN, WeightFFNDown))
 			fmt.Fprintf(&sb, "  <line x1=\"%d\" y1=\"0\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"0.7\"/>\n",
 				ffnGUDivr, ffnGUDivr, cellH, pal["ui.divider"])
 		} else {
@@ -554,7 +556,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 				switch {
 				case isFFNNorm(w):
 					// already handled
-				case strings.Contains(w, "_exps"):
+				case strings.Contains(w, SuffixExps):
 					expertWts = append(expertWts, w)
 				default:
 					sharedWts = append(sharedWts, w)
@@ -615,7 +617,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 					sharedX := expertAreaX + (expertAreaW - avail)
 					for ri, wn := range sharedWts {
 						wx := sharedX + ri*subW
-						slots = append(slots, drawBaseRect(&sb, wx, normY, subW-1, normH, "ffn_moe", wn))
+						slots = append(slots, drawBaseRect(&sb, wx, normY, subW-1, normH, TypeFFNMoE, wn))
 					}
 				}
 			}
@@ -675,13 +677,13 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 	ffnAsc := make(map[string]symbolDef)        // "dense"/"moe" → compound ascending
 	for i := range mm.Modules {
 		m := &mm.Modules[i]
-		if strings.HasPrefix(m.Name, "block_") && m.BlockName != "" {
+		if strings.HasPrefix(m.Name, PrefixBlock) && m.BlockName != "" {
 			if _, seen := blockSymbols[m.BlockName]; !seen {
 				blockSymbols[m.BlockName] = buildBlockSymbol(m.BlockName, m)
 				blockDesc[m.BlockName] = buildBlockCompound(m.BlockName, false)
 				blockAsc[m.BlockName] = buildBlockCompound(m.BlockName, true)
 			}
-		} else if strings.HasPrefix(m.Name, "ffn_") {
+		} else if strings.HasPrefix(m.Name, PrefixFFN) {
 			sk := ffnSymKey(m)
 			if _, seen := ffnSymbols[sk]; !seen {
 				ffnSymbols[sk] = buildFFNSymbol(sk, m)
@@ -890,7 +892,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 	const rightColOffset = 290 // horizontal offset for right column
 
 	// Vertical layout
-	isDiffusion := generation == "diffusion"
+	isDiffusion := generation == GenerationDiffusion
 	spineY1 := 54
 	if nonCausal {
 		spineY1 = 72 // extra room for subtitle
@@ -952,7 +954,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 		pal["ui.text_hint"])
 
 	// Gradients
-	for _, name := range []string{"full_attention", "swa", "recurrent", "ffn", "global"} {
+	for _, name := range []string{TypeFullAttention, TypeSWA, TypeRecurrent, TypeFFN, ModuleGlobal} {
 		fmt.Fprintf(&b, "  <linearGradient id=\"zm_%s\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n", name)
 		fmt.Fprintf(&b, "    <stop offset=\"0%%%%\" stop-color=\"%s\"/><stop offset=\"100%%%%\" stop-color=\"%s\"/>\n",
 			pal[name+".grad_top"], pal[name+".grad_bottom"])
@@ -1013,7 +1015,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 	fmt.Fprintf(&b, "  <text class=\"title\" x=\"%d\" y=\"32\" text-anchor=\"middle\">%s</text>\n", titleCX, title)
 	if nonCausal {
 		subtitle := "(bidirectional / non-causal)"
-		if generation == "diffusion" {
+		if generation == GenerationDiffusion {
 			subtitle = "(diffusion — iterative denoising, bidirectional)"
 		}
 		fmt.Fprintf(&b, "  <text x=\"%d\" y=\"46\" text-anchor=\"middle\" font-size=\"11\" font-weight=\"600\" fill=\"%s\">%s</text>\n",
@@ -1236,5 +1238,5 @@ func isAttentionBlock(m *Module) bool {
 	for _, w := range m.Weights {
 		has[w] = true
 	}
-	return has["attn_q"] && has["attn_k"] && has["attn_v"] && has["attn_output"]
+	return has[WeightAttnQ] && has[WeightAttnK] && has[WeightAttnV] && has[WeightAttnOutput]
 }

@@ -245,7 +245,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	for k, v := range req.ChatTemplateKwargs {
 		kwargs[k] = v
 	}
-	if raw, present := kwargs["enable_thinking"]; present {
+	if raw, present := kwargs[inference.KwEnableThinking]; present {
 		b, ok := raw.(bool)
 		if !ok {
 			writeError(w, http.StatusBadRequest, "invalid type for chat_template_kwargs.enable_thinking (expected bool)")
@@ -254,7 +254,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		params.ThinkingEnabled = b
 	} else {
 		params.ThinkingEnabled = s.cfg.Inference.EnableThinkingDefault
-		kwargs["enable_thinking"] = params.ThinkingEnabled
+		kwargs[inference.KwEnableThinking] = params.ThinkingEnabled
 	}
 	params.ChatTemplateKwargs = kwargs
 
@@ -339,20 +339,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if req.BenchCustom != nil && (req.BenchCustom.UseRLBGen || req.BenchCustom.EnableRLBOnPrefill) {
-		rlb := &inference.RLBParams{
-			Prefill: req.BenchCustom.EnableRLBOnPrefill,
-		}
-		if req.BenchCustom.UseRLBGen {
-			rlb.Decode = true
-			rlb.HaltRule = req.BenchCustom.RLBHaltRule
-			rlb.TerminalHaltRule = req.BenchCustom.RLBTerminalHaltRule
-			if req.BenchCustom.RLBAlpha != nil {
-				rlb.Alpha = *req.BenchCustom.RLBAlpha
-			}
-		}
-		params.RLB = rlb
-	}
 	params.Streaming = req.Stream
 
 	// Log any request-level parameter overrides of server config defaults.
@@ -364,7 +350,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if req.BenchCustom != nil && req.BenchCustom.CullMethod != "" && req.BenchCustom.CullMethod != s.cfg.Inference.CullMethodDefault {
 			overrides = append(overrides, fmt.Sprintf("cull_method=%q (server: %q)", truncLogVal(req.BenchCustom.CullMethod), s.cfg.Inference.CullMethodDefault))
 		}
-		if raw, present := req.ChatTemplateKwargs["enable_thinking"]; present {
+		if raw, present := req.ChatTemplateKwargs[inference.KwEnableThinking]; present {
 			if b, ok := raw.(bool); ok && b != s.cfg.Inference.EnableThinkingDefault {
 				overrides = append(overrides, fmt.Sprintf("enable_thinking=%v (server: %v)", b, s.cfg.Inference.EnableThinkingDefault))
 			}

@@ -67,19 +67,19 @@ func TestResolveParams(t *testing.T) {
 
 	// Check GGUF-sourced integer params
 	wantInts := map[string]int{
-		"n_layers":           32,
-		"n_heads":            16,
-		"n_kv_heads":         4,
-		"n_embd":             2560,
-		"n_ff":               9216,
-		"head_dim":           256,
-		"ssm_d_conv":         4,
-		"ssm_d_inner":        4096,
-		"ssm_d_state":        128,
-		"ssm_dt_rank":        32,
-		"ssm_n_group":        16,
-		"full_attn_interval": 4,
-		"rope_n_rot":         64,
+		ParamNLayers:          32,
+		ParamNHeads:           16,
+		ParamNKVHeads:         4,
+		ParamNEmbd:            2560,
+		"n_ff":                9216,
+		ParamHeadDim:          256,
+		ParamSSMDConv:         4,
+		ParamSSMDInner:        4096,
+		ParamSSMDState:        128,
+		ParamSSMDTRank:        32,
+		ParamSSMNGroup:        16,
+		ParamFullAttnInterval: 4,
+		ParamRoPENRot:         64,
 	}
 	for name, want := range wantInts {
 		got, err := rp.GetInt(name)
@@ -94,8 +94,8 @@ func TestResolveParams(t *testing.T) {
 
 	// Check float params
 	wantFloats := map[string]float32{
-		"rms_eps":        1e-6,
-		"rope_freq_base": 10000000.0,
+		ParamRMSEps:       1e-6,
+		ParamRoPEFreqBase: 10000000.0,
 	}
 	for name, want := range wantFloats {
 		got, err := rp.GetFloat(name)
@@ -112,12 +112,12 @@ func TestResolveParams(t *testing.T) {
 	ropeMode, err := rp.GetString("rope_mode")
 	if err != nil {
 		t.Errorf("GetString(rope_mode): %v", err)
-	} else if ropeMode != "neox" {
+	} else if ropeMode != RopeNeox {
 		t.Errorf("rope_mode = %q, want neox", ropeMode)
 	}
 
 	// Check int array
-	sections, err := rp.GetIntArr("rope_sections")
+	sections, err := rp.GetIntArr(ParamRoPESections)
 	if err != nil {
 		t.Errorf("GetIntArr(rope_sections): %v", err)
 	} else if len(sections) != 4 || sections[0] != 11 || sections[1] != 11 || sections[2] != 10 || sections[3] != 0 {
@@ -126,9 +126,9 @@ func TestResolveParams(t *testing.T) {
 
 	// Check derived params
 	wantDerived := map[string]int{
-		"n_vocab":       248320,
-		"head_v_dim":    128,  // 4096 / 32
-		"conv_channels": 8192, // 4096 + 2*16*128
+		ParamNVocab:       248320,
+		ParamHeadVDim:     128,  // 4096 / 32
+		ParamConvChannels: 8192, // 4096 + 2*16*128
 	}
 	for name, want := range wantDerived {
 		got, err := rp.GetInt(name)
@@ -144,7 +144,7 @@ func TestResolveParams(t *testing.T) {
 
 func TestEvalRoutingRule(t *testing.T) {
 	rp := &ResolvedParams{
-		Ints: map[string]int{"full_attn_interval": 4},
+		Ints: map[string]int{ParamFullAttnInterval: 4},
 	}
 
 	// Qwen3.5 routing: (@{layer_idx} + 1) % ${full_attn_interval} != 0

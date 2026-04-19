@@ -37,23 +37,23 @@ func TestLoadQwen35(t *testing.T) {
 
 	// Params — GGUF keys
 	wantParams := map[string]string{
-		"n_layers":           "qwen35.block_count",
-		"n_heads":            "qwen35.attention.head_count",
-		"n_kv_heads":         "qwen35.attention.head_count_kv",
-		"n_embd":             "qwen35.embedding_length",
-		"n_ff":               "qwen35.feed_forward_length",
-		"rms_eps":            "qwen35.attention.layer_norm_rms_epsilon",
-		"head_dim":           "qwen35.attention.key_length",
-		"ssm_d_conv":         "qwen35.ssm.conv_kernel",
-		"ssm_d_inner":        "qwen35.ssm.inner_size",
-		"ssm_d_state":        "qwen35.ssm.state_size",
-		"ssm_dt_rank":        "qwen35.ssm.time_step_rank",
-		"ssm_n_group":        "qwen35.ssm.group_count",
-		"full_attn_interval": "qwen35.full_attention_interval",
-		"rope_n_rot":         "qwen35.rope.dimension_count",
-		"rope_freq_base":     "qwen35.rope.freq_base",
-		"rope_sections":      "qwen35.rope.dimension_sections",
-		"rope_mode":          "neox",
+		ParamNLayers:          "qwen35.block_count",
+		ParamNHeads:           "qwen35.attention.head_count",
+		ParamNKVHeads:         "qwen35.attention.head_count_kv",
+		ParamNEmbd:            "qwen35.embedding_length",
+		"n_ff":                "qwen35.feed_forward_length",
+		ParamRMSEps:           "qwen35.attention.layer_norm_rms_epsilon",
+		ParamHeadDim:          "qwen35.attention.key_length",
+		ParamSSMDConv:         "qwen35.ssm.conv_kernel",
+		ParamSSMDInner:        "qwen35.ssm.inner_size",
+		ParamSSMDState:        "qwen35.ssm.state_size",
+		ParamSSMDTRank:        "qwen35.ssm.time_step_rank",
+		ParamSSMNGroup:        "qwen35.ssm.group_count",
+		ParamFullAttnInterval: "qwen35.full_attention_interval",
+		ParamRoPENRot:         "qwen35.rope.dimension_count",
+		ParamRoPEFreqBase:     "qwen35.rope.freq_base",
+		ParamRoPESections:     "qwen35.rope.dimension_sections",
+		"rope_mode":           RopeNeox,
 	}
 	for k, want := range wantParams {
 		got, ok := def.Params.Keys[k]
@@ -69,9 +69,9 @@ func TestLoadQwen35(t *testing.T) {
 
 	// Derived params
 	wantDerived := map[string]string{
-		"n_vocab":       "token_embd.ne[1]",
-		"head_v_dim":    "ssm_d_inner / ssm_dt_rank",
-		"conv_channels": "ssm_d_inner + 2 * ssm_n_group * ssm_d_state",
+		ParamNVocab:       "token_embd.ne[1]",
+		ParamHeadVDim:     "ssm_d_inner / ssm_dt_rank",
+		ParamConvChannels: "ssm_d_inner + 2 * ssm_n_group * ssm_d_state",
 	}
 	for k, want := range wantDerived {
 		got, ok := def.Params.Derived[k]
@@ -84,9 +84,9 @@ func TestLoadQwen35(t *testing.T) {
 
 	// Global weights
 	wantGlobal := map[string]string{
-		"token_embd":  "token_embd.weight",
-		"output_norm": "output_norm.weight",
-		"output":      "output.weight",
+		WeightTokenEmbd:  "token_embd.weight",
+		WeightOutputNorm: "output_norm.weight",
+		WeightOutput:     "output.weight",
 	}
 	for k, want := range wantGlobal {
 		got, ok := def.Weights.Global[k]
@@ -98,7 +98,7 @@ func TestLoadQwen35(t *testing.T) {
 	}
 
 	// Layers
-	if def.Layers.Count != "n_layers" {
+	if def.Layers.Count != ParamNLayers {
 		t.Errorf("layers.Count = %q, want n_layers", def.Layers.Count)
 	}
 	if def.Layers.Prefix != "blk.@{layer_idx}." {
@@ -115,11 +115,11 @@ func TestLoadQwen35(t *testing.T) {
 	}
 
 	// Common weights
-	if def.Layers.CommonWeights["attn_norm"] != "attn_norm.weight" {
-		t.Errorf("common_weights.attn_norm = %q", def.Layers.CommonWeights["attn_norm"])
+	if def.Layers.CommonWeights[WeightAttnNorm] != "attn_norm.weight" {
+		t.Errorf("common_weights.attn_norm = %q", def.Layers.CommonWeights[WeightAttnNorm])
 	}
-	if def.Layers.CommonWeights["ffn_norm"] != "post_attention_norm.weight" {
-		t.Errorf("common_weights.ffn_norm = %q", def.Layers.CommonWeights["ffn_norm"])
+	if def.Layers.CommonWeights[WeightFFNNorm] != "post_attention_norm.weight" {
+		t.Errorf("common_weights.ffn_norm = %q", def.Layers.CommonWeights[WeightFFNNorm])
 	}
 
 	// Blocks
@@ -131,17 +131,17 @@ func TestLoadQwen35(t *testing.T) {
 	if fa.Builder != "full_attention_gated" {
 		t.Errorf("full_attention.Builder = %q", fa.Builder)
 	}
-	if fa.Weights["attn_q"] != "attn_q.weight" {
-		t.Errorf("full_attention.Weights[attn_q] = %q", fa.Weights["attn_q"])
+	if fa.Weights[WeightAttnQ] != "attn_q.weight" {
+		t.Errorf("full_attention.Weights[attn_q] = %q", fa.Weights[WeightAttnQ])
 	}
-	if fa.Config["q_has_gate"] != true {
-		t.Errorf("full_attention.Config[q_has_gate] = %v", fa.Config["q_has_gate"])
+	if fa.Config[ConfigQHasGate] != true {
+		t.Errorf("full_attention.Config[q_has_gate] = %v", fa.Config[ConfigQHasGate])
 	}
 	if len(fa.Cache) != 2 {
 		t.Errorf("full_attention.Cache has %d entries, want 2", len(fa.Cache))
 	}
-	kCache := fa.Cache["k"]
-	if len(kCache.Dims) != 3 || kCache.Dims[0] != "head_dim" || kCache.Dims[1] != "max_seq_len" || kCache.Dims[2] != "n_kv_heads" {
+	kCache := fa.Cache[CacheK]
+	if len(kCache.Dims) != 3 || kCache.Dims[0] != ParamHeadDim || kCache.Dims[1] != CacheDimMaxSeqLen || kCache.Dims[2] != ParamNKVHeads {
 		t.Errorf("k cache dims = %v", kCache.Dims)
 	}
 	if kCache.Dtype != "f32" {
@@ -152,10 +152,10 @@ func TestLoadQwen35(t *testing.T) {
 	if ssm.Builder != "gated_delta_net" {
 		t.Errorf("recurrent_ssm.Builder = %q", ssm.Builder)
 	}
-	if ssm.Weights["ssm_a"] != "ssm_a" {
-		t.Errorf("recurrent_ssm.Weights[ssm_a] = %q", ssm.Weights["ssm_a"])
+	if ssm.Weights[WeightSSMA] != "ssm_a" {
+		t.Errorf("recurrent_ssm.Weights[ssm_a] = %q", ssm.Weights[WeightSSMA])
 	}
-	convCache := ssm.Cache["conv_state"]
+	convCache := ssm.Cache[CacheConvState]
 	if len(convCache.Dims) != 2 || convCache.Dims[0] != "ssm_d_conv - 1" {
 		t.Errorf("conv_state dims = %v", convCache.Dims)
 	}

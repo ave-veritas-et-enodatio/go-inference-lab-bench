@@ -74,7 +74,7 @@ func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
 	inputs *GraphInputs, rmsEps float32, mask *CullingMask,
 	blkFn blockFunc, perLayerEmbd ggml.Tensor,
 	engagement *EngagementData) ggml.Tensor {
-	for il := range m.Params.Ints["n_layers"] {
+	for il := range m.Params.Ints[ParamNLayers] {
 		lt := m.MaskedLayer(il, mask)
 		if lt == nil {
 			// MaskedLayer already logged the error (out-of-bounds layer index).
@@ -86,8 +86,8 @@ func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
 		inputs.CurrentLayer = il
 
 		xPreBlock := x
-		if !lt["attn_norm"].IsNil() {
-			cur := rmsNormApply(gctx, x, lt["attn_norm"], rmsEps)
+		if !lt[WeightAttnNorm].IsNil() {
+			cur := rmsNormApply(gctx, x, lt[WeightAttnNorm], rmsEps)
 			cur = blkFn(gctx, cur, lt, il, blockDef.Config, inputs)
 			// Optional post-attention norm
 			if !lt["attn_post_norm"].IsNil() {
@@ -126,7 +126,7 @@ func (m *GenericModel) buildFFNBlock(ctx *ggml.GraphContext, x ggml.Tensor,
 	ffnWeights := m.ffnScratch
 	clear(ffnWeights)
 	for k, v := range lt {
-		if after, ok := strings.CutPrefix(k, "ffn_"); ok {
+		if after, ok := strings.CutPrefix(k, PrefixFFNWeight); ok {
 			ffnWeights[after] = v
 		}
 	}
@@ -134,7 +134,7 @@ func (m *GenericModel) buildFFNBlock(ctx *ggml.GraphContext, x ggml.Tensor,
 		ffnConfig := m.FFNConfigs[il]
 		// Self-normed builders manage their own pre/post norms internally
 		// (e.g. MoE with parallel shared+expert paths that need separate norms).
-		if configStr(ffnConfig, "self_normed") == "true" {
+		if configBoolOr(ffnConfig, ConfigSelfNormed, false) {
 			ffnOut := m.FFNBuilders[il].BuildFFN(ctx, x, ffnWeights, m.Params, ffnConfig)
 			// Self-normed builders handle internal pre/post norms for each path,
 			// but the common post-FFN norm still wraps the combined output.
@@ -176,11 +176,11 @@ func ffnNorm(lt map[string]ggml.Tensor) ggml.Tensor {
 func (m *GenericModel) buildLogits(gctx *ggml.GraphContext, x ggml.Tensor,
 	nEmbd int, nSeq int64, rmsEps float32) ggml.Tensor {
 	last := ggml.View2D(gctx, x, int64(nEmbd), 1, x.Nb(1), int(nSeq-1)*x.Nb(1))
-	xn := rmsNormApply(gctx, last, m.MaskedGlobal(gctx, "output_norm"), rmsEps)
-	logits := ggml.MulMat(gctx, m.MaskedGlobal(gctx, "output"), xn)
+	xn := rmsNormApply(gctx, last, m.MaskedGlobal(gctx, WeightOutputNorm), rmsEps)
+	logits := ggml.MulMat(gctx, m.MaskedGlobal(gctx, WeightOutput), xn)
 
 	// Logit softcapping: cap * tanh(logits / cap)
-	if cap, ok := m.Params.Floats["logit_softcapping"]; ok && cap > 0 {
+	if cap, ok := m.Params.Floats[ParamLogitSoftcap]; ok && cap > 0 {
 		logits = ggml.Scale(gctx, logits, 1.0/cap)
 		logits = ggml.Tanh(gctx, logits)
 		logits = ggml.Scale(gctx, logits, cap)
@@ -195,11 +195,11 @@ func (m *GenericModel) buildLogits(gctx *ggml.GraphContext, x ggml.Tensor,
 // Used by diffusion generation which needs per-position logits over the full sequence.
 func (m *GenericModel) buildAllLogits(gctx *ggml.GraphContext, x ggml.Tensor,
 	nEmbd int, rmsEps float32) ggml.Tensor {
-	xn := rmsNormApply(gctx, x, m.MaskedGlobal(gctx, "output_norm"), rmsEps)
-	logits := ggml.MulMat(gctx, m.MaskedGlobal(gctx, "output"), xn)
+	xn := rmsNormApply(gctx, x, m.MaskedGlobal(gctx, WeightOutputNorm), rmsEps)
+	logits := ggml.MulMat(gctx, m.MaskedGlobal(gctx, WeightOutput), xn)
 
 	// Logit softcapping: cap * tanh(logits / cap)
-	if cap, ok := m.Params.Floats["logit_softcapping"]; ok && cap > 0 {
+	if cap, ok := m.Params.Floats[ParamLogitSoftcap]; ok && cap > 0 {
 		logits = ggml.Scale(gctx, logits, 1.0/cap)
 		logits = ggml.Tanh(gctx, logits)
 		logits = ggml.Scale(gctx, logits, cap)
@@ -253,10 +253,10 @@ func (m *GenericModel) forwardStatelessCore(
 	withEngagement bool,
 	caps *ForwardCaptures,
 ) (*statelessCtx, error) {
-	nLayers := m.Params.Ints["n_layers"]
-	nEmbd := m.Params.Ints["n_embd"]
-	nVocab := m.Params.Ints["n_vocab"]
-	rmsEps := m.Params.Floats["rms_eps"]
+	nLayers := m.Params.Ints[ParamNLayers]
+	nEmbd := m.Params.Ints[ParamNEmbd]
+	nVocab := m.Params.Ints[ParamNVocab]
+	rmsEps := m.Params.Floats[ParamRMSEps]
 	nTokens := int64(len(tokenIDs))
 
 	ctxSize := graphCtxSize()
@@ -279,13 +279,13 @@ func (m *GenericModel) forwardStatelessCore(
 	inpMask := ggml.NewTensor2D(gctx, ggml.TypeF32, nTokens, nTokens)
 	ggml.SetInput(inpMask)
 
-	x := ggml.GetRows(gctx, m.MaskedGlobal(gctx, "token_embd"), inpTokens)
+	x := ggml.GetRows(gctx, m.MaskedGlobal(gctx, WeightTokenEmbd), inpTokens)
 
 	if m.Def.Architecture.EmbedScale {
 		x = ggml.Scale(gctx, x, float32(math.Sqrt(float64(nEmbd))))
 	}
 
-	swaWindow, hasSWA := m.Params.Ints["sliding_window"]
+	swaWindow, hasSWA := m.Params.Ints[ParamSlidingWindow]
 	var inpMaskSWA ggml.Tensor
 	if hasSWA && swaWindow > 0 {
 		inpMaskSWA = ggml.NewTensor2D(gctx, ggml.TypeF32, nTokens, nTokens)
@@ -294,7 +294,7 @@ func (m *GenericModel) forwardStatelessCore(
 
 	if caps != nil && caps.Flags&CaptureAttnWeights != 0 {
 		caps.attnTensors = make([]ggml.Tensor, nLayers)
-		caps.NHeads = int64(m.Params.Ints["n_heads"])
+		caps.NHeads = int64(m.Params.Ints[ParamNHeads])
 		caps.NTokens = nTokens
 	}
 
@@ -493,7 +493,7 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32, mask *CullingMask, cap
 	sc.engagement.readResults()
 
 	// Read captured attention weights before defers free the tensors.
-	nLayers := m.Params.Ints["n_layers"]
+	nLayers := m.Params.Ints[ParamNLayers]
 	if caps != nil && caps.Flags&CaptureAttnWeights != 0 {
 		caps.AttnWeights = make([][]float32, nLayers)
 		for il, t := range caps.attnTensors {
@@ -518,8 +518,8 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32, mask *CullingMask, cap
 // answerable through a stateless pass should use ForwardStateless instead.
 // Do not add capture support here without explicit research into cached-mode mechanics.
 func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, mask *CullingMask, flashAttn bool) ([]float32, error) {
-	nEmbd := m.Params.Ints["n_embd"]
-	rmsEps := m.Params.Floats["rms_eps"]
+	nEmbd := m.Params.Ints[ParamNEmbd]
+	rmsEps := m.Params.Floats[ParamRMSEps]
 	nNew := int64(len(tokenIDs))
 	seqPos := gc.SeqPos
 	nKV := int64(seqPos) + nNew
@@ -542,7 +542,7 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, mask *C
 	inpMask := ggml.NewTensor2D(gctx, ggml.TypeF32, nKV, nNew)
 	ggml.SetInput(inpMask)
 
-	x := ggml.GetRows(gctx, m.MaskedGlobal(gctx, "token_embd"), inpTokens)
+	x := ggml.GetRows(gctx, m.MaskedGlobal(gctx, WeightTokenEmbd), inpTokens)
 
 	// Embedding scaling: multiply by sqrt(n_embd)
 	if m.Def.Architecture.EmbedScale {
@@ -550,7 +550,7 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, mask *C
 	}
 
 	// SWA mask
-	swaWindow, hasSWA := m.Params.Ints["sliding_window"]
+	swaWindow, hasSWA := m.Params.Ints[ParamSlidingWindow]
 	var inpMaskSWA ggml.Tensor
 	if hasSWA && swaWindow > 0 {
 		inpMaskSWA = ggml.NewTensor2D(gctx, ggml.TypeF32, nKV, nNew)
@@ -628,9 +628,9 @@ func (m *GenericModel) buildPerLayerEmbedSetup(gctx *ggml.GraphContext,
 		return ggml.NilTensor()
 	}
 
-	nLayers := int64(m.Params.Ints["n_layers"])
-	nEmbdPL := int64(m.Params.Ints["n_embd_per_layer"])
-	nEmbd := int64(m.Params.Ints["n_embd"])
+	nLayers := int64(m.Params.Ints[ParamNLayers])
+	nEmbdPL := int64(m.Params.Ints[ParamNEmbdPerLayer])
+	nEmbd := int64(m.Params.Ints[ParamNEmbd])
 
 	// 1. Per-layer token embeddings: [n_embd_per_layer * n_layers, n_tokens]
 	inp := ggml.GetRows(gctx, tokEmbdPL, inpTokens)
