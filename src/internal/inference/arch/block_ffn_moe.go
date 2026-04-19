@@ -26,31 +26,31 @@ type MoEBuilder struct{}
 
 func (b *MoEBuilder) Contract() BuilderContract {
 	return BuilderContract{
-		RequiredWeights: []string{"gate_inp", "down_exps"},
+		RequiredWeights: []string{MoEGateInp, MoEDownExps},
 		OptionalWeights: []string{
 			// Router
-			"gate_inp_s",
+			MoEGateInpS,
 			// Separate expert projections (Qwen-style)
-			"gate_exps", "up_exps",
+			MoEGateExps, MoEUpExps,
 			// Fused expert projection (Gemma4-style)
-			"gate_up_exps",
+			MoEGateUpExps,
 			// Per-expert scaling
-			"down_exps_s",
+			MoEDownExpsS,
 			// Expert bias
-			"exp_probs_b",
+			MoEExpProbsB,
 			// Shared expert — Qwen-style (SwiGLU + optional sigmoid gate)
-			"gate_inp_shexp", "gate_shexp", "up_shexp", "down_shexp",
+			MoEGateInpShexp, MoEGateShexp, MoEUpShexp, MoEDownShexp,
 			// Shared expert — Gemma4-style (plain FFN using same activation)
-			"gate", "up", "down",
+			MoEGate, MoEUp, MoEDown,
 			// Self-normed weights (parallel shared+expert paths)
-			"norm", "pre_norm_2", "post_norm_1", "post_norm_2",
+			MoENorm, MoEPreNorm2, MoEPostNorm1, MoEPostNorm2,
 		},
-		RequiredParams: []string{"n_expert", "n_expert_used"},
+		RequiredParams: []string{ParamNExpert, ParamNExpertUsed},
 		ConfigSchema: map[string][]string{
-			"activation":  {"silu", "gelu", ""},
-			"self_normed": nil,
-			"norm_w":      {"true", "false", ""},
-			"norm_w_param": nil, // free-form string value; validated in arch.go, not here
+			ConfigActivation: {ActivationSiLU, ActivationGELU, ""},
+			ConfigSelfNormed: nil,
+			ConfigNormW:      {"true", "false", ""},
+			ConfigNormWParam: nil, // free-form string value; validated in arch.go, not here
 		},
 	}
 }
@@ -58,24 +58,24 @@ func (b *MoEBuilder) Contract() BuilderContract {
 func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
 	weights map[string]ggml.Tensor, params *ResolvedParams, config map[string]any) ggml.Tensor {
 
-	nExpert := int64(params.Ints["n_expert"])
-	nExpertUsed := int64(params.Ints["n_expert_used"])
+	nExpert := int64(params.Ints[ParamNExpert])
+	nExpertUsed := int64(params.Ints[ParamNExpertUsed])
 	nEmbd := input.Ne(0)
 	nTokens := input.Ne(1)
-	selfNormed := configStr(config, "self_normed") == "true"
+	selfNormed := configBoolOr(config, ConfigSelfNormed, false)
 
 	// --- Router logits ---
 	var logits ggml.Tensor
-	if !weights["gate_inp_s"].IsNil() {
+	if !weights[MoEGateInpS].IsNil() {
 		// Normalized router (Gemma4): rms_norm(input) / sqrt(n_embd) * learned_scale → matmul
-		rmsEps := params.Floats["rms_eps"]
+		rmsEps := params.Floats[ParamRMSEps]
 		tmp := ggml.RmsNorm(ctx, input, rmsEps)
 		tmp = ggml.Scale(ctx, tmp, float32(1.0/math.Sqrt(float64(nEmbd))))
-		tmp = ggml.Mul(ctx, tmp, weights["gate_inp_s"])
-		logits = ggml.MulMat(ctx, weights["gate_inp"], tmp)
+		tmp = ggml.Mul(ctx, tmp, weights[MoEGateInpS])
+		logits = ggml.MulMat(ctx, weights[MoEGateInp], tmp)
 	} else {
 		// Direct router (Qwen): gate_inp @ input
-		logits = ggml.MulMat(ctx, weights["gate_inp"], input)
+		logits = ggml.MulMat(ctx, weights[MoEGateInp], input)
 	}
 
 	// --- Gating probabilities (softmax) ---
@@ -83,8 +83,8 @@ func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
 
 	// --- Expert selection (optionally biased for ranking only) ---
 	selectionProbs := probs
-	if !weights["exp_probs_b"].IsNil() {
-		selectionProbs = ggml.Add(ctx, probs, weights["exp_probs_b"])
+	if !weights[MoEExpProbsB].IsNil() {
+		selectionProbs = ggml.Add(ctx, probs, weights[MoEExpProbsB])
 	}
 	selected := ggml.ArgsortTopK(ctx, selectionProbs, int(nExpertUsed))
 
@@ -96,8 +96,8 @@ func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
 	// norm_w = "true" (Qwen3.5-MoE requires this); default = no normalization (LLaDA-MoE, etc.).
 	// norm_w_param overrides norm_w when set: looks up the named integer param (GGUF booleans
 	// resolve to Ints as 0/1); absent param → 0 → false is the correct default.
-	normW := configStr(config, "norm_w") == "true"
-	if normWParam := configStr(config, "norm_w_param"); normWParam != "" {
+	normW := configBoolOr(config, ConfigNormW, false)
+	if normWParam := configStrOr(config, ConfigNormWParam, ""); normWParam != "" {
 		normW = params.Ints[normWParam] != 0
 	}
 	if normW {
@@ -109,7 +109,7 @@ func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
 	}
 
 	// Optional weight scaling
-	wScale := params.Floats["expert_weights_scale"]
+	wScale := params.Floats[ParamExpertWeightScale]
 	if wScale != 0.0 && wScale != 1.0 {
 		routeWeights = ggml.Scale(ctx, routeWeights, wScale)
 	}
@@ -117,19 +117,19 @@ func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
 	// --- Expert input ---
 	// For self-normed builders, apply the expert pre-norm; otherwise input is already normed.
 	expertInput := input
-	if selfNormed && !weights["pre_norm_2"].IsNil() {
-		rmsEps := params.Floats["rms_eps"]
-		expertInput = rmsNormApply(ctx, input, weights["pre_norm_2"], rmsEps)
+	if selfNormed && !weights[MoEPreNorm2].IsNil() {
+		rmsEps := params.Floats[ParamRMSEps]
+		expertInput = rmsNormApply(ctx, input, weights[MoEPreNorm2], rmsEps)
 	}
 	cur := ggml.Reshape3D(ctx, expertInput, nEmbd, 1, nTokens)
 
 	// --- Expert projections ---
-	activation := configStr(config, "activation")
+	activation := configStrOr(config, ConfigActivation, "")
 
 	var activated ggml.Tensor
-	if !weights["gate_up_exps"].IsNil() {
+	if !weights[MoEGateUpExps].IsNil() {
 		// Fused gate+up path (Gemma4): single MulMatId → View3D split
-		gateUp := ggml.MulMatId(ctx, weights["gate_up_exps"], cur, selected)
+		gateUp := ggml.MulMatId(ctx, weights[MoEGateUpExps], cur, selected)
 		nFF := gateUp.Ne(0) / 2
 		gate := ggml.View3D(ctx, gateUp, nFF, gateUp.Ne(1), gateUp.Ne(2),
 			gateUp.Nb(1), gateUp.Nb(2), 0)
@@ -138,20 +138,20 @@ func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
 		activated = ggml.Mul(ctx, applyActivation(ctx, gate, activation), up)
 	} else {
 		// Separate gate/up path (Qwen): two MulMatId ops
-		gate := ggml.MulMatId(ctx, weights["gate_exps"], cur, selected)
-		up := ggml.MulMatId(ctx, weights["up_exps"], cur, selected)
+		gate := ggml.MulMatId(ctx, weights[MoEGateExps], cur, selected)
+		up := ggml.MulMatId(ctx, weights[MoEUpExps], cur, selected)
 		activated = ggml.Mul(ctx, applyActivation(ctx, gate, activation), up)
 	}
 
 	// --- Down projection ---
-	experts := ggml.MulMatId(ctx, weights["down_exps"], activated, selected)
+	experts := ggml.MulMatId(ctx, weights[MoEDownExps], activated, selected)
 
 	// --- Per-expert output scaling ---
 	// down_exps_s is [n_expert] — one scale per expert. Gather scales for each
 	// selected expert per token. selected is a non-contiguous view [n_expert_used, n_tokens],
 	// so we flatten via Cont2D, gather, then reshape to [1, n_expert_used, n_tokens].
-	if !weights["down_exps_s"].IsNil() {
-		s := ggml.Reshape2D(ctx, weights["down_exps_s"], 1, nExpert)
+	if !weights[MoEDownExpsS].IsNil() {
+		s := ggml.Reshape2D(ctx, weights[MoEDownExpsS], 1, nExpert)
 		selFlat := ggml.Reshape2D(ctx, ggml.Cont(ctx, selected), nExpertUsed*nTokens, 1)
 		sGather := ggml.GetRows(ctx, s, selFlat) // [1, n_expert_used * n_tokens]
 		sGather = ggml.Reshape3D(ctx, sGather, 1, nExpertUsed, nTokens)
@@ -177,9 +177,9 @@ func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
 	}
 
 	// --- Post-norm for expert path (self-normed only) ---
-	if selfNormed && !weights["post_norm_2"].IsNil() {
-		rmsEps := params.Floats["rms_eps"]
-		moeOut = rmsNormApply(ctx, moeOut, weights["post_norm_2"], rmsEps)
+	if selfNormed && !weights[MoEPostNorm2].IsNil() {
+		rmsEps := params.Floats[ParamRMSEps]
+		moeOut = rmsNormApply(ctx, moeOut, weights[MoEPostNorm2], rmsEps)
 	}
 
 	// --- Shared expert ---
@@ -194,34 +194,34 @@ func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
 func (b *MoEBuilder) addSharedExpert(ctx *ggml.GraphContext, moeOut, input ggml.Tensor,
 	weights map[string]ggml.Tensor, params *ResolvedParams, config map[string]any) ggml.Tensor {
 
-	selfNormed := configStr(config, "self_normed") == "true"
-	activation := configStr(config, "activation")
+	selfNormed := configBoolOr(config, ConfigSelfNormed, false)
+	activation := configStrOr(config, ConfigActivation, "")
 
 	// Qwen-style shared expert: separate *_shexp weights with SwiGLU + optional sigmoid gate
-	if !weights["up_shexp"].IsNil() {
-		shGate := ggml.Silu(ctx, ggml.MulMat(ctx, weights["gate_shexp"], input))
-		shUp := ggml.MulMat(ctx, weights["up_shexp"], input)
-		shOut := ggml.MulMat(ctx, weights["down_shexp"], ggml.Mul(ctx, shGate, shUp))
-		if !weights["gate_inp_shexp"].IsNil() {
-			shGateVal := ggml.Sigmoid(ctx, ggml.MulMat(ctx, weights["gate_inp_shexp"], input))
+	if !weights[MoEUpShexp].IsNil() {
+		shGate := ggml.Silu(ctx, ggml.MulMat(ctx, weights[MoEGateShexp], input))
+		shUp := ggml.MulMat(ctx, weights[MoEUpShexp], input)
+		shOut := ggml.MulMat(ctx, weights[MoEDownShexp], ggml.Mul(ctx, shGate, shUp))
+		if !weights[MoEGateInpShexp].IsNil() {
+			shGateVal := ggml.Sigmoid(ctx, ggml.MulMat(ctx, weights[MoEGateInpShexp], input))
 			shOut = ggml.Mul(ctx, shOut, shGateVal)
 		}
 		return ggml.Add(ctx, moeOut, shOut)
 	}
 
 	// Gemma4-style shared expert: plain FFN using gate/up/down with same activation
-	if !weights["up"].IsNil() {
+	if !weights[MoEUp].IsNil() {
 		sharedInput := input
-		if selfNormed && !weights["norm"].IsNil() {
-			rmsEps := params.Floats["rms_eps"]
-			sharedInput = rmsNormApply(ctx, input, weights["norm"], rmsEps)
+		if selfNormed && !weights[MoENorm].IsNil() {
+			rmsEps := params.Floats[ParamRMSEps]
+			sharedInput = rmsNormApply(ctx, input, weights[MoENorm], rmsEps)
 		}
-		gate := applyActivation(ctx, ggml.MulMat(ctx, weights["gate"], sharedInput), activation)
-		up := ggml.MulMat(ctx, weights["up"], sharedInput)
-		shOut := ggml.MulMat(ctx, weights["down"], ggml.Mul(ctx, gate, up))
-		if selfNormed && !weights["post_norm_1"].IsNil() {
-			rmsEps := params.Floats["rms_eps"]
-			shOut = rmsNormApply(ctx, shOut, weights["post_norm_1"], rmsEps)
+		gate := applyActivation(ctx, ggml.MulMat(ctx, weights[MoEGate], sharedInput), activation)
+		up := ggml.MulMat(ctx, weights[MoEUp], sharedInput)
+		shOut := ggml.MulMat(ctx, weights[MoEDown], ggml.Mul(ctx, gate, up))
+		if selfNormed && !weights[MoEPostNorm1].IsNil() {
+			rmsEps := params.Floats[ParamRMSEps]
+			shOut = rmsNormApply(ctx, shOut, weights[MoEPostNorm1], rmsEps)
 		}
 		return ggml.Add(ctx, moeOut, shOut)
 	}
@@ -231,7 +231,7 @@ func (b *MoEBuilder) addSharedExpert(ctx *ggml.GraphContext, moeOut, input ggml.
 
 // applyActivation applies the configured activation function to a tensor.
 func applyActivation(ctx *ggml.GraphContext, x ggml.Tensor, activation string) ggml.Tensor {
-	if activation == "gelu" {
+	if activation == ActivationGELU {
 		return ggml.Gelu(ctx, x)
 	}
 	return ggml.Silu(ctx, x) // default

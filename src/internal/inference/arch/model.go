@@ -223,7 +223,7 @@ func (b *genericModelBuilder) resolveArch() error {
 	}
 	b.params = params
 	b.weights = weights
-	b.headDim = params.Ints["head_dim"]
+	b.headDim = params.Ints[ParamHeadDim]
 	b.canonicalMM = BuildModuleMap(weights)
 	b.tensorDims = BuildTensorDimsMap(weights, func(name string) (int64, int64, int64, bool) {
 		if s, ok := b.reader.TensorSpec(name); ok {
@@ -323,22 +323,22 @@ func (b *genericModelBuilder) buildWeightStore() error {
 		store.global[logicalName] = t
 	}
 
-	if b.def.Architecture.TiedEmbeddings && store.Global("output").IsNil() {
-		store.global["output"] = store.Global("token_embd")
+	if b.def.Architecture.TiedEmbeddings && store.Global(WeightOutput).IsNil() {
+		store.global[WeightOutput] = store.Global(WeightTokenEmbd)
 	}
 
 	// Transfer ownership to store before any error return so cleanupOnError
 	// uses store.Close() instead of double-freeing via individual fields.
 	b.store = store
 
-	if store.Global("token_embd").IsNil() || store.Global("output_norm").IsNil() {
-		return fmt.Errorf("missing required global weight tensor: token_embd or output_norm")
+	if store.Global(WeightTokenEmbd).IsNil() || store.Global(WeightOutputNorm).IsNil() {
+		return fmt.Errorf("missing required global weight tensor: %s or %s", WeightTokenEmbd, WeightOutputNorm)
 	}
-	if store.Global("output").IsNil() {
-		return fmt.Errorf("missing required global weight tensor: output")
+	if store.Global(WeightOutput).IsNil() {
+		return fmt.Errorf("missing required global weight tensor: %s", WeightOutput)
 	}
 
-	nLayers := b.params.Ints["n_layers"]
+	nLayers := b.params.Ints[ParamNLayers]
 	store.layers = make([]map[string]ggml.Tensor, nLayers)
 
 	for i, lw := range b.weights.Layers {
@@ -370,11 +370,11 @@ func (b *genericModelBuilder) buildWeightStore() error {
 		// n_kv_shared_layers: non-KV layers still have weights in the model but
 		// must NOT compute their own K/V or write to cache. Null out K/V weights
 		// so the builder's hasKV check correctly identifies them as non-KV.
-		if nKVShared, ok := b.params.Ints["n_kv_shared_layers"]; ok && nKVShared > 0 {
+		if nKVShared, ok := b.params.Ints[ParamNKVSharedLayers]; ok && nKVShared > 0 {
 			nKVFromStart := nLayers - nKVShared
 			if i >= nKVFromStart {
-				lt["attn_k"] = ggml.NilTensor()
-				lt["attn_v"] = ggml.NilTensor()
+				lt[WeightAttnK] = ggml.NilTensor()
+				lt[WeightAttnV] = ggml.NilTensor()
 			}
 		}
 
@@ -383,7 +383,7 @@ func (b *genericModelBuilder) buildWeightStore() error {
 			if !ok {
 				t = ggml.NilTensor()
 			}
-			lt["ffn_"+logicalName] = t
+			lt[PrefixFFNWeight+logicalName] = t
 		}
 
 		// FFN alt weights (also prefixed with ffn_)
@@ -392,7 +392,7 @@ func (b *genericModelBuilder) buildWeightStore() error {
 			if !ok {
 				t = ggml.NilTensor()
 			}
-			lt["ffn_"+logicalName] = t
+			lt[PrefixFFNWeight+logicalName] = t
 		}
 
 		store.layers[i] = lt
@@ -415,7 +415,7 @@ func (b *genericModelBuilder) buildWeightStore() error {
 // FFN builders (including per-layer alt-FFN routing via layerHasAltFFN), and
 // emits the load summary log.
 func (b *genericModelBuilder) assignBuilders() error {
-	nLayers := b.params.Ints["n_layers"]
+	nLayers := b.params.Ints[ParamNLayers]
 
 	m := &GenericModel{
 		Def:                b.def,
@@ -467,9 +467,7 @@ func (b *genericModelBuilder) assignBuilders() error {
 	// Compute block boundaries for per-block RLB. InitBlockRanges is a no-op
 	// when full_attn_interval is absent or zero; the per-block driver then
 	// falls back to a single block covering all layers.
-	// TODO: hard-coded magic string is bad. all of these hard-coded keys are bad.
-	//       a set of const declarations is needed.
-	m.rlb.InitBlockRanges(nLayers, b.params.Ints["full_attn_interval"])
+	m.rlb.InitBlockRanges(nLayers, b.params.Ints[ParamFullAttnInterval])
 
 	blockCounts := make(map[string]int)
 	for _, name := range m.LayerBlockNames {
@@ -482,9 +480,9 @@ func (b *genericModelBuilder) assignBuilders() error {
 		}
 		blockSummary += fmt.Sprintf("%d %s", count, name)
 	}
-	log.Info("%s: %d layers (%s), n_embd=%d, n_heads=%d/%d, head_dim=%d",
+	log.Info("%s: %d layers (%s), %s=%d, %s=%d/%d, %s=%d",
 		b.def.Architecture.Name, nLayers, blockSummary,
-		b.params.Ints["n_embd"], b.params.Ints["n_heads"], b.params.Ints["n_kv_heads"], b.params.Ints["head_dim"])
+		ParamNEmbd, b.params.Ints[ParamNEmbd], ParamNHeads, b.params.Ints[ParamNHeads], b.params.Ints[ParamNKVHeads], ParamHeadDim, b.params.Ints[ParamHeadDim])
 	return nil
 }
 
@@ -500,7 +498,7 @@ func (b *genericModelBuilder) createComputeResources() error {
 		return fmt.Errorf("failed to create cached scheduler")
 	}
 	b.m.ffnScratch = make(map[string]ggml.Tensor)
-	b.m.logitBuf = make([]float32, b.params.Ints["n_vocab"])
+	b.m.logitBuf = make([]float32, b.params.Ints[ParamNVocab])
 	return nil
 }
 
@@ -541,7 +539,7 @@ func layerHasAltFFN(store *WeightStore, lw ResolvedLayerWeights) bool {
 		if _, ok := shared[tensorName]; ok {
 			continue
 		}
-		if t := lt["ffn_"+logicalName]; !t.IsNil() {
+		if t := lt[PrefixFFNWeight+logicalName]; !t.IsNil() {
 			return true
 		}
 	}

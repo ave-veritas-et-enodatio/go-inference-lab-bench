@@ -87,8 +87,8 @@ func ResolveParams(def *ArchDef, reader GGUFReader) (*ResolvedParams, error) {
 	// conservatively — only params whose "unset" and "declared zero" states
 	// are both bugs belong here.
 	mustBePositive := []string{
-		"rms_eps",        // RMSNorm epsilon — division by zero if unset
-		"rope_freq_base", // RoPE frequency base — 0 gives inf/NaN positional encodings
+		ParamRMSEps,       // RMSNorm epsilon — division by zero if unset
+		ParamRoPEFreqBase, // RoPE frequency base — 0 gives inf/NaN positional encodings
 	}
 	for _, name := range mustBePositive {
 		v, ok := rp.Floats[name]

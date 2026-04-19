@@ -1,9 +1,6 @@
 # Model Architecture TOML DSL Specification
 
-Language-agnostic implementation guide for the model architecture TOML DSL: block and FFN builders, expression language, cache specs, and all top-level DSL sections.
-
-A developer with this document can implement a compatible loader in any language without reading the Go source.
-That said, have the Go source as a known working reference provides the kind of clarity a description can't.
+Language-agnostic implementation guide for the model architecture TOML DSL. A developer with this document and the Go source as reference can implement a compatible loader in any language.
 
 ---
 
@@ -20,13 +17,7 @@ ffn_x = ffn.Build(ffn_x, ...)         ← FFN builder
 x     = x + ffn_x                     ← residual
 ```
 
-**Block builder input/output contract:**
-- Input `cur`: `[n_embd, n_tokens]` — pre-normed residual for this layer
-- Output: `[n_embd, n_tokens]` — block contribution (before residual add)
-
-**FFN builder input/output contract:**
-- Input: `[n_embd, n_tokens]` — post-attention pre-normed residual
-- Output: `[n_embd, n_tokens]` — FFN contribution (before residual add)
+**Builder I/O contract** (block and FFN both): input `[n_embd, n_tokens]` (pre-normed residual), output `[n_embd, n_tokens]` (contribution before residual add).
 
 Weights are resolved per-layer by concatenating the layer prefix (`blk.@{layer_idx}.`) with each weight suffix from `[blocks.<name>.weights]` and `[layers.common_weights]`.
 
@@ -86,7 +77,7 @@ Shape notation uses ggml mul_mat conventions: `mul_mat(W, x)` contracts `W.ne[0]
 qg = attn_q @ cur            # shape [n_heads × head_dim × 2, n_tokens]
 ```
 
-The output packs Q and gate as adjacent head_dim-element blocks per head. For head h, elements at byte offsets `[2h×head_dim×4, (2h+1)×head_dim×4)` are Q, and `[(2h+1)×head_dim×4, (2h+2)×head_dim×4)` are gate. Extract as **non-contiguous views** with ne[0]=head_dim but nb[1]=2×head_dim×sizeof(f32) (skipping the adjacent gate/Q block):
+Q and gate are interleaved per head: for head h, Q occupies bytes `[2h×head_dim×4, (2h+1)×head_dim×4)`, gate occupies `[(2h+1)×head_dim×4, (2h+2)×head_dim×4)`. Extract as **non-contiguous views** (nb[1]=2×head_dim×sizeof(f32), skipping the adjacent block):
 
 ```
 q    = view(qg, ne=[head_dim, n_heads, n_tokens],
@@ -117,11 +108,7 @@ if attn_k_norm present: k = k * attn_k_norm
 
 **Step 3 — Multi-section RoPE (NeoX mode):**
 
-Apply multi-section rotary positional encoding to Q and K using:
-- `rope_n_rot` rotary dimensions
-- `rope_sections[4]` section sizes
-- `rope_freq_base` as the frequency base
-- Position indices from the input position tensor (absolute positions, starting at `seq_pos` in cached mode)
+Apply multi-section RoPE to Q and K using `rope_n_rot` rotary dims, `rope_sections[4]` section sizes, `rope_freq_base`, and absolute position indices (starting at `seq_pos` in cached mode).
 
 **Step 4 — Permute and scaled dot-product attention:**
 
@@ -152,20 +139,11 @@ cur = attn_output @ cur        # [n_embd, n_tokens]
 
 ### Cached Mode
 
-**Prefill** (`seq_pos = 0`, processing `n_new` prompt tokens):
-1. Compute K, V for new tokens → mark as graph outputs for writeback
-2. For attention, use inline K, V (not the cache) to avoid write-before-read race
-3. After compute: copy K into `k_cache[:, seq_pos:seq_pos+n_new, :]`, same for V
-4. Attention mask shape: `[n_new, n_new]` (causal over prompt tokens only)
+**Prefill** (`seq_pos = 0`, `n_new` prompt tokens): Compute K, V → use inline (not cache) for attention to avoid write-before-read race → writeback to cache. Mask: `[n_new, n_new]` (causal).
 
-**Decode** (`seq_pos > 0`, processing 1 new token):
-1. Compute K, V for new token → writeback to cache at offset `seq_pos`
-2. For attention, read full cache: `k_cache[:, 0:seq_pos+1, :]`
-3. Attention mask shape: `[seq_pos+1, 1]` — single new token attends to all cached positions
+**Decode** (`seq_pos > 0`, 1 token): Compute K, V → writeback at `seq_pos` → attend over full cache `[0:seq_pos+1]`. Mask: `[seq_pos+1, 1]`.
 
-**Writeback format** (per-head strided copy):
-- K/V are stored head-by-head in the cache with stride `max_seq_len × head_dim × sizeof(f32)` between heads
-- Copy `head_dim × n_new × sizeof(f32)` bytes at byte offset `seq_pos × head_dim × sizeof(f32)` within each head's slice
+**Writeback**: per-head strided copy. Heads stored at stride `max_seq_len × head_dim × sizeof(f32)`. Each copy: `head_dim × n_new × sizeof(f32)` bytes at offset `seq_pos × head_dim × sizeof(f32)` within the head's slice.
 
 ---
 
@@ -232,7 +210,7 @@ g         = reshape(alpha * ssm_a, [1, ssm_dt_rank, n_tokens, 1])
 
 **Step 2 — Causal 1D convolution:**
 
-Concatenate the conv state (last d_conv-1 input positions) with the current input along the time axis, then convolve:
+Concatenate the conv state (last d_conv-1 positions) with current input along time, then convolve:
 
 ```
 conv_input  = concat(conv_state, qkv_mixed^T, dim=0)  # [d_conv-1+n_tokens, conv_channels, 1]
@@ -240,11 +218,11 @@ conv_out    = silu(ssm_conv1d(conv_input))              # [conv_channels, n_toke
 new_conv_state = conv_input[-d_conv+1:, :, :]           # last (d_conv-1) positions for cache writeback
 ```
 
-**Hazard:** `ggml_ssm_conv` takes input `[time, channels, seqs]` (time-first) and returns output `[channels, n_tokens, seqs]` (channel-first). The time and channel axes are transposed in the output relative to the input. This is not a standard conv output layout — account for it when splitting Q/K/V.
+**Hazard:** `ggml_ssm_conv` input is `[time, channels, seqs]` but output is `[channels, n_tokens, seqs]` — time and channel axes transpose. Account for this when splitting Q/K/V.
 
 **Step 3 — Split Q, K, V from conv output:**
 
-`conv_channels == qkvDim` where `qkvDim = ssm_d_state × ssm_n_group × 2 + head_v_dim × ssm_dt_rank`. Because `conv_out` is channel-first (`[qkvDim, n_tokens, 1]`, ne[0]=qkvDim), Q/K/V are contiguous sub-ranges of ne[0]. Extract as non-contiguous 4D views by byte offset into ne[0], keeping nb2=qkvDim×sizeof(f32) as the stride between tokens:
+`qkvDim = ssm_d_state × ssm_n_group × 2 + head_v_dim × ssm_dt_rank` (== `conv_channels`). `conv_out` is channel-first (`[qkvDim, n_tokens, 1]`), so Q/K/V are contiguous sub-ranges of ne[0]. Extract as 4D views with nb2=qkvDim×sizeof(f32):
 
 ```
 # row_bytes(n) = n × sizeof(f32)
@@ -255,7 +233,7 @@ k_ssm: ne=[d_state, n_group, n_tokens, 1], nb1=row_bytes(d_state), nb2=row_bytes
 v_ssm: ne=[head_v_dim, dt_rank, n_tokens, 1], nb1=row_bytes(head_v_dim), nb2=row_bytes(qkvDim), offset=row_bytes(2 × d_state × n_group)
 ```
 
-The key invariant: nb2 = row_bytes(qkvDim) for all three views, because the stride from one token to the next in `conv_out` spans the full qkvDim channel row.
+Key invariant: nb2 = row_bytes(qkvDim) for all three views (stride between tokens spans the full channel row).
 
 **Step 4 — L2-normalize Q, K:**
 
@@ -266,11 +244,11 @@ k_ssm = l2_norm(k_ssm)
 
 **Step 5 — Group expansion (if ssm_n_group ≠ ssm_dt_rank):**
 
-Repeat Q and K along the group dimension so both have shape `[d_state, ssm_dt_rank, n_tokens, 1]`.
+Repeat Q, K along the group dim → `[d_state, ssm_dt_rank, n_tokens, 1]`.
 
 **Step 6 — Gated delta-net recurrence (fused op):**
 
-This is a custom fused operation. Inputs:
+Inputs:
 - `q_ssm`: `[d_state, ssm_dt_rank, n_tokens, 1]`
 - `k_ssm`: `[d_state, ssm_dt_rank, n_tokens, 1]`
 - `v_ssm`: `[head_v_dim, ssm_dt_rank, n_tokens, 1]`
@@ -285,7 +263,7 @@ y_h[t] = q_h[t]^T × S_h[t]
 ```
 (approximate: exact delta-net recurrence, see Yang et al. 2024)
 
-The fused op returns a flat output buffer containing two logically separate tensors at different byte offsets. The two parts have **different shapes** (ne[1] differs), so this is not a slice along a common axis — it is two independent views into the same backing allocation:
+The fused op returns a flat buffer containing two tensors at different offsets with **different shapes** (ne[1] differs) — two independent views, not slices along a common axis:
 
 ```
 # output_bytes = head_v_dim × ssm_dt_rank × n_tokens × sizeof(f32)
@@ -319,39 +297,18 @@ cur = ssm_out @ cur                              # [n_embd, n_tokens]
 
 ### Cached Mode
 
-**Conv state:**
-- At layer start: prepend `conv_state` (shape `[d_conv-1, conv_channels]`) to the transposed QKV input
-- After compute: extract the last (d_conv-1) positions from the concat input and write back to `conv_state`
+- **Conv state**: prepend `conv_state` `[d_conv-1, conv_channels]` to QKV input; after compute, write back last (d_conv-1) positions.
+- **SSM state**: pass cached `ssm_state` as initial recurrence state (instead of zeros); after compute, write back `final_state` from `delta_out`.
 
-**SSM state:**
-- At layer start: pass cached `ssm_state` as the initial recurrence state instead of zeros
-- After compute: extract `final_state` from `delta_out` and write back to `ssm_state`
-
-Both writebacks are flat copies (no head-striding needed); the full tensor is replaced each step.
+Both are flat copies (full tensor replaced, no head-striding).
 
 ---
 
 ## Builder: `swiglu`
 
-Standard SwiGLU feed-forward network.
+Standard SwiGLU FFN. No params or config keys — dimensions inferred from weight shapes.
 
-### Params Used
-
-None directly — dimensions are inferred from weight shapes.
-
-### Required Weights
-
-| Key | GGUF shape | Description |
-|---|---|---|
-| `gate` | `[n_embd, n_ff]` | Gate projection |
-| `up` | `[n_embd, n_ff]` | Up projection |
-| `down` | `[n_ff, n_embd]` | Down projection |
-
-### Config Keys
-
-None.
-
-### Forward Pass
+**Weights:** `gate` `[n_embd, n_ff]`, `up` `[n_embd, n_ff]`, `down` `[n_ff, n_embd]`
 
 ```
 gate_out = silu(gate @ input)             # [n_ff, n_tokens]
@@ -403,18 +360,16 @@ Determines which `[blocks.*]` definition each layer uses. Three mutually exclusi
 
 ### Uniform
 
-All layers use a single block type. No routing expression needed.
+All layers use a single block type (e.g. Llama, DeepSeek2 MLA):
 
 ```toml
 [layers.routing]
 uniform = "attention"        # must name a [blocks.*] key
 ```
 
-Used when every layer has the same block structure (e.g. Llama, DeepSeek2 MLA).
-
 ### Rule
 
-An expression evaluated per-layer. Nonzero result selects `if_true`, zero selects `if_false`.
+Expression evaluated per-layer; nonzero → `if_true`, zero → `if_false`:
 
 ```toml
 [layers.routing]
@@ -423,11 +378,9 @@ if_true  = "recurrent_ssm"
 if_false = "full_attention"
 ```
 
-The expression uses the standard expression language (see below). `@{layer_idx}` is a builtin (0-based layer index). `${name}` dereferences a resolved param.
-
 ### Pattern
 
-An integer array param indexed by layer. Nonzero elements select `if_true`, zero elements select `if_false`.
+Integer array param indexed by layer; nonzero → `if_true`, zero → `if_false`. Used when routing is driven by an opaque per-layer array in GGUF metadata (e.g. Gemma4 ISWA):
 
 ```toml
 [layers.routing]
@@ -436,14 +389,7 @@ if_true  = "swa_attention"
 if_false = "full_attention"
 ```
 
-Used when routing is driven by an opaque per-layer array in the GGUF metadata (e.g. Gemma4 ISWA).
-
-### Validation
-
-- Exactly one of `uniform`, `rule`, or `pattern` must be set.
-- `uniform` is mutually exclusive with `rule`, `pattern`, `if_true`, and `if_false`.
-- `rule` and `pattern` both require `if_true` and `if_false`.
-- The value of `uniform`, `if_true`, and `if_false` must each name a `[blocks.*]` key.
+**Validation:** Exactly one of `uniform`, `rule`, or `pattern` must be set. `uniform` is mutually exclusive with `if_true`/`if_false`. `rule` and `pattern` both require `if_true` and `if_false`. All block references must name a `[blocks.*]` key.
 
 ---
 
@@ -457,31 +403,42 @@ Example: DeepSeek2 uses dense SwiGLU for the first layer and MoE for the rest.
 
 ## Example (`[example]`)
 
-Diagram-only example values used by `gen-arch-diagram` when no GGUF model is loaded. Has no effect on inference.
+Diagram-only values for `gen-arch-diagram` when no GGUF is loaded. No effect on inference.
+
+| Key | Description |
+|---|---|
+| `n_layers` | Layer count for the layer-pattern strip |
+| `full_attn_every` | Rule-based routing: interval N where `(i+1) % N == 0` selects `if_false`. Used by Qwen3.5. |
+| `attn_pattern_true_every` | Pattern-based routing: `pattern[i] = 1` (`if_true`) when `(i+1) % N == 0`, else 0. |
+| `attn_pattern_false_every` | Pattern-based routing: `pattern[i] = 0` (`if_false`) when `(i+1) % N == 0`, else 1. Used by Gemma4 ISWA. |
+
+The three interval keys are **mutually exclusive** (validation error if more than one is set). Omit all three for uniform architectures (Llama, DeepSeek2).
 
 ```toml
+# Rule-based (Qwen3.5): full attention every 4th layer
 [example]
-n_layers       = 32   # example layer count for the layer-pattern strip
-full_attn_every = 4   # interval: layer (i+1) % N == 0 → full/global attention
-```
+n_layers        = 32
+full_attn_every = 4
 
-`n_layers` seeds the layer-pattern strip width. `full_attn_every` overrides the default interval (4) used to generate the example routing pattern. Omit `full_attn_every` for architectures with no routing distinction between layers (e.g. Llama, DeepSeek2).
+# Pattern-based (Gemma4): SWA (if_false) every 5th layer
+[example]
+n_layers                 = 30
+attn_pattern_false_every = 5
+```
 
 ---
 
 ## Tokens (`[tokens]`)
 
-Declares model-specific thinking control tokens:
+Thinking control tokens and extra stop tokens. Auto-detected from vocab as fallback if not specified.
 
 ```toml
 [tokens]
 think_open   = "<think>"
 think_close  = "</think>"
-no_think     = "/nothink"                 # or "/no_think" for Qwen
-extra_eos    = ["<end_of_turn>"]          # optional; non-standard EOS tokens (EOS from GGUF always included automatically)
+no_think     = "/nothink"
+extra_eos    = ["<end_of_turn>"]    # non-standard EOS (GGUF EOS always included automatically)
 ```
-
-Used by the server to filter thinking content and inject no-think instructions. Auto-detected from vocab as fallback if not specified.
 
 ---
 
@@ -489,31 +446,23 @@ Used by the server to filter thinking content and inject no-think instructions. 
 
 Used in `[params.derived]`, `[blocks.*.cache].dims`, `[layers].count`, and `[layers.routing].rule`.
 
-**Supported syntax:**
+**Syntax:**
 - Integer literals: `128`, `4096`
-- Param references: `${name}` dereferences a resolved param (integer params only). Used in routing rules.
-- Bare param names: allowed in derived expressions and cache dims (where there is no ambiguity)
-- Arithmetic: `+`, `-`, `*`, `/` (integer), `%` (modulo)
-- Comparison (routing only): `==`, `!=`
-- Builtins: `@{name}` references engine-provided contextual values. Currently: `@{layer_idx}` (0-based layer index). Used in routing rules and layer prefix templates.
-- Parentheses: `(expr)`
-- Optional GGUF params: suffix key with `?` to silently skip if not found (e.g., `"arch.key?"`)
+- `${name}` — resolved param dereference (integers only; used in routing rules)
+- Bare param names — allowed in derived expressions and cache dims
+- `@{name}` — engine builtin (currently: `@{layer_idx}`, 0-based)
+- Arithmetic: `+`, `-`, `*`, `/`, `%`; comparison (routing only): `==`, `!=`; parentheses
+- Optional GGUF params: suffix key with `?` to silently skip (e.g., `"arch.key?"`)
+- `tensor_name.ne[dim]` — reads GGUF tensor dimension (e.g., `token_embd.ne[1]` → `n_vocab`)
 
-**Special derived form:**
-- `tensor_name.ne[dim]` — reads dimension `dim` (0-based) from a named GGUF tensor. Used to derive `n_vocab` from the embedding table shape.
-
-**Param defaults (`[params.defaults]`):**
-
-If a GGUF param resolves to 0, the defaults table provides a fallback param name. Applied after all params (including derived) are resolved.
+**Param defaults (`[params.defaults]`):** If a GGUF param resolves to 0, the defaults table provides a fallback. Applied after all params (including derived) are resolved.
 
 ```toml
 [params.defaults]
 n_kv_heads = "n_heads"    # GGUF convention: 0 means same as n_heads (no GQA)
 ```
 
-**Array-to-scalar promotion:**
-
-Some GGUF params are per-layer arrays (e.g., `head_count_kv` with one value per layer). When resolved, the first element is also stored as a scalar int, so cache dims and derived expressions can reference it by name.
+**Array-to-scalar promotion:** Per-layer array params (e.g., `head_count_kv`) also store their first element as a scalar int for use in cache dims and derived expressions.
 
 **Examples:**
 ```

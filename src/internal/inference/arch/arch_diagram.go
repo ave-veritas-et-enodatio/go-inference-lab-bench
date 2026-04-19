@@ -162,7 +162,7 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 		// Pre-attn norm
 		normX := centerX(cx, normWidth)
 		cursor += boxGap
-		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, "attn_norm"))
+		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, WeightAttnNorm))
 		cursor += normHeight
 		emitArrow(bw, cx, cursor, arrowLen)
 		cursor += arrowLen
@@ -178,7 +178,7 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 		cursor += blk.Height + boxGap
 
 		// Post-attn norm
-		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, "ffn_norm"))
+		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, WeightFFNNorm))
 		cursor += normHeight
 		emitArrow(bw, cx, cursor, arrowLen)
 		cursor += arrowLen
@@ -205,13 +205,13 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 	}
 
 	// Final norm
-	emitRMSNormBox(bw, centerX(cx, normWidth), cursor, normWidth, normHeight, weightNameOrDefault(def.Weights.Global, "output_norm"))
+	emitRMSNormBox(bw, centerX(cx, normWidth), cursor, normWidth, normHeight, weightNameOrDefault(def.Weights.Global, WeightOutputNorm))
 	cursor += normHeight
 	emitArrow(bw, cx, cursor, arrowLen)
 	cursor += arrowLen
 
 	// LM Head
-	lmLabel := def.Weights.Global["output"]
+	lmLabel := def.Weights.Global[WeightOutput]
 	if def.Architecture.TiedEmbeddings {
 		lmLabel = "tied: reuses token_embd.weight"
 	}
@@ -417,12 +417,12 @@ func emitSharedDefs(w *bufio.Writer) {
 	fmt.Fprintf(w, "      <path d=\"M0,0 L8,3 L0,6\" fill=\"%s\"/>\n", pal["ui.arrow"])
 	w.WriteString("    </marker>\n")
 	for _, def := range []struct{ id, prefix string }{
-		{"ssmGrad", "recurrent"},
-		{"attnGrad", "full_attention"},
-		{"swaGrad", "swa"},
-		{"ffnGrad", "ffn"},
-		{"normGrad", "norm"},
-		{"globalGrad", "global"},
+		{"ssmGrad", TypeRecurrent},
+		{"attnGrad", TypeFullAttention},
+		{"swaGrad", TypeSWA},
+		{"ffnGrad", TypeFFN},
+		{"normGrad", TypeNorm},
+		{"globalGrad", ModuleGlobal},
 	} {
 		fmt.Fprintf(w, "    <linearGradient id=\"%s\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n", def.id)
 		fmt.Fprintf(w, "      <stop offset=\"0%%\" stop-color=\"%s\"/><stop offset=\"100%%\" stop-color=\"%s\"/>\n",
@@ -442,19 +442,19 @@ func emitLegend(w *bufio.Writer, def *ArchDef, cx int, ffnKey string) {
 	}
 	// Gradient ID mapping for arch diagram legend
 	gradID := map[string]string{
-		"full_attention": "url(#attnGrad)",
-		"swa":            "url(#swaGrad)",
-		"recurrent":      "url(#ssmGrad)",
-		"ffn":            "url(#ffnGrad)",
+		TypeFullAttention: "url(#attnGrad)",
+		TypeSWA:           "url(#swaGrad)",
+		TypeRecurrent:     "url(#ssmGrad)",
+		TypeFFN:           "url(#ffnGrad)",
 	}
 	var items []legendItem
-	items = append(items, legendItem{"Global", "url(#globalGrad)", pal["global.stroke"]})
-	items = append(items, legendItem{"RMSNorm", "url(#normGrad)", pal["norm.stroke"]})
+	items = append(items, legendItem{"Global", "url(#globalGrad)", pal[ModuleGlobal+".stroke"]})
+	items = append(items, legendItem{"RMSNorm", "url(#normGrad)", pal[TypeNorm+".stroke"]})
 
 	// Check if model has recurrent blocks — if not, simplify attention label.
 	hasRecurrent := false
 	for _, blk := range def.Blocks {
-		if palPrefixBuilder(blk.Builder) == "recurrent" {
+		if palPrefixBuilder(blk.Builder) == TypeRecurrent {
 			hasRecurrent = true
 			break
 		}
@@ -477,7 +477,7 @@ func emitLegend(w *bufio.Writer, def *ArchDef, cx int, ffnKey string) {
 		// doesn't match any specific prefix (falls through to "recurrent"), use the
 		// builder-based mapping instead.
 		pp := palPrefix(name)
-		if pp == "recurrent" && palPrefixBuilder(blk.Builder) != "recurrent" {
+		if pp == TypeRecurrent && palPrefixBuilder(blk.Builder) != TypeRecurrent {
 			pp = palPrefixBuilder(blk.Builder)
 		}
 		var label string
@@ -486,7 +486,7 @@ func emitLegend(w *bufio.Writer, def *ArchDef, cx int, ffnKey string) {
 			label = formatBuilderName(name)
 		} else {
 			label = formatBuilderName(blk.Builder)
-			if pp == "full_attention" && !hasRecurrent {
+			if pp == TypeFullAttention && !hasRecurrent {
 				label = "attention"
 			}
 		}
@@ -584,8 +584,7 @@ func diagramFallbackParams(def *ArchDef, nLayers int) *ResolvedParams {
 	}
 
 	if def.Example.FullAttnEvery > 0 {
-		// TODO: hard-coded magic string is bad.
-		rp.Ints["full_attn_interval"] = def.Example.FullAttnEvery
+		rp.Ints[ParamFullAttnInterval] = def.Example.FullAttnEvery
 	}
 
 	// For pattern routing (fully recorded bool pattern), generate a pattern

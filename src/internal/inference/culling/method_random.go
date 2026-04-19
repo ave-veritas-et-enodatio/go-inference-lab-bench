@@ -29,13 +29,13 @@ func applyRandomCulling(mm *arch.ModuleMap, tokenIDs []int32, meta *CullingMeta)
 	ffnIdx := 0
 	for _, m := range mm.Modules {
 		switch {
-		case strings.HasPrefix(m.Name, "block_"):
+		case strings.HasPrefix(m.Name, arch.PrefixBlock):
 			idx := blockCount[m.BlockName]
 			blockCount[m.BlockName] = idx + 1
 			if idx%4 == 0 {
 				mm.CulledIDs = append(mm.CulledIDs, m.ID)
 			}
-		case strings.HasPrefix(m.Name, "ffn_"):
+		case strings.HasPrefix(m.Name, arch.PrefixFFN):
 			if ffnIdx%4 == 0 {
 				mm.CulledIDs = append(mm.CulledIDs, m.ID)
 			}

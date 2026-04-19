@@ -206,6 +206,8 @@ func NewModelReaderSafetensors(archDef *ArchDef, stDir string, archDir string) (
 		return nil, fmt.Errorf("opening shard files: %w", err)
 	}
 
+	log.Info("ModelReader[safetensors] created for %s", filepath.Base(stDir))
+
 	return &stModelReader{
 		index:       index,
 		stmap:       stmap,
@@ -418,7 +420,7 @@ func buildGGUFToHFMap(stmap *ArchSTMap, index *SafetensorsIndex) (map[string]str
 			continue
 		}
 		// Construct GGUF name: replace @{layer_idx} in GGUF prefix, append our_short_name.
-		ggufName := strings.ReplaceAll(stmap.LayerPrefixGGUF, "@{layer_idx}", strconv.Itoa(layerIdx)) + ourShort
+		ggufName := strings.ReplaceAll(stmap.LayerPrefixGGUF, BuiltinLayerIdxRef, strconv.Itoa(layerIdx)) + ourShort
 		ggufToHF[ggufName] = hfName
 	}
 

@@ -12,36 +12,36 @@ type AttentionBuilder struct{}
 
 func (b *AttentionBuilder) Contract() BuilderContract {
 	return BuilderContract{
-		RequiredWeights: []string{"attn_q", "attn_output"},
-		OptionalWeights: []string{"attn_k", "attn_v", "attn_q_norm", "attn_k_norm", "rope_freqs"},
-		RequiredParams:  []string{"head_dim", "n_heads", "n_kv_heads", "rope_n_rot", "rope_freq_base"},
+		RequiredWeights: []string{WeightAttnQ, WeightAttnOutput},
+		OptionalWeights: []string{WeightAttnK, WeightAttnV, WeightAttnQNorm, WeightAttnKNorm, WeightRoPEFreqs},
+		RequiredParams:  []string{ParamHeadDim, ParamNHeads, ParamNKVHeads, ParamRoPENRot, ParamRoPEFreqBase},
 		ConfigSchema: map[string][]string{
-			"rope":            {"standard", "neox", ""},
-			"v_norm":          {"rms", ""},
-			"sliding_window":  nil,
-			"shared_kv_group": nil,
-			"head_dim":        nil,
-			"n_heads":         nil,
-			"n_kv_heads":      nil,
-			"rope_n_rot":      nil,
-			"rope_freq_base":  nil,
-			"kq_scale":        nil,
+			ConfigRope:          {RopeStandard, RopeNeox, ""},
+			ConfigVNorm:         {NormRMS, ""},
+			ParamSlidingWindow:  nil,
+			ConfigSharedKVGroup: nil,
+			ParamHeadDim:        nil,
+			ParamNHeads:         nil,
+			ParamNKVHeads:       nil,
+			ParamRoPENRot:       nil,
+			ParamRoPEFreqBase:   nil,
+			ConfigKQScale:       nil,
 		},
 	}
 }
 
 // attnParams reads attention dimensions from config overrides or global params.
 func attnParams(params *ResolvedParams, config map[string]any) (headDim, nHeads, nKVHeads int64, nRot, ropeMode int, freqBase, kqScale float32) {
-	headDim = int64(configIntOr(config, "head_dim", params))
-	nHeads = int64(configIntOr(config, "n_heads", params))
-	nKVHeads = int64(configIntOr(config, "n_kv_heads", params))
-	nRot = configIntOr(config, "rope_n_rot", params)
-	freqBase = configFloatOr(config, "rope_freq_base", params)
-	kqScale = configFloatOr(config, "kq_scale", params)
+	headDim = int64(configIntOr(config, ParamHeadDim, params))
+	nHeads = int64(configIntOr(config, ParamNHeads, params))
+	nKVHeads = int64(configIntOr(config, ParamNKVHeads, params))
+	nRot = configIntOr(config, ParamRoPENRot, params)
+	freqBase = configFloatOr(config, ParamRoPEFreqBase, params)
+	kqScale = configFloatOr(config, ConfigKQScale, params)
 	if kqScale == 0 {
 		kqScale = attentionScale(headDim)
 	}
-	if configStr(config, "rope") == "neox" {
+	if configStrOr(config, ConfigRope, "") == RopeNeox {
 		ropeMode = ggml.RopeNeoX
 	}
 	return
@@ -63,42 +63,42 @@ func (b *AttentionBuilder) prepareQKV(
 	headDim, nHeads, nKVHeads int64, nRot, ropeMode int, freqBase float32,
 ) qkvResult {
 	nTokens := inputs.NTokens
-	hasKV := !weights["attn_k"].IsNil()
+	hasKV := !weights[WeightAttnK].IsNil()
 
-	q := projectReshape3D(ctx, weights["attn_q"], cur, headDim, nHeads, nTokens)
+	q := projectReshape3D(ctx, weights[WeightAttnQ], cur, headDim, nHeads, nTokens)
 
 	var k, v ggml.Tensor
 	if hasKV {
 		// Infer actual n_kv_heads from K weight shape when it differs from the param.
 		// Handles models where SWA and full attention have different kv_head counts
 		// but only one n_kv_heads param exists in the GGUF.
-		if actual := weights["attn_k"].Ne(1) / headDim; actual > 0 {
+		if actual := weights[WeightAttnK].Ne(1) / headDim; actual > 0 {
 			nKVHeads = actual
 		}
-		k = projectReshape3D(ctx, weights["attn_k"], cur, headDim, nKVHeads, nTokens)
-		if !weights["attn_v"].IsNil() {
-			v = projectReshape3D(ctx, weights["attn_v"], cur, headDim, nKVHeads, nTokens)
+		k = projectReshape3D(ctx, weights[WeightAttnK], cur, headDim, nKVHeads, nTokens)
+		if !weights[WeightAttnV].IsNil() {
+			v = projectReshape3D(ctx, weights[WeightAttnV], cur, headDim, nKVHeads, nTokens)
 		} else {
 			v = k
 		}
 	}
 
 	// Optional QK-norm
-	if !weights["attn_q_norm"].IsNil() {
-		rmsEps := params.Floats["rms_eps"]
-		q = rmsNormApply(ctx, q, weights["attn_q_norm"], rmsEps)
+	if !weights[WeightAttnQNorm].IsNil() {
+		rmsEps := params.Floats[ParamRMSEps]
+		q = rmsNormApply(ctx, q, weights[WeightAttnQNorm], rmsEps)
 		if hasKV {
-			k = rmsNormApply(ctx, k, weights["attn_k_norm"], rmsEps)
+			k = rmsNormApply(ctx, k, weights[WeightAttnKNorm], rmsEps)
 		}
 	}
 
 	// Optional V-norm (raw RMS norm, no learned weights)
-	if hasKV && configStr(config, "v_norm") == "rms" {
-		v = ggml.RmsNorm(ctx, v, params.Floats["rms_eps"])
+	if hasKV && configStrOr(config, ConfigVNorm, "") == NormRMS {
+		v = ggml.RmsNorm(ctx, v, params.Floats[ParamRMSEps])
 	}
 
 	// RoPE with optional frequency factors
-	freqFactors := weights["rope_freqs"]
+	freqFactors := weights[WeightRoPEFreqs]
 	if freqFactors.IsNil() {
 		freqFactors = ggml.NilTensor()
 	}
@@ -111,7 +111,7 @@ func (b *AttentionBuilder) prepareQKV(
 
 	// Update SharedKV if this is a KV layer
 	if hasKV && inputs.SharedKV != nil {
-		if group := configStr(config, "shared_kv_group"); group != "" {
+		if group := configStrOr(config, ConfigSharedKVGroup, ""); group != "" {
 			inputs.SharedKV.K[group] = k
 			inputs.SharedKV.V[group] = v
 		}
@@ -119,7 +119,7 @@ func (b *AttentionBuilder) prepareQKV(
 
 	// Non-KV layers get K/V from SharedKV
 	if !hasKV && inputs.SharedKV != nil {
-		group := configStr(config, "shared_kv_group")
+		group := configStrOr(config, ConfigSharedKVGroup, "")
 		k = inputs.SharedKV.K[group]
 		v = inputs.SharedKV.V[group]
 	}
@@ -129,7 +129,7 @@ func (b *AttentionBuilder) prepareQKV(
 
 // selectMask returns the SWA mask if sliding_window is configured, else the standard mask.
 func selectMask(config map[string]any, inputs *GraphInputs) ggml.Tensor {
-	if configStr(config, "sliding_window") == "true" && !inputs.InpMaskSWA.IsNil() {
+	if configBoolOr(config, ParamSlidingWindow, false) && !inputs.InpMaskSWA.IsNil() {
 		return inputs.InpMaskSWA
 	}
 	return inputs.InpMask
@@ -150,7 +150,7 @@ func (b *AttentionBuilder) BuildStateless(
 	v := ggml.Permute(ctx, kv.V, 0, 2, 1, 3)
 
 	cur = scaledDotProductAttention(ctx, q, k, v, mask, kqScale, nHeads, inputs.NTokens, inputs.Captures, inputs.FlashAttn)
-	return ggml.MulMat(ctx, weights["attn_output"], cur)
+	return ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
 }
 
 func (b *AttentionBuilder) BuildCached(
@@ -170,10 +170,10 @@ func (b *AttentionBuilder) BuildCached(
 		kAttn, vAttn := selectCachedKV(ctx, cache, inputs.SeqPos, kv.K, kv.V, headDim, inputs.NKV, nKVHeadsActual)
 		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens, inputs.Captures, inputs.FlashAttn)
 	} else {
-		group := configStr(config, "shared_kv_group")
+		group := configStrOr(config, ConfigSharedKVGroup, "")
 		kAttn, vAttn := selectSharedKV(ctx, cache, inputs.SeqPos, inputs.SharedKV, group, headDim, inputs.NKV, nKVHeadsActual)
 		cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, mask, kqScale, nHeads, inputs.NTokens, inputs.Captures, inputs.FlashAttn)
 	}
 
-	return ggml.MulMat(ctx, weights["attn_output"], cur)
+	return ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
 }

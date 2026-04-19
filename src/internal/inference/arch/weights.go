@@ -169,7 +169,7 @@ func resolveCountExpr(expr string, params *ResolvedParams) (int, error) {
 }
 
 func expandPrefix(tmpl string, layerIdx int) string {
-	return strings.ReplaceAll(tmpl, "@{layer_idx}", strconv.Itoa(layerIdx))
+	return strings.ReplaceAll(tmpl, BuiltinLayerIdxRef, strconv.Itoa(layerIdx))
 }
 
 func resolveBlockName(def *ArchDef, layerIdx int, params *ResolvedParams) (string, error) {

@@ -200,7 +200,7 @@ func applyReorderVHeads(t *TransformSpec, f32 []float32, spec TensorSpec) error 
 	if err != nil {
 		return err
 	}
-	headDim, err := paramInt(t.Params, "head_dim")
+	headDim, err := paramInt(t.Params, ParamHeadDim)
 	if err != nil {
 		return err
 	}
@@ -241,7 +241,7 @@ func applyReorderVHeads(t *TransformSpec, f32 []float32, spec TensorSpec) error 
 // The weight tensor must be 2D with ne[1] = n_heads * head_dim and head_dim
 // even.
 func applyPermuteQKRope(t *TransformSpec, f32 []float32, spec TensorSpec) error {
-	nHeads, err := paramInt(t.Params, "n_heads")
+	nHeads, err := paramInt(t.Params, ParamNHeads)
 	if err != nil {
 		return err
 	}

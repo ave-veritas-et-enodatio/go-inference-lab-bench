@@ -109,7 +109,7 @@ func NewEngine(memStats ggml.MemoryStats, info *model.ModelInfo, archDir, diagDi
 	// the resolved model param (config.json → params stmap).
 	nLayers := info.Metadata.NLayers
 	if nLayers == 0 {
-		if n, err := m.Params.GetInt("n_layers"); err == nil {
+		if n, err := m.Params.GetInt(arch.ParamNLayers); err == nil {
 			nLayers = n
 		}
 	}
@@ -176,7 +176,7 @@ func validateArchTokens(tokens arch.TokensDef, tok *Tokenizer) {
 
 // IsDiffusion reports whether the loaded model uses diffusion generation.
 func (e *Engine) IsDiffusion() bool {
-	return e.model != nil && e.model.Def.Architecture.Generation == "diffusion"
+	return e.model != nil && e.model.Def.Architecture.Generation == arch.GenerationDiffusion
 }
 
 // ThinkOpen returns the TOML-defined think opening tag, or "".
@@ -224,13 +224,12 @@ type GenerateParams struct {
 	Stateless          bool             // bypass KV cache (for testing/comparison)
 	Streaming          bool             // true if the caller is using SSE streaming
 	CullMethod         string           // "" or "none" = no culling; "random" = random test pattern
-	ThinkingEnabled    bool             // mirrors ChatTemplateKwargs["enable_thinking"]; used for thinkFilter init + internal logic
+	ThinkingEnabled    bool             // mirrors ChatTemplateKwargs[KwEnableThinking]; used for thinkFilter init + internal logic
 	ChatTemplateKwargs map[string]any   // passed to the chat template renderer; llama.cpp-compatible shape
 	LogProbs           bool             // include log-probabilities in response
 	TopLogProbs        int              // number of top log-probabilities per token (0 = just the chosen token)
 	FlashAttention     *bool            // nil = use server default; true/false = per-request override
 	Diffusion          *DiffusionParams // nil = not diffusion (ignored for autoregressive models)
-	RLB                *RLBParams       // nil = RLB disabled; non-nil = run recurrent logic block generation with these params
 }
 
 // DefaultParams returns sensible defaults.
@@ -244,6 +243,11 @@ func DefaultParams() GenerateParams {
 }
 
 const defaultMaxSeqLen = 8192
+
+// KwEnableThinking is the chat_template_kwargs key that controls
+// whether the template emits a think block. Used across inference
+// and apiserver.
+const KwEnableThinking = "enable_thinking"
 
 // Generate runs the full chat generation loop.
 // Uses KV/SSM cache by default; set params.Stateless for full-sequence recomputation.
@@ -260,8 +264,8 @@ func (e *Engine) Generate(
 	if kwargs == nil {
 		kwargs = map[string]any{}
 	}
-	if _, ok := kwargs["enable_thinking"]; !ok {
-		kwargs["enable_thinking"] = params.ThinkingEnabled
+	if _, ok := kwargs[KwEnableThinking]; !ok {
+		kwargs[KwEnableThinking] = params.ThinkingEnabled
 	}
 	promptIDs, err := e.tokenizer.EncodeChat(messages, kwargs)
 	if err != nil {
@@ -313,22 +317,8 @@ func (e *Engine) Generate(
 
 	start := time.Now()
 
-	// RLB doesn't apply to diffusion models (no SSM state to blend, no
-	// per-block recurrence concept). If both are requested, drop RLB and
-	// fall through to the diffusion path.
-	if params.RLB != nil && e.IsDiffusion() {
-		log.Warn("rlb_gen requested on diffusion model; ignoring RLB, performing diffusion generation")
-		params.RLB = nil
-	}
-
 	var genErr error
-	if params.RLB != nil {
-		if params.Stateless {
-			log.Warn("rlb_gen requires cached mode; ignoring stateless=true")
-		}
-		log.Info("rlb generation: prompt=%d tokens", len(promptIDs))
-		genErr = e.generateRLB(promptIDs, maxTokens, stopSet, params, mask, onToken, metrics)
-	} else if e.IsDiffusion() {
+	if e.IsDiffusion() {
 		if params.Streaming {
 			T := 64
 			if params.Diffusion != nil && params.Diffusion.Steps > 0 {

@@ -102,7 +102,7 @@ func init() {
 	blockBuilders["gated_delta_net"] = &GatedDeltaNetBuilder{}
 	ffnBuilders["swiglu"] = &SwiGLUBuilder{}
 	ffnBuilders["geglu"] = &GeGLUBuilder{}
-	ffnBuilders["moe"] = &MoEBuilder{}
+	ffnBuilders[FFNSymMoE] = &MoEBuilder{}
 }
 
 // GetBlockBuilder returns a registered block builder by name.
@@ -137,7 +137,7 @@ func GetFFNBuilders() map[string]FFNBuilder {
 
 // ropeSections converts the IntArr rope_sections param to [4]int for ggml.RopeMulti.
 func ropeSections(params *ResolvedParams) [4]int {
-	arr := params.IntArr["rope_sections"]
+	arr := params.IntArr[ParamRoPESections]
 	var s [4]int
 	for i := 0; i < 4 && i < len(arr); i++ {
 		s[i] = arr[i]

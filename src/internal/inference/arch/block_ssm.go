@@ -25,16 +25,16 @@ type GatedDeltaNetBuilder struct{}
 
 func (b *GatedDeltaNetBuilder) Contract() BuilderContract {
 	return BuilderContract{
-		RequiredWeights: []string{"attn_qkv", "attn_gate", "ssm_a", "ssm_alpha", "ssm_beta",
-			"ssm_conv1d", "ssm_dt_bias", "ssm_out"},
-		OptionalWeights: []string{"ssm_norm"},
-		RequiredParams: []string{"conv_channels", "ssm_dt_rank", "ssm_d_state", "ssm_n_group",
-			"head_v_dim", "ssm_d_conv", "ssm_d_inner", "n_embd"},
+		RequiredWeights: []string{WeightAttnQKV, WeightAttnGate, WeightSSMA, WeightSSMAlpha, WeightSSMBeta,
+			WeightSSMConv1D, WeightSSMDTBias, WeightSSMOut},
+		OptionalWeights: []string{WeightSSMNorm},
+		RequiredParams: []string{ParamConvChannels, ParamSSMDTRank, ParamSSMDState, ParamSSMNGroup,
+			ParamHeadVDim, ParamSSMDConv, ParamSSMDInner, ParamNEmbd},
 		ConfigSchema: map[string][]string{
-			"conv_activation": {"silu", ""},
-			"qk_norm":         {"l2", "rms", ""},
-			"gate_norm":       {"rms", ""},
-			"gate_activation": {"silu", ""},
+			ConfigConvActivation: {ActivationSiLU, ""},
+			ConfigQKNorm:         {NormL2, NormRMS, ""},
+			ConfigGateNorm:       {NormRMS, ""},
+			ConfigGateActivation: {ActivationSiLU, ""},
 		},
 	}
 }
@@ -45,8 +45,8 @@ func (b *GatedDeltaNetBuilder) BuildStateless(
 	zeroFill *[]ggml.Tensor) ggml.Tensor {
 
 	// Validate required weights are present before passing anything to C FFI.
-	requiredWeights := []string{"attn_qkv", "attn_gate", "ssm_a", "ssm_alpha", "ssm_beta",
-		"ssm_conv1d", "ssm_dt_bias", "ssm_out"}
+	requiredWeights := []string{WeightAttnQKV, WeightAttnGate, WeightSSMA, WeightSSMAlpha, WeightSSMBeta,
+		WeightSSMConv1D, WeightSSMDTBias, WeightSSMOut}
 	for _, w := range requiredWeights {
 		if weights[w].IsNil() {
 			log.Error("SSM builder: required weight %q is nil (model file missing weight)", w)
@@ -55,32 +55,32 @@ func (b *GatedDeltaNetBuilder) BuildStateless(
 	}
 
 	nTokens := inputs.NTokens
-	rmsEps := params.Floats["rms_eps"]
+	rmsEps := params.Floats[ParamRMSEps]
 	nSeqs := int64(1)
-	cc := int64(params.Ints["conv_channels"])
-	dtRank := int64(params.Ints["ssm_dt_rank"])
-	dState := int64(params.Ints["ssm_d_state"])
-	nGroup := int64(params.Ints["ssm_n_group"])
-	hvDim := int64(params.Ints["head_v_dim"])
-	dConv := int64(params.Ints["ssm_d_conv"])
-	dInner := int64(params.Ints["ssm_d_inner"])
-	nEmbd := int64(params.Ints["n_embd"])
+	cc := int64(params.Ints[ParamConvChannels])
+	dtRank := int64(params.Ints[ParamSSMDTRank])
+	dState := int64(params.Ints[ParamSSMDState])
+	nGroup := int64(params.Ints[ParamSSMNGroup])
+	hvDim := int64(params.Ints[ParamHeadVDim])
+	dConv := int64(params.Ints[ParamSSMDConv])
+	dInner := int64(params.Ints[ParamSSMDInner])
+	nEmbd := int64(params.Ints[ParamNEmbd])
 
-	qkvMixed := ggml.Reshape3D(ctx, ggml.MulMat(ctx, weights["attn_qkv"], cur), cc, nTokens, nSeqs)
-	z := ggml.MulMat(ctx, weights["attn_gate"], cur)
+	qkvMixed := ggml.Reshape3D(ctx, ggml.MulMat(ctx, weights[WeightAttnQKV], cur), cc, nTokens, nSeqs)
+	z := ggml.MulMat(ctx, weights[WeightAttnGate], cur)
 
-	beta := ggml.Sigmoid(ctx, ggml.Reshape4D(ctx, ggml.MulMat(ctx, weights["ssm_beta"], cur), 1, dtRank, nTokens, nSeqs))
+	beta := ggml.Sigmoid(ctx, ggml.Reshape4D(ctx, ggml.MulMat(ctx, weights[WeightSSMBeta], cur), 1, dtRank, nTokens, nSeqs))
 
-	alpha := ggml.Reshape3D(ctx, ggml.MulMat(ctx, weights["ssm_alpha"], cur), dtRank, nTokens, nSeqs)
-	alpha = ggml.Softplus(ctx, ggml.Add(ctx, alpha, weights["ssm_dt_bias"]))
-	g := ggml.Reshape4D(ctx, ggml.Mul(ctx, alpha, weights["ssm_a"]), 1, dtRank, nTokens, nSeqs)
+	alpha := ggml.Reshape3D(ctx, ggml.MulMat(ctx, weights[WeightSSMAlpha], cur), dtRank, nTokens, nSeqs)
+	alpha = ggml.Softplus(ctx, ggml.Add(ctx, alpha, weights[WeightSSMDTBias]))
+	g := ggml.Reshape4D(ctx, ggml.Mul(ctx, alpha, weights[WeightSSMA]), 1, dtRank, nTokens, nSeqs)
 
 	// Conv1d with zero initial state
 	convStates := newZeroFilledInput(ctx, ggml.TypeF32, zeroFill, dConv-1, cc, nSeqs)
 
 	qkvT := ggml.Transpose(ctx, qkvMixed)
 	convInput := ggml.Concat(ctx, convStates, qkvT, 0)
-	convOut := ggml.Silu(ctx, ggml.SSMConv(ctx, convInput, weights["ssm_conv1d"]))
+	convOut := ggml.Silu(ctx, ggml.SSMConv(ctx, convInput, weights[WeightSSMConv1D]))
 
 	// Split Q, K, V
 	qkvDim := dState*nGroup*2 + hvDim*dtRank
@@ -116,14 +116,14 @@ func (b *GatedDeltaNetBuilder) BuildStateless(
 	// Gated normalization
 	z4d := ggml.Reshape4D(ctx, z, hvDim, dtRank, nTokens, nSeqs)
 	normOut := ssmOutput
-	if !weights["ssm_norm"].IsNil() {
-		normOut = rmsNormApply(ctx, ssmOutput, weights["ssm_norm"], rmsEps)
+	if !weights[WeightSSMNorm].IsNil() {
+		normOut = rmsNormApply(ctx, ssmOutput, weights[WeightSSMNorm], rmsEps)
 	}
 	cur = ggml.Mul(ctx, normOut, ggml.Silu(ctx, z4d))
 
 	cur = ggml.Reshape2D(ctx, cur, dInner, nTokens*nSeqs)
 
-	cur = ggml.MulMat(ctx, weights["ssm_out"], cur)
+	cur = ggml.MulMat(ctx, weights[WeightSSMOut], cur)
 	cur = ggml.Reshape2D(ctx, cur, nEmbd, nTokens*nSeqs)
 	return cur
 }
@@ -134,8 +134,8 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 	cache *LayerCache) ggml.Tensor {
 
 	// Validate required weights are present before passing anything to C FFI.
-	requiredWeights := []string{"attn_qkv", "attn_gate", "ssm_a", "ssm_alpha", "ssm_beta",
-		"ssm_conv1d", "ssm_dt_bias", "ssm_out"}
+	requiredWeights := []string{WeightAttnQKV, WeightAttnGate, WeightSSMA, WeightSSMAlpha, WeightSSMBeta,
+		WeightSSMConv1D, WeightSSMDTBias, WeightSSMOut}
 	for _, w := range requiredWeights {
 		if weights[w].IsNil() {
 			log.Error("SSM builder: required weight %q is nil (model file missing weight)", w)
@@ -144,25 +144,25 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 	}
 
 	nNew := inputs.NTokens
-	rmsEps := params.Floats["rms_eps"]
+	rmsEps := params.Floats[ParamRMSEps]
 	nSeqs := int64(1)
-	cc := int64(params.Ints["conv_channels"])
-	dtRank := int64(params.Ints["ssm_dt_rank"])
-	dState := int64(params.Ints["ssm_d_state"])
-	nGroup := int64(params.Ints["ssm_n_group"])
-	hvDim := int64(params.Ints["head_v_dim"])
-	dConv := int64(params.Ints["ssm_d_conv"])
-	dInner := int64(params.Ints["ssm_d_inner"])
-	nEmbd := int64(params.Ints["n_embd"])
+	cc := int64(params.Ints[ParamConvChannels])
+	dtRank := int64(params.Ints[ParamSSMDTRank])
+	dState := int64(params.Ints[ParamSSMDState])
+	nGroup := int64(params.Ints[ParamSSMNGroup])
+	hvDim := int64(params.Ints[ParamHeadVDim])
+	dConv := int64(params.Ints[ParamSSMDConv])
+	dInner := int64(params.Ints[ParamSSMDInner])
+	nEmbd := int64(params.Ints[ParamNEmbd])
 
-	qkvMixed := ggml.Reshape3D(ctx, ggml.MulMat(ctx, weights["attn_qkv"], cur), cc, nNew, nSeqs)
-	z := ggml.MulMat(ctx, weights["attn_gate"], cur)
+	qkvMixed := ggml.Reshape3D(ctx, ggml.MulMat(ctx, weights[WeightAttnQKV], cur), cc, nNew, nSeqs)
+	z := ggml.MulMat(ctx, weights[WeightAttnGate], cur)
 
-	beta := ggml.Sigmoid(ctx, ggml.Reshape4D(ctx, ggml.MulMat(ctx, weights["ssm_beta"], cur), 1, dtRank, nNew, nSeqs))
+	beta := ggml.Sigmoid(ctx, ggml.Reshape4D(ctx, ggml.MulMat(ctx, weights[WeightSSMBeta], cur), 1, dtRank, nNew, nSeqs))
 
-	alpha := ggml.Reshape3D(ctx, ggml.MulMat(ctx, weights["ssm_alpha"], cur), dtRank, nNew, nSeqs)
-	alpha = ggml.Softplus(ctx, ggml.Add(ctx, alpha, weights["ssm_dt_bias"]))
-	g := ggml.Reshape4D(ctx, ggml.Mul(ctx, alpha, weights["ssm_a"]), 1, dtRank, nNew, nSeqs)
+	alpha := ggml.Reshape3D(ctx, ggml.MulMat(ctx, weights[WeightSSMAlpha], cur), dtRank, nNew, nSeqs)
+	alpha = ggml.Softplus(ctx, ggml.Add(ctx, alpha, weights[WeightSSMDTBias]))
+	g := ggml.Reshape4D(ctx, ggml.Mul(ctx, alpha, weights[WeightSSMA]), 1, dtRank, nNew, nSeqs)
 
 	// Conv1d with cached conv state
 	convSt3d := ggml.Reshape3D(ctx, cache.Tensors[CacheConvState], dConv-1, cc, nSeqs)
@@ -176,7 +176,7 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 	newConvStCont := ggml.Cont(ctx, newConvSt)
 	gf.BuildForwardExpand(ggml.Cpy(ctx, newConvStCont, cache.Tensors[CacheConvState]))
 
-	convOut := ggml.Silu(ctx, ggml.SSMConv(ctx, convInput, weights["ssm_conv1d"]))
+	convOut := ggml.Silu(ctx, ggml.SSMConv(ctx, convInput, weights[WeightSSMConv1D]))
 
 	// Split Q, K, V
 	qkvDim := dState*nGroup*2 + hvDim*dtRank
@@ -218,13 +218,13 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 	// Gated normalization
 	z4d := ggml.Reshape4D(ctx, z, hvDim, dtRank, nNew, nSeqs)
 	normOut := ssmOutput
-	if !weights["ssm_norm"].IsNil() {
-		normOut = rmsNormApply(ctx, ssmOutput, weights["ssm_norm"], rmsEps)
+	if !weights[WeightSSMNorm].IsNil() {
+		normOut = rmsNormApply(ctx, ssmOutput, weights[WeightSSMNorm], rmsEps)
 	}
 	cur = ggml.Mul(ctx, normOut, ggml.Silu(ctx, z4d))
 
 	cur = ggml.Reshape2D(ctx, cur, dInner, nNew*nSeqs)
-	cur = ggml.MulMat(ctx, weights["ssm_out"], cur)
+	cur = ggml.MulMat(ctx, weights[WeightSSMOut], cur)
 	cur = ggml.Reshape2D(ctx, cur, nEmbd, nNew*nSeqs)
 	return cur
 }

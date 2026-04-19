@@ -196,6 +196,41 @@ type ValidationError struct {
 	Message string
 }
 
+// TOML key-path segment constants — must match struct tags on ArchDef
+// and its children. Used exclusively to build validation error paths.
+// There is no way to automatically keep these values and the struct member annotations in sync.
+// it is better, however, than hard-coding them everywhere in this file.
+const (
+	tomlArchitecture  = "architecture"
+	tomlBlocks        = "blocks"
+	tomlBuilder       = "builder"
+	tomlCache         = "cache"
+	tomlCommonWeights = "common_weights"
+	tomlConfig        = "config"
+	tomlCount         = "count"
+	tomlDerived       = "derived"
+	tomlDims          = "dims"
+	tomlExample       = "example"
+	tomlFFN           = "ffn"
+	tomlFFNAlt        = "ffn_alt"
+	tomlGeneration    = "generation"
+	tomlGlobal        = "global"
+	tomlIfFalse       = "if_false"
+	tomlIfTrue        = "if_true"
+	tomlLayers        = "layers"
+	tomlParams        = "params"
+	tomlPattern       = "pattern"
+	tomlPrefix        = "prefix"
+	tomlRouting       = "routing"
+	tomlRule          = "rule"
+	tomlUniform       = "uniform"
+	tomlWeights       = "weights"
+)
+
+// tomlPath joins segments into a dot-separated TOML key path for
+// validation error reporting.
+func tomlPath(segments ...string) string { return strings.Join(segments, ".") }
+
 // Validate checks structural and semantic constraints on a parsed ArchDef.
 // Returns all errors found (not just the first).
 func Validate(def *ArchDef) []ValidationError {
@@ -206,51 +241,51 @@ func Validate(def *ArchDef) []ValidationError {
 
 	// --- Architecture meta checks ---
 
-	if def.Architecture.Generation != "" && def.Architecture.Generation != "diffusion" {
-		add("architecture.generation", fmt.Sprintf("unknown generation strategy %q (valid: \"diffusion\")", def.Architecture.Generation))
+	if def.Architecture.Generation != "" && def.Architecture.Generation != GenerationDiffusion {
+		add(tomlPath(tomlArchitecture, tomlGeneration), fmt.Sprintf("unknown generation strategy %q (valid: %q)", def.Architecture.Generation, GenerationDiffusion))
 	}
-	if def.Architecture.Generation == "diffusion" && !def.Architecture.NonCausal {
-		add("architecture.generation", "generation=diffusion requires non_causal=true")
+	if def.Architecture.Generation == GenerationDiffusion && !def.Architecture.NonCausal {
+		add(tomlPath(tomlArchitecture, tomlGeneration), fmt.Sprintf("generation=%s requires non_causal=true", GenerationDiffusion))
 	}
 
 	// --- Structural checks ---
 
 	if def.Layers.Count == "" {
-		add("layers.count", "required")
+		add(tomlPath(tomlLayers, tomlCount), "required")
 	}
-	if !strings.Contains(def.Layers.Prefix, "@{layer_idx}") {
-		add("layers.prefix", "must contain @{layer_idx}")
+	if !strings.Contains(def.Layers.Prefix, BuiltinLayerIdxRef) {
+		add(tomlPath(tomlLayers, tomlPrefix), fmt.Sprintf("must contain %s", BuiltinLayerIdxRef))
 	}
 	r := def.Layers.Routing
 	if r.Uniform != "" {
 		// Uniform mode: all layers use one block type. Mutually exclusive with rule/pattern/if_true/if_false.
 		if r.Rule != "" || r.Pattern != "" || r.IfTrue != "" || r.IfFalse != "" {
-			add("layers.routing", "uniform is mutually exclusive with rule, pattern, if_true, if_false")
+			add(tomlPath(tomlLayers, tomlRouting), "uniform is mutually exclusive with rule, pattern, if_true, if_false")
 		}
 		if _, ok := def.Blocks[r.Uniform]; !ok {
-			add("layers.routing.uniform", fmt.Sprintf("no such block %q", r.Uniform))
+			add(tomlPath(tomlLayers, tomlRouting, tomlUniform), fmt.Sprintf("no such block %q", r.Uniform))
 		}
 	} else {
 		if r.Rule == "" && r.Pattern == "" {
-			add("layers.routing", "one of uniform, rule, or pattern is required")
+			add(tomlPath(tomlLayers, tomlRouting), "one of uniform, rule, or pattern is required")
 		}
 		if r.Rule != "" && r.Pattern != "" {
-			add("layers.routing", "rule and pattern are mutually exclusive")
+			add(tomlPath(tomlLayers, tomlRouting), "rule and pattern are mutually exclusive")
 		}
 		if r.IfTrue == "" {
-			add("layers.routing.if_true", "required")
+			add(tomlPath(tomlLayers, tomlRouting, tomlIfTrue), "required")
 		}
 		if r.IfFalse == "" {
-			add("layers.routing.if_false", "required")
+			add(tomlPath(tomlLayers, tomlRouting, tomlIfFalse), "required")
 		}
 		if r.IfTrue != "" {
 			if _, ok := def.Blocks[r.IfTrue]; !ok {
-				add("layers.routing.if_true", fmt.Sprintf("no such block %q", r.IfTrue))
+				add(tomlPath(tomlLayers, tomlRouting, tomlIfTrue), fmt.Sprintf("no such block %q", r.IfTrue))
 			}
 		}
 		if r.IfFalse != "" {
 			if _, ok := def.Blocks[r.IfFalse]; !ok {
-				add("layers.routing.if_false", fmt.Sprintf("no such block %q", r.IfFalse))
+				add(tomlPath(tomlLayers, tomlRouting, tomlIfFalse), fmt.Sprintf("no such block %q", r.IfFalse))
 			}
 		}
 	}
@@ -260,20 +295,20 @@ func Validate(def *ArchDef) []ValidationError {
 	for name, blk := range def.Blocks {
 		bb, ok := GetBlockBuilder(blk.Builder)
 		if !ok {
-			add(fmt.Sprintf("blocks.%s.builder", name), fmt.Sprintf("unknown builder %q", blk.Builder))
+			add(tomlPath(tomlBlocks, name, tomlBuilder), fmt.Sprintf("unknown builder %q", blk.Builder))
 			continue
 		}
 		if len(blk.Weights) == 0 {
-			add(fmt.Sprintf("blocks.%s.weights", name), "must not be empty")
+			add(tomlPath(tomlBlocks, name, tomlWeights), "must not be empty")
 		}
-		validateContract(bb.Contract(), blk.Weights, blk.Config, fmt.Sprintf("blocks.%s", name), &errs)
+		validateContract(bb.Contract(), blk.Weights, blk.Config, tomlPath(tomlBlocks, name), &errs)
 
 		for cn, cd := range blk.Cache {
 			if len(cd.Dims) == 0 {
-				add(fmt.Sprintf("blocks.%s.cache.%s", name, cn), "dims must not be empty")
+				add(tomlPath(tomlBlocks, name, tomlCache, cn), fmt.Sprintf("%s must not be empty", tomlDims))
 			}
 			if !validCacheDtype(cd.Dtype) {
-				add(fmt.Sprintf("blocks.%s.cache.%s", name, cn), fmt.Sprintf("invalid dtype %q", cd.Dtype))
+				add(tomlPath(tomlBlocks, name, tomlCache, cn), fmt.Sprintf("invalid dtype %q", cd.Dtype))
 			}
 		}
 	}
@@ -282,12 +317,12 @@ func Validate(def *ArchDef) []ValidationError {
 
 	fb, ok := GetFFNBuilder(def.FFN.Builder)
 	if !ok {
-		add("ffn.builder", fmt.Sprintf("unknown builder %q", def.FFN.Builder))
+		add(tomlPath(tomlFFN, tomlBuilder), fmt.Sprintf("unknown builder %q", def.FFN.Builder))
 	} else {
 		if len(def.FFN.Weights) == 0 {
-			add("ffn.weights", "must not be empty")
+			add(tomlPath(tomlFFN, tomlWeights), "must not be empty")
 		}
-		validateContract(fb.Contract(), def.FFN.Weights, def.FFN.Config, "ffn", &errs)
+		validateContract(fb.Contract(), def.FFN.Weights, def.FFN.Config, tomlFFN, &errs)
 	}
 
 	// --- FFN alt builder contract checks ---
@@ -295,47 +330,47 @@ func Validate(def *ArchDef) []ValidationError {
 	if def.FFNAlt != nil {
 		ffnAltB, ok := GetFFNBuilder(def.FFNAlt.Builder)
 		if !ok {
-			add("ffn_alt.builder", fmt.Sprintf("unknown builder %q", def.FFNAlt.Builder))
+			add(tomlPath(tomlFFNAlt, tomlBuilder), fmt.Sprintf("unknown builder %q", def.FFNAlt.Builder))
 		} else {
 			if len(def.FFNAlt.Weights) == 0 {
-				add("ffn_alt.weights", "must not be empty")
+				add(tomlPath(tomlFFNAlt, tomlWeights), "must not be empty")
 			}
-			validateContract(ffnAltB.Contract(), def.FFNAlt.Weights, def.FFNAlt.Config, "ffn_alt", &errs)
+			validateContract(ffnAltB.Contract(), def.FFNAlt.Weights, def.FFNAlt.Config, tomlFFNAlt, &errs)
 		}
 	}
 
 	// --- norm_w / norm_w_param mutual exclusion ---
 
 	checkFFNNormW := func(config map[string]any, prefix string) {
-		_, hasStatic := config["norm_w"]
-		_, hasParam := config["norm_w_param"]
+		_, hasStatic := config[ConfigNormW]
+		_, hasParam := config[ConfigNormWParam]
 		if hasStatic && hasParam {
-			add(prefix+".config", "norm_w and norm_w_param are mutually exclusive")
+			add(tomlPath(prefix, tomlConfig), fmt.Sprintf("%s and %s are mutually exclusive", ConfigNormW, ConfigNormWParam))
 		}
 	}
 	if def.FFN.Config != nil {
-		checkFFNNormW(def.FFN.Config, "ffn")
+		checkFFNNormW(def.FFN.Config, tomlFFN)
 	}
 	if def.FFNAlt != nil && def.FFNAlt.Config != nil {
-		checkFFNNormW(def.FFNAlt.Config, "ffn_alt")
+		checkFFNNormW(def.FFNAlt.Config, tomlFFNAlt)
 	}
 
 	// --- Required global weights ---
 
-	if _, ok := def.Weights.Global["token_embd"]; !ok {
-		add("weights.global", "missing required key \"token_embd\"")
+	if _, ok := def.Weights.Global[WeightTokenEmbd]; !ok {
+		add(tomlPath(tomlWeights, tomlGlobal), fmt.Sprintf("missing required key %q", WeightTokenEmbd))
 	}
-	if _, ok := def.Weights.Global["output_norm"]; !ok {
-		add("weights.global", "missing required key \"output_norm\"")
+	if _, ok := def.Weights.Global[WeightOutputNorm]; !ok {
+		add(tomlPath(tomlWeights, tomlGlobal), fmt.Sprintf("missing required key %q", WeightOutputNorm))
 	}
 
 	// --- Required common weights ---
 
-	if _, ok := def.Layers.CommonWeights["attn_norm"]; !ok {
-		add("layers.common_weights", "missing required key \"attn_norm\"")
+	if _, ok := def.Layers.CommonWeights[WeightAttnNorm]; !ok {
+		add(tomlPath(tomlLayers, tomlCommonWeights), fmt.Sprintf("missing required key %q", WeightAttnNorm))
 	}
-	if _, ok := def.Layers.CommonWeights["ffn_norm"]; !ok {
-		add("layers.common_weights", "missing required key \"ffn_norm\"")
+	if _, ok := def.Layers.CommonWeights[WeightFFNNorm]; !ok {
+		add(tomlPath(tomlLayers, tomlCommonWeights), fmt.Sprintf("missing required key %q", WeightFFNNorm))
 	}
 
 	// --- Cross-reference checks ---
@@ -344,39 +379,40 @@ func Validate(def *ArchDef) []ValidationError {
 
 	// norm_w_param must reference a declared param.
 	if def.FFN.Config != nil {
-		if ref, ok := def.FFN.Config["norm_w_param"].(string); ok && ref != "" {
+		if ref, ok := def.FFN.Config[ConfigNormWParam].(string); ok && ref != "" {
 			if !declaredParams[ref] {
-				add("ffn.config.norm_w_param", fmt.Sprintf("references undeclared param %q", ref))
+				add(tomlPath(tomlFFN, tomlConfig, ConfigNormWParam), fmt.Sprintf("references undeclared param %q", ref))
 			}
 		}
 	}
 	if def.FFNAlt != nil && def.FFNAlt.Config != nil {
-		if ref, ok := def.FFNAlt.Config["norm_w_param"].(string); ok && ref != "" {
+		if ref, ok := def.FFNAlt.Config[ConfigNormWParam].(string); ok && ref != "" {
 			if !declaredParams[ref] {
-				add("ffn_alt.config.norm_w_param", fmt.Sprintf("references undeclared param %q", ref))
+				add(tomlPath(tomlFFNAlt, tomlConfig, ConfigNormWParam), fmt.Sprintf("references undeclared param %q", ref))
 			}
 		}
 	}
 
 	// Routing rule: validate @{builtin} refs, ${param} refs, and expression syntax
+	rulePath := tomlPath(tomlLayers, tomlRouting, tomlRule)
 	if r.Rule != "" {
 		for _, ref := range extractRefs(r.Rule, '@') {
 			if !routingBuiltins[ref] {
-				add("layers.routing.rule", fmt.Sprintf("unknown builtin @{%s}", ref))
+				add(rulePath, fmt.Sprintf("unknown builtin @{%s}", ref))
 			}
 		}
 		for _, ref := range extractRefs(r.Rule, '$') {
 			if !declaredParams[ref] {
-				add("layers.routing.rule", fmt.Sprintf("references undeclared param ${%s}", ref))
+				add(rulePath, fmt.Sprintf("references undeclared param ${%s}", ref))
 			}
 		}
 		for _, exprErr := range ValidateRoutingExpr(r.Rule, declaredParams) {
-			add("layers.routing.rule", exprErr)
+			add(rulePath, exprErr)
 		}
 	}
 	if r.Pattern != "" {
 		if !declaredParams[r.Pattern] {
-			add("layers.routing.pattern", fmt.Sprintf("references undeclared param %q", r.Pattern))
+			add(tomlPath(tomlLayers, tomlRouting, tomlPattern), fmt.Sprintf("references undeclared param %q", r.Pattern))
 		}
 	}
 
@@ -384,7 +420,7 @@ func Validate(def *ArchDef) []ValidationError {
 	if def.Layers.Count != "" {
 		if _, err := fmt.Sscanf(def.Layers.Count, "%d", new(int)); err != nil {
 			if !declaredParams[def.Layers.Count] {
-				add("layers.count", fmt.Sprintf("references undeclared param %q", def.Layers.Count))
+				add(tomlPath(tomlLayers, tomlCount), fmt.Sprintf("references undeclared param %q", def.Layers.Count))
 			}
 		}
 	}
@@ -394,11 +430,11 @@ func Validate(def *ArchDef) []ValidationError {
 		for cn, cd := range blk.Cache {
 			for _, dimExpr := range cd.Dims {
 				for _, ident := range extractIdentifiers(dimExpr) {
-					if ident == "max_seq_len" {
+					if ident == CacheDimMaxSeqLen {
 						continue
 					}
 					if !declaredParams[ident] {
-						add(fmt.Sprintf("blocks.%s.cache.%s", name, cn),
+						add(tomlPath(tomlBlocks, name, tomlCache, cn),
 							fmt.Sprintf("dim expression references undeclared param %q", ident))
 					}
 				}
@@ -413,7 +449,7 @@ func Validate(def *ArchDef) []ValidationError {
 		}
 		for _, ident := range extractIdentifiers(expr) {
 			if !declaredParams[ident] {
-				add(fmt.Sprintf("params.derived.%s", name),
+				add(tomlPath(tomlParams, tomlDerived, name),
 					fmt.Sprintf("references undeclared param %q", ident))
 			}
 		}
@@ -423,31 +459,35 @@ func Validate(def *ArchDef) []ValidationError {
 	// must have at least one KV block (has attn_k) that produces for that group.
 	kvGroups := make(map[string]bool)
 	for _, blk := range def.Blocks {
-		if _, hasK := blk.Weights["attn_k"]; hasK {
-			if group, _ := blk.Config["shared_kv_group"].(string); group != "" {
+		if _, hasK := blk.Weights[WeightAttnK]; hasK {
+			if group, _ := blk.Config[ConfigSharedKVGroup].(string); group != "" {
 				kvGroups[group] = true
 			}
 		}
 	}
 	for name, blk := range def.Blocks {
-		if _, hasK := blk.Weights["attn_k"]; !hasK {
-			if group, _ := blk.Config["shared_kv_group"].(string); group != "" {
+		if _, hasK := blk.Weights[WeightAttnK]; !hasK {
+			if group, _ := blk.Config[ConfigSharedKVGroup].(string); group != "" {
 				if !kvGroups[group] {
-					add(fmt.Sprintf("blocks.%s.config.shared_kv_group", name),
-						fmt.Sprintf("no KV-producing block (with attn_k) found for group %q", group))
+					add(tomlPath(tomlBlocks, name, tomlConfig, ConfigSharedKVGroup),
+						fmt.Sprintf("no KV-producing block (with %s) found for group %q", WeightAttnK, group))
 				}
 			}
 		}
 	}
 
 	// validate example values
-  ex := def.Example
+	ex := def.Example
 	if ex.AttnPatternTrueEvery > 0 || ex.AttnPatternFalseEvery > 0 {
 		if ex.AttnPatternTrueEvery > 0 && ex.AttnPatternFalseEvery > 0 {
-			add("example.attn_pattern_false_every", "mutually exclusive with example.attn_pattern_true_every")
+			add(tomlPath(tomlExample, "attn_pattern_false_every"),
+				fmt.Sprintf("mutually exclusive with %s", tomlPath(tomlExample, "attn_pattern_true_every")))
 		}
 		if ex.FullAttnEvery > 0 {
-			add("example.FullAttnEvery", "mutually exclusive with example.attn_pattern_true_every and example.attn_pattern_false_every")
+			add(tomlPath(tomlExample, "full_attn_every"),
+				fmt.Sprintf("mutually exclusive with %s and %s",
+					tomlPath(tomlExample, "attn_pattern_true_every"),
+					tomlPath(tomlExample, "attn_pattern_false_every")))
 		}
 	}
 
@@ -463,7 +503,7 @@ func validateContract(c BuilderContract, weights map[string]string, config map[s
 	// Check required weights are present
 	for _, req := range c.RequiredWeights {
 		if _, ok := weights[req]; !ok {
-			add(fmt.Sprintf("%s.weights", prefix), fmt.Sprintf("missing required key %q", req))
+			add(tomlPath(prefix, tomlWeights), fmt.Sprintf("missing required key %q", req))
 		}
 	}
 
@@ -477,7 +517,7 @@ func validateContract(c BuilderContract, weights map[string]string, config map[s
 	}
 	for k := range weights {
 		if !known[k] {
-			add(fmt.Sprintf("%s.weights.%s", prefix, k), fmt.Sprintf("unknown key (valid: %s)",
+			add(tomlPath(prefix, tomlWeights, k), fmt.Sprintf("unknown key (valid: %s)",
 				strings.Join(append(c.RequiredWeights, c.OptionalWeights...), ", ")))
 		}
 	}
@@ -491,7 +531,7 @@ func validateContract(c BuilderContract, weights map[string]string, config map[s
 				for sk := range c.ConfigSchema {
 					validKeys = append(validKeys, sk)
 				}
-				add(fmt.Sprintf("%s.config.%s", prefix, k),
+				add(tomlPath(prefix, tomlConfig, k),
 					fmt.Sprintf("unknown config key (valid: %s)", strings.Join(validKeys, ", ")))
 				continue
 			}
@@ -505,7 +545,7 @@ func validateContract(c BuilderContract, weights map[string]string, config map[s
 					}
 				}
 				if !found {
-					add(fmt.Sprintf("%s.config.%s", prefix, k),
+					add(tomlPath(prefix, tomlConfig, k),
 						fmt.Sprintf("invalid value %q (valid: %s)", strVal, strings.Join(validValues, ", ")))
 				}
 			}

@@ -118,7 +118,7 @@ func (m *GenericModel) RLBForwardEmbed(tokens []int32) ([]float32, error) {
 		return nil, err
 	}
 
-	nEmbd := m.Params.Ints["n_embd"]
+	nEmbd := m.Params.Ints[ParamNEmbd]
 	nTokens := int64(len(tokens))
 
 	sc := m.rlb.scratch
@@ -129,7 +129,7 @@ func (m *GenericModel) RLBForwardEmbed(tokens []int32) ([]float32, error) {
 	inpTokens := ggml.NewTensor1D(gctx, ggml.TypeI32, nTokens)
 	ggml.SetInput(inpTokens)
 
-	x := ggml.GetRows(gctx, m.MaskedGlobal(gctx, "token_embd"), inpTokens)
+	x := ggml.GetRows(gctx, m.MaskedGlobal(gctx, WeightTokenEmbd), inpTokens)
 	if m.Def.Architecture.EmbedScale {
 		x = ggml.Scale(gctx, x, float32(math.Sqrt(float64(nEmbd))))
 	}
@@ -176,10 +176,10 @@ func (m *GenericModel) RLBForwardLayer(
 	hiddenOut []float32,
 	logitsOut []float32,
 ) error {
-	nLayers := m.Params.Ints["n_layers"]
-	nEmbd := m.Params.Ints["n_embd"]
-	nVocab := m.Params.Ints["n_vocab"]
-	rmsEps := m.Params.Floats["rms_eps"]
+	nLayers := m.Params.Ints[ParamNLayers]
+	nEmbd := m.Params.Ints[ParamNEmbd]
+	nVocab := m.Params.Ints[ParamNVocab]
+	rmsEps := m.Params.Floats[ParamRMSEps]
 	nTokens := int64(len(tokenPositions))
 
 	// --- Validation ---
@@ -197,7 +197,7 @@ func (m *GenericModel) RLBForwardLayer(
 	// shared_kv_group guard: RLB does not support cross-layer KV sharing.
 	blockName := m.LayerBlockNames[il]
 	blockDef := m.Def.Blocks[blockName]
-	if group := configStr(blockDef.Config, "shared_kv_group"); group != "" {
+	if group := configStrOr(blockDef.Config, ConfigSharedKVGroup, ""); group != "" {
 		return fmt.Errorf("rlb layer %d: block %q uses shared_kv_group=%q; not supported in RLB v1",
 			il, blockName, group)
 	}
@@ -234,7 +234,7 @@ func (m *GenericModel) RLBForwardLayer(
 	inpMask := ggml.NewTensor2D(gctx, ggml.TypeF32, nKV, nTokens)
 	ggml.SetInput(inpMask)
 
-	swaWindow, hasSWA := m.Params.Ints["sliding_window"]
+	swaWindow, hasSWA := m.Params.Ints[ParamSlidingWindow]
 	var inpMaskSWA ggml.Tensor
 	if hasSWA && swaWindow > 0 {
 		inpMaskSWA = ggml.NewTensor2D(gctx, ggml.TypeF32, nKV, nTokens)
@@ -270,8 +270,8 @@ func (m *GenericModel) RLBForwardLayer(
 
 	x := inpHidden
 	xPreBlock := x
-	if !lt["attn_norm"].IsNil() {
-		cur := rmsNormApply(gctx, x, lt["attn_norm"], rmsEps)
+	if !lt[WeightAttnNorm].IsNil() {
+		cur := rmsNormApply(gctx, x, lt[WeightAttnNorm], rmsEps)
 		cur = m.BlockBuilders[il].BuildCached(gctx, gf, cur, lt, m.Params, blockDef.Config, inputs, &cache.Layers[il])
 		if !lt["attn_post_norm"].IsNil() {
 			cur = rmsNormApply(gctx, cur, lt["attn_post_norm"], rmsEps)
@@ -295,9 +295,9 @@ func (m *GenericModel) RLBForwardLayer(
 	if logitsOut != nil {
 		// Project the last token position through output_norm + output matmul.
 		last := ggml.View2D(gctx, x, int64(nEmbd), 1, x.Nb(1), int(nTokens-1)*x.Nb(1))
-		xn := rmsNormApply(gctx, last, m.MaskedGlobal(gctx, "output_norm"), rmsEps)
-		logitsTensor = ggml.MulMat(gctx, m.MaskedGlobal(gctx, "output"), xn)
-		if cap, ok := m.Params.Floats["logit_softcapping"]; ok && cap > 0 {
+		xn := rmsNormApply(gctx, last, m.MaskedGlobal(gctx, WeightOutputNorm), rmsEps)
+		logitsTensor = ggml.MulMat(gctx, m.MaskedGlobal(gctx, WeightOutput), xn)
+		if cap, ok := m.Params.Floats[ParamLogitSoftcap]; ok && cap > 0 {
 			logitsTensor = ggml.Scale(gctx, logitsTensor, 1.0/cap)
 			logitsTensor = ggml.Tanh(gctx, logitsTensor)
 			logitsTensor = ggml.Scale(gctx, logitsTensor, cap)
@@ -363,9 +363,9 @@ func (m *GenericModel) RLBForwardLayer(
 // hiddenIn is [n_embd * nTokens] float32 (row-major, same layout as RLBForwardLayer output).
 // Returns a slice of length n_vocab.
 func (m *GenericModel) RLBProjectLogits(hiddenIn []float32, nTokens int) ([]float32, error) {
-	nEmbd := m.Params.Ints["n_embd"]
-	nVocab := m.Params.Ints["n_vocab"]
-	rmsEps := m.Params.Floats["rms_eps"]
+	nEmbd := m.Params.Ints[ParamNEmbd]
+	nVocab := m.Params.Ints[ParamNVocab]
+	rmsEps := m.Params.Floats[ParamRMSEps]
 
 	if len(hiddenIn) != nEmbd*nTokens {
 		return nil, fmt.Errorf("rlb project logits: hiddenIn len %d != n_embd(%d)*nTokens(%d)",
@@ -386,10 +386,10 @@ func (m *GenericModel) RLBProjectLogits(hiddenIn []float32, nTokens int) ([]floa
 
 	// Slice last token: [n_embd, 1]
 	last := ggml.View2D(gctx, inpHidden, int64(nEmbd), 1, inpHidden.Nb(1), (nTokens-1)*inpHidden.Nb(1))
-	xn := rmsNormApply(gctx, last, m.MaskedGlobal(gctx, "output_norm"), rmsEps)
-	logits := ggml.MulMat(gctx, m.MaskedGlobal(gctx, "output"), xn)
+	xn := rmsNormApply(gctx, last, m.MaskedGlobal(gctx, WeightOutputNorm), rmsEps)
+	logits := ggml.MulMat(gctx, m.MaskedGlobal(gctx, WeightOutput), xn)
 
-	if cap, ok := m.Params.Floats["logit_softcapping"]; ok && cap > 0 {
+	if cap, ok := m.Params.Floats[ParamLogitSoftcap]; ok && cap > 0 {
 		logits = ggml.Scale(gctx, logits, 1.0/cap)
 		logits = ggml.Tanh(gctx, logits)
 		logits = ggml.Scale(gctx, logits, cap)
@@ -414,4 +414,3 @@ func (m *GenericModel) RLBProjectLogits(hiddenIn []float32, nTokens int) ([]floa
 	ggml.TensorGet(logits, unsafe.Pointer(&result[0]), 0, logits.Nbytes())
 	return result, nil
 }
-

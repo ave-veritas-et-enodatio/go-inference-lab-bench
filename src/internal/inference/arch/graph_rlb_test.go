@@ -72,9 +72,9 @@ func TestRLBForwardLayerStackEquivalence(t *testing.T) {
 	// Five token IDs small enough to be valid in any vocabulary.
 	promptIDs := []int32{0, 1, 2, 3, 4}
 	nTokens := len(promptIDs)
-	nEmbd := model.Params.Ints["n_embd"]
-	nLayers := model.Params.Ints["n_layers"]
-	t.Logf("n_layers=%d n_embd=%d n_vocab=%d", nLayers, nEmbd, model.Params.Ints["n_vocab"])
+	nEmbd := model.Params.Ints[ParamNEmbd]
+	nLayers := model.Params.Ints[ParamNLayers]
+	t.Logf("n_layers=%d n_embd=%d n_vocab=%d", nLayers, nEmbd, model.Params.Ints[ParamNVocab])
 
 	// --- Main-path run ---
 	cache1, err := model.NewCache(maxSeqLen)

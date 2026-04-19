@@ -27,12 +27,12 @@ func BuildTensorDimsMap(weights *ResolvedWeights, dimLookup func(string) (int64,
 	dims := make(TensorDimsMap)
 
 	// Global tensor dims
-	dims["global"] = make(map[string]TensorDims)
+	dims[ModuleGlobal] = make(map[string]TensorDims)
 	for _, ggufName := range weights.Global {
 		sn := strings.TrimSuffix(ggufName, ".weight")
-		if _, ok := dims["global"][sn]; !ok {
+		if _, ok := dims[ModuleGlobal][sn]; !ok {
 			if ne0, ne1, nb, ok := dimLookup(ggufName); ok {
-				dims["global"][sn] = TensorDims{Ne0: ne0, Ne1: ne1, Nbytes: nb}
+				dims[ModuleGlobal][sn] = TensorDims{Ne0: ne0, Ne1: ne1, Nbytes: nb}
 			}
 		}
 	}
@@ -72,10 +72,10 @@ func BuildTensorDimsMap(weights *ResolvedWeights, dimLookup func(string) (int64,
 		}
 
 		// FFN type dims
-		ffnKey := "ffn"
+		ffnKey := TypeFFN
 		src := lw.FFN
 		if len(lw.FFNAlt) > 0 {
-			ffnKey = "ffn_moe"
+			ffnKey = TypeFFNMoE
 			src = lw.FFNAlt
 		}
 		if dims[ffnKey] == nil {
@@ -111,7 +111,7 @@ func BuildModuleMap(weights *ResolvedWeights) *ModuleMap {
 	mm := &ModuleMap{}
 
 	// Module 0: global (no weight_context — names vary and have no common prefix)
-	global := Module{ID: 0, Name: "global"}
+	global := Module{ID: 0, Name: ModuleGlobal}
 	for _, ggufName := range weights.Global {
 		addCompact(&global, "", ggufName)
 	}
@@ -126,10 +126,10 @@ func BuildModuleMap(weights *ResolvedWeights) *ModuleMap {
 		ctx := strings.TrimSuffix(lw.Prefix, ".")
 
 		// Block module: pre-attention norm + attention/SSM/recurrent weights.
-		block := Module{ID: nextID, Name: fmt.Sprintf("block_%d", L), BlockName: lw.BlockName, WeightContext: ctx}
+		block := Module{ID: nextID, Name: fmt.Sprintf(PrefixBlock+"%d", L), BlockName: lw.BlockName, WeightContext: ctx}
 		nextID++
 		// FFN module: pre-FFN norm + feed-forward weights including MoE expert tensors.
-		ffn := Module{ID: nextID, Name: fmt.Sprintf("ffn_%d", L), WeightContext: ctx}
+		ffn := Module{ID: nextID, Name: fmt.Sprintf(PrefixFFN+"%d", L), WeightContext: ctx}
 		nextID++
 
 		// Route common weights by purpose: attn_norm is the block's pre-norm;

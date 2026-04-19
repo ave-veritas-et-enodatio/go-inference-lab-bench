@@ -112,7 +112,7 @@ func resolveGGUFName(lw ResolvedLayerWeights, logicalName string) string {
 	if n, ok := lw.Block[logicalName]; ok {
 		return n
 	}
-	if after, ok := strings.CutPrefix(logicalName, "ffn_"); ok {
+	if after, ok := strings.CutPrefix(logicalName, PrefixFFNWeight); ok {
 		if n, ok := lw.FFN[after]; ok {
 			return n
 		}

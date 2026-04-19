@@ -10,14 +10,14 @@ type FullAttentionGatedBuilder struct{}
 
 func (b *FullAttentionGatedBuilder) Contract() BuilderContract {
 	return BuilderContract{
-		RequiredWeights: []string{"attn_q", "attn_k", "attn_v", "attn_output"},
-		OptionalWeights: []string{"attn_q_norm", "attn_k_norm"},
-		RequiredParams:  []string{"head_dim", "n_heads", "n_kv_heads", "rope_n_rot", "rope_freq_base"},
+		RequiredWeights: []string{WeightAttnQ, WeightAttnK, WeightAttnV, WeightAttnOutput},
+		OptionalWeights: []string{WeightAttnQNorm, WeightAttnKNorm},
+		RequiredParams:  []string{ParamHeadDim, ParamNHeads, ParamNKVHeads, ParamRoPENRot, ParamRoPEFreqBase},
 		ConfigSchema: map[string][]string{
-			"q_has_gate":  nil, // bool, any value
-			"qk_norm":     {"rms", "l2", ""},
-			"rope":        {"multi", "standard", ""},
-			"output_gate": {"sigmoid", ""},
+			ConfigQHasGate:  nil, // bool, any value
+			ConfigQKNorm:    {NormRMS, NormL2, ""},
+			ConfigRope:      {RopeMulti, RopeStandard, ""},
+			ConfigOutputGate: {GateSigmoid, ""},
 		},
 	}
 }
@@ -38,28 +38,28 @@ func (b *FullAttentionGatedBuilder) BuildStateless(
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	zeroFill *[]ggml.Tensor) ggml.Tensor {
 
-	headDim := int64(params.Ints["head_dim"])
-	nHeads := int64(params.Ints["n_heads"])
-	nKVHeads := int64(params.Ints["n_kv_heads"])
-	rmsEps := params.Floats["rms_eps"]
+	headDim := int64(params.Ints[ParamHeadDim])
+	nHeads := int64(params.Ints[ParamNHeads])
+	nKVHeads := int64(params.Ints[ParamNKVHeads])
+	rmsEps := params.Floats[ParamRMSEps]
 	nTokens := inputs.NTokens
 
 	// Q+gate joint projection
-	qg := ggml.MulMat(ctx, weights["attn_q"], cur)
+	qg := ggml.MulMat(ctx, weights[WeightAttnQ], cur)
 	q, gate := splitGatedProjection(ctx, qg, headDim, nHeads, nTokens)
 
 	// QK norm
-	q = rmsNormApply(ctx, q, weights["attn_q_norm"], rmsEps)
+	q = rmsNormApply(ctx, q, weights[WeightAttnQNorm], rmsEps)
 
-	k := projectReshape3D(ctx, weights["attn_k"], cur, headDim, nKVHeads, nTokens)
-	k = rmsNormApply(ctx, k, weights["attn_k_norm"], rmsEps)
+	k := projectReshape3D(ctx, weights[WeightAttnK], cur, headDim, nKVHeads, nTokens)
+	k = rmsNormApply(ctx, k, weights[WeightAttnKNorm], rmsEps)
 
-	v := projectReshape3D(ctx, weights["attn_v"], cur, headDim, nKVHeads, nTokens)
+	v := projectReshape3D(ctx, weights[WeightAttnV], cur, headDim, nKVHeads, nTokens)
 
 	// MRoPE
-	nRot := params.Ints["rope_n_rot"]
+	nRot := params.Ints[ParamRoPENRot]
 	sections := ropeSections(params)
-	freqBase := params.Floats["rope_freq_base"]
+	freqBase := params.Floats[ParamRoPEFreqBase]
 	q, k = applyRoPEMultiPair(ctx, q, k, inputs.InpPos, nRot, sections, freqBase)
 
 	// Permute for attention
@@ -72,7 +72,7 @@ func (b *FullAttentionGatedBuilder) BuildStateless(
 
 	// Gate + output projection
 	cur = ggml.Mul(ctx, cur, ggml.Sigmoid(ctx, gate))
-	cur = ggml.MulMat(ctx, weights["attn_output"], cur)
+	cur = ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
 	return cur
 }
 
@@ -81,28 +81,28 @@ func (b *FullAttentionGatedBuilder) BuildCached(
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	cache *LayerCache) ggml.Tensor {
 
-	headDim := int64(params.Ints["head_dim"])
-	nHeads := int64(params.Ints["n_heads"])
-	nKVHeads := int64(params.Ints["n_kv_heads"])
-	rmsEps := params.Floats["rms_eps"]
+	headDim := int64(params.Ints[ParamHeadDim])
+	nHeads := int64(params.Ints[ParamNHeads])
+	nKVHeads := int64(params.Ints[ParamNKVHeads])
+	rmsEps := params.Floats[ParamRMSEps]
 	nNew := inputs.NTokens
 	nKV := inputs.NKV
 	seqPos := inputs.SeqPos
 
 	// Q+gate joint projection
-	qg := ggml.MulMat(ctx, weights["attn_q"], cur)
+	qg := ggml.MulMat(ctx, weights[WeightAttnQ], cur)
 	q, gate := splitGatedProjection(ctx, qg, headDim, nHeads, nNew)
 
-	q = rmsNormApply(ctx, q, weights["attn_q_norm"], rmsEps)
+	q = rmsNormApply(ctx, q, weights[WeightAttnQNorm], rmsEps)
 
-	kNew := projectReshape3D(ctx, weights["attn_k"], cur, headDim, nKVHeads, nNew)
-	kNew = rmsNormApply(ctx, kNew, weights["attn_k_norm"], rmsEps)
-	vNew := projectReshape3D(ctx, weights["attn_v"], cur, headDim, nKVHeads, nNew)
+	kNew := projectReshape3D(ctx, weights[WeightAttnK], cur, headDim, nKVHeads, nNew)
+	kNew = rmsNormApply(ctx, kNew, weights[WeightAttnKNorm], rmsEps)
+	vNew := projectReshape3D(ctx, weights[WeightAttnV], cur, headDim, nKVHeads, nNew)
 
 	// RoPE
-	nRot := params.Ints["rope_n_rot"]
+	nRot := params.Ints[ParamRoPENRot]
 	sections := ropeSections(params)
-	freqBase := params.Floats["rope_freq_base"]
+	freqBase := params.Floats[ParamRoPEFreqBase]
 	q, kNew = applyRoPEMultiPair(ctx, q, kNew, inputs.InpPos, nRot, sections, freqBase)
 
 	// KV cache writeback (in-graph GPU copy)
@@ -115,6 +115,6 @@ func (b *FullAttentionGatedBuilder) BuildCached(
 
 	cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, inputs.InpMask, attentionScale(headDim), nHeads, nNew, inputs.Captures, inputs.FlashAttn)
 	cur = ggml.Mul(ctx, cur, ggml.Sigmoid(ctx, gate))
-	cur = ggml.MulMat(ctx, weights["attn_output"], cur)
+	cur = ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
 	return cur
 }
