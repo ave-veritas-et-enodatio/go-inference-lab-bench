@@ -54,8 +54,12 @@ func engageOpacity(engagement float64) float64 {
 	return math.Sqrt(engagement) * maxOpacity
 }
 
-func RenderModuleMapDiagram(mm *ModuleMap, moduleMapPath string, title string, dims TensorDimsMap, engagement *EngagementData, nonCausal bool, generation string) error {
-	svgPath := moduleMapPath
+func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, subTitle string, dims TensorDimsMap, engagement *EngagementData) error {
+  title := strings.Title(arch.Architecture.Name) + subTitle
+  nonCausal := arch.Architecture.NonCausal
+  generation := arch.Architecture.Generation
+
+  svgPath := moduleMapPath
 	if !strings.HasSuffix(moduleMapPath, ".svg") {
 		svgPath = svgPath + ".svg"
 	}

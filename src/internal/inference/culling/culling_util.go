@@ -17,7 +17,7 @@ import (
 // diagDir is the output directory, injected by the caller (engine) — it was
 // resolved by the cobra entry point so this utility does not need to call
 // util.ResolvePaths itself.
-func WriteCullDiagnostics(diagDir string, mm *arch.ModuleMap, modelPath string, tensorDims arch.TensorDimsMap, engagement *arch.EngagementData, nonCausal bool, generation string) {
+func WriteCullDiagnostics(diagDir string, archDef *arch.ArchDef, mm *arch.ModuleMap, modelPath string, tensorDims arch.TensorDimsMap, engagement *arch.EngagementData, nonCausal bool, generation string) {
 	base := strings.TrimSuffix(filepath.Base(modelPath), filepath.Ext(modelPath))
 	base = filepath.Join(diagDir, base)
 
@@ -33,9 +33,8 @@ func WriteCullDiagnostics(diagDir string, mm *arch.ModuleMap, modelPath string, 
 		return
 	}
 
-	title := strings.TrimSuffix(filepath.Base(modelPath), filepath.Ext(modelPath))
-	title = title + " [" + mm.Method + "]"
-	if err := arch.RenderModuleMapDiagram(mm, svgPath, title, tensorDims, engagement, nonCausal, generation); err != nil {
+	subtitle := " [" + mm.Method + "]"
+	if err := arch.RenderModuleMapDiagram(archDef, mm, svgPath, subtitle, tensorDims, engagement); err != nil {
 		log.Warn("failed to render cullmap SVG: %v", err)
 		return
 	}
@@ -51,7 +50,7 @@ func WriteCullDiagnostics(diagDir string, mm *arch.ModuleMap, modelPath string, 
 // wrapper to the diagnostics directory. Called after stateless inference to visualize
 // per-layer engagement. The HTML file polls the SVG every second for live updates.
 // diagDir is the output directory, injected by the caller (see WriteCullDiagnostics).
-func WriteEngagementDiag(diagDir string, mm *arch.ModuleMap, modelPath string, tensorDims arch.TensorDimsMap, engagement *arch.EngagementData, nonCausal bool, generation string) {
+func WriteEngagementDiag(diagDir string, archDef *arch.ArchDef, mm *arch.ModuleMap, modelPath string, tensorDims arch.TensorDimsMap, engagement *arch.EngagementData, nonCausal bool, generation string) {
 	if mm == nil {
 		return
 	}
@@ -63,14 +62,14 @@ func WriteEngagementDiag(diagDir string, mm *arch.ModuleMap, modelPath string, t
 	svgPath := base + ".engagement.svg"
 	htmlPath := base + ".engagement.html"
 
-	title := fmt.Sprintf("%s [engagement %s]", stem, time.Now().Format("15:04:05"))
-	if err := arch.RenderModuleMapDiagram(mm, svgPath, title, tensorDims, engagement, nonCausal, generation); err != nil {
+	subtitle := fmt.Sprintf(" [engagement %s]", time.Now().Format("15:04:05"))
+	if err := arch.RenderModuleMapDiagram(archDef, mm, svgPath, subtitle, tensorDims, engagement); err != nil {
 		log.Warn("engagement SVG failed: %v", err)
 		return
 	}
 
 	svgFile := filepath.Base(svgPath)
-	html := strings.NewReplacer("{{TITLE}}", title, "{{SVG}}", svgFile).Replace(engagementHTML)
+	html := strings.NewReplacer("{{TITLE}}", strings.Title(archDef.Architecture.Name) +  subtitle, "{{SVG}}", svgFile).Replace(engagementHTML)
 	os.WriteFile(htmlPath, []byte(html), 0644)
 
 	log.Info("engagement written: %s", svgPath)

@@ -107,25 +107,7 @@ func ResolveWeightsFromDef(def *ArchDef, nLayers int) *ResolvedWeights {
 		rw.Global[logicalName] = tensorName
 	}
 
-	// this is an example value to allow mixed attention block models to show both block types
-	// this parameter normally comes from the .gguf
-	fallbackParams := &ResolvedParams{
-		Ints:   map[string]int{"full_attn_interval": 4},
-		Floats: make(map[string]float32),
-		IntArr: make(map[string][]int),
-	}
-
-	// For pattern routing, generate a simple alternating pattern for diagram.
-	// (Uniform routing needs no fallback params — resolveBlockName handles it directly.)
-	if def.Layers.Routing.Pattern != "" {
-		pattern := make([]int, nLayers)
-		for i := range pattern {
-			if i%4 == 0 {
-				pattern[i] = 1
-			}
-		}
-		fallbackParams.IntArr[def.Layers.Routing.Pattern] = pattern
-	}
+	fallbackParams := diagramFallbackParams(def, nLayers)
 
 	for i := range nLayers {
 		prefix := expandPrefix(def.Layers.Prefix, i)
