@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -67,11 +66,11 @@ func (cm *CullingMask) NumZeroed() int {
 	return len(cm.ZeroTensors)
 }
 
-// MaskedLayer returns a weight map for the given layer with culling applied.
-// Culled tensors (in ZeroTensors) are omitted from the returned map — the zero-value ggml.Tensor
+// MaskedLayer returns per-layer weight tensors with culling applied.
+// Culled tensors (in ZeroTensors) are omitted from the returned maps — the zero-value ggml.Tensor
 // satisfies IsNil(), so the graph builder skips their ops unchanged.
-// No mask: returns the raw weight map from the store (zero overhead).
-func (m *GenericModel) MaskedLayer(layerIdx int, mask *CullingMask) map[string]ggml.Tensor {
+// No mask: returns the raw LayerTensors from the store (zero overhead).
+func (m *GenericModel) MaskedLayer(layerIdx int, mask *CullingMask) *LayerTensors {
 	lt := m.Store.Layer(layerIdx)
 	if lt == nil {
 		log.Error("MaskedLayer: layer %d out of bounds (no layer data available)", layerIdx)
@@ -81,19 +80,42 @@ func (m *GenericModel) MaskedLayer(layerIdx int, mask *CullingMask) map[string]g
 		return lt
 	}
 
-	masked := make(map[string]ggml.Tensor, len(lt))
 	lw := m.Weights.Layers[layerIdx]
-	for name, tensor := range lt {
-		ggufName := resolveGGUFName(lw, name)
-
-		// Whole-tensor culling: omit from map (zero-value Tensor -> IsNil() -> skip).
-		if mask.zeroSet[ggufName] {
-			continue
-		}
-
-		masked[name] = tensor
+	masked := &LayerTensors{
+		Common: maskSubmap(lt.Common, lw.Common, mask),
+		Block:  maskSubmap(lt.Block, lw.Block, mask),
+		FFN:    maskFFN(lt.FFN, lw.FFN, lw.FFNAlt, mask),
 	}
 	return masked
+}
+
+// maskSubmap filters a weight submap through the culling mask. resolved maps
+// logical name → GGUF tensor name for the name lookup.
+func maskSubmap(src map[string]ggml.Tensor, resolved map[string]string, mask *CullingMask) map[string]ggml.Tensor {
+	out := make(map[string]ggml.Tensor, len(src))
+	for name, tensor := range src {
+		if ggufName, ok := resolved[name]; ok && mask.zeroSet[ggufName] {
+			continue
+		}
+		out[name] = tensor
+	}
+	return out
+}
+
+// maskFFN filters an FFN weight submap through the culling mask. FFN and FFNAlt
+// resolved maps are both checked since both contribute to the same FFN submap.
+func maskFFN(src map[string]ggml.Tensor, ffn, ffnAlt map[string]string, mask *CullingMask) map[string]ggml.Tensor {
+	out := make(map[string]ggml.Tensor, len(src))
+	for name, tensor := range src {
+		if ggufName, ok := ffn[name]; ok && mask.zeroSet[ggufName] {
+			continue
+		}
+		if ggufName, ok := ffnAlt[name]; ok && mask.zeroSet[ggufName] {
+			continue
+		}
+		out[name] = tensor
+	}
+	return out
 }
 
 // MaskedGlobal returns a global weight tensor from the store.
@@ -103,25 +125,6 @@ func (m *GenericModel) MaskedGlobal(_ *ggml.GraphContext, name string) ggml.Tens
 	return m.Store.Global(name)
 }
 
-// resolveGGUFName maps a logical weight name (as stored in WeightStore) to its GGUF tensor name.
-// FFN and FFNAlt tensors are stored with an "ffn_" prefix; both maps are checked.
-func resolveGGUFName(lw ResolvedLayerWeights, logicalName string) string {
-	if n, ok := lw.Common[logicalName]; ok {
-		return n
-	}
-	if n, ok := lw.Block[logicalName]; ok {
-		return n
-	}
-	if after, ok := strings.CutPrefix(logicalName, PrefixFFNWeight); ok {
-		if n, ok := lw.FFN[after]; ok {
-			return n
-		}
-		if n, ok := lw.FFNAlt[after]; ok {
-			return n
-		}
-	}
-	return ""
-}
 
 // makeTensorFromSpec creates a new graph-context tensor from explicit type and dimension parameters.
 // Unused dimensions should be 1. Used for Go-parser tensor creation.

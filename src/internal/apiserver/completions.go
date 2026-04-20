@@ -361,21 +361,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if req.BenchCustom != nil && req.BenchCustom.FlashAttention != nil && *req.BenchCustom.FlashAttention != s.cfg.Inference.UseFlashAttention() {
 			overrides = append(overrides, fmt.Sprintf("flash_attention=%v (server: %v)", *req.BenchCustom.FlashAttention, s.cfg.Inference.UseFlashAttention()))
 		}
-		if req.BenchCustom != nil && req.BenchCustom.EnableRLBOnPrefill {
-			overrides = append(overrides, "rlb.prefill=true")
-		}
-		if req.BenchCustom != nil && req.BenchCustom.UseRLBGen {
-			overrides = append(overrides, "rlb.decode=true")
-		}
-		if req.BenchCustom != nil && req.BenchCustom.UseRLBGen && req.BenchCustom.RLBAlpha != nil {
-			overrides = append(overrides, fmt.Sprintf("rlb.alpha=%.2f", *req.BenchCustom.RLBAlpha))
-		}
-		if req.BenchCustom != nil && req.BenchCustom.UseRLBGen && req.BenchCustom.RLBHaltRule != "" {
-			overrides = append(overrides, fmt.Sprintf("rlb.halt_rule=%q", req.BenchCustom.RLBHaltRule))
-		}
-		if req.BenchCustom != nil && req.BenchCustom.UseRLBGen && req.BenchCustom.RLBTerminalHaltRule != "" {
-			overrides = append(overrides, fmt.Sprintf("rlb.terminal_halt_rule=%q", req.BenchCustom.RLBTerminalHaltRule))
-		}
 		if len(overrides) > 0 {
 			log.Info("[req] param overrides: %s", strings.Join(overrides, ", "))
 		}

@@ -68,6 +68,7 @@ type BuilderContract struct {
 	OptionalWeights []string            // weight keys that may be present
 	RequiredParams  []string            // param names read from ResolvedParams
 	ConfigSchema    map[string][]string // config key → valid values (nil slice = any value)
+	ExpertRouted    bool                // true for MoE builders that route to expert weight banks
 }
 
 // BlockBuilder constructs ggml graph subgraphs for attention/SSM blocks.
@@ -115,6 +116,16 @@ func GetBlockBuilder(name string) (BlockBuilder, bool) {
 func GetFFNBuilder(name string) (FFNBuilder, bool) {
 	b, ok := ffnBuilders[name]
 	return b, ok
+}
+
+// FFNBuilderIsExpertRouted returns true if the named FFN builder declares ExpertRouted
+// in its contract. Returns false for unknown builder names.
+func FFNBuilderIsExpertRouted(name string) bool {
+	b, ok := ffnBuilders[name]
+	if !ok {
+		return false
+	}
+	return b.Contract().ExpertRouted
 }
 
 // GetBlockBuilders returns a copy of the block builder registry.

@@ -5,6 +5,7 @@ import (
 	"math"
 
 	ggml "inference-lab-bench/internal/ggml"
+	"inference-lab-bench/internal/log"
 )
 
 // ErrComputeFailed is returned when the ggml GPU backend fails to execute a
@@ -89,13 +90,16 @@ func configFloatOr(config map[string]any, key string, params *ResolvedParams) fl
 	return params.Floats[key]
 }
 
-// configBool returns a string config value or "".
+// configBoolOr returns a bool config value, handling both TOML booleans and
+// string representations ("true"/"false").
 func configBoolOr(config map[string]any, key string, defaultVal bool) bool {
 	if v, ok := config[key]; ok {
-		// TOML booleans
-		if b, ok := v.(bool); ok {
-			r := b
-			return r
+		switch b := v.(type) {
+		case bool:
+			return b
+		case string:
+			log.Error("config key %q: string %q used where TOML boolean expected", key, b)
+			return b == "true"
 		}
 	}
 	return defaultVal

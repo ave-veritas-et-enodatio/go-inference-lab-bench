@@ -94,7 +94,7 @@ func BuildTensorDimsMap(weights *ResolvedWeights, dimLookup func(string) (int64,
 	return dims
 }
 
-// BuildModuleMap constructs a ModuleMap from resolved model weights.
+// BuildModuleMap constructs a ModuleMap from resolved model weights and arch definition.
 // Uses the arch definition's weight structure directly — no tensor name pattern matching.
 //
 // Module layout:
@@ -107,7 +107,11 @@ func BuildTensorDimsMap(weights *ResolvedWeights, dimLookup func(string) (int64,
 // the block's input); all other common weights (ffn_norm) belong
 // to ffn_L because they normalize the FFN's input. This ensures culling block_L does
 // not silence the FFN's pre-normalization step.
-func BuildModuleMap(weights *ResolvedWeights) *ModuleMap {
+//
+// Each FFN module's FFNExpertRouted field is resolved from the builder's contract
+// via the registry: layers with FFNAlt weights use def.FFNAlt.Builder; others use
+// def.FFN.Builder.
+func BuildModuleMap(def *ArchDef, weights *ResolvedWeights) *ModuleMap {
 	mm := &ModuleMap{}
 
 	// Module 0: global (no weight_context — names vary and have no common prefix)
@@ -129,7 +133,12 @@ func BuildModuleMap(weights *ResolvedWeights) *ModuleMap {
 		block := Module{ID: nextID, Name: fmt.Sprintf(PrefixBlock+"%d", L), BlockName: lw.BlockName, WeightContext: ctx}
 		nextID++
 		// FFN module: pre-FFN norm + feed-forward weights including MoE expert tensors.
-		ffn := Module{ID: nextID, Name: fmt.Sprintf(PrefixFFN+"%d", L), WeightContext: ctx}
+		// FFNExpertRouted is resolved from the builder's contract via the registry.
+		ffnBuilderName := def.FFN.Builder
+		if len(lw.FFNAlt) > 0 && def.FFNAlt != nil {
+			ffnBuilderName = def.FFNAlt.Builder
+		}
+		ffn := Module{ID: nextID, Name: fmt.Sprintf(PrefixFFN+"%d", L), FFNExpertRouted: FFNBuilderIsExpertRouted(ffnBuilderName), WeightContext: ctx}
 		nextID++
 
 		// Route common weights by purpose: attn_norm is the block's pre-norm;

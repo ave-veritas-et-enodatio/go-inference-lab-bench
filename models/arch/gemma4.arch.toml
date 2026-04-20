@@ -141,8 +141,8 @@ builder = "moe"
 
   [ffn_alt.config]
   activation  = "gelu"
-  self_normed = "true"
-  norm_w      = "true"
+  self_normed = true
+  norm_w      = true
 
   [ffn_alt.weights]
   # Router (normalized: rms_norm + learned scale)

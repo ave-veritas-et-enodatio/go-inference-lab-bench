@@ -67,84 +67,74 @@ for k, v in ptable.items():
 function collect_logprobs() {
   local all_out=$(./test_inference.sh "${PROMPT}" 2>&1)
   grep -v logprob 1>&2 <<< "${all_out}"
-  grep logprob <<< "${all_out}"
+  grep logprob <<< "${all_out}" || { echo "FAIL: logprob extraction failed" 1>&2; return 1; }
+  if [[ "${all_out}" == *"<NO-MODEL-RESPONSE>"* ]]; then
+    echo "FAIL: model did not produce a response" 1>&2
+    return 1
+  fi
 }
 
-echo "Collecting reference ${EQUIV} results..."
+echo "Collecting ${EQUIV} referent results..."
+
+COLLECT_LOGPROBS_FAIL=false
 
 case "${EQUIV}" in
   llama)
     # llama-diffusion-cli does not support extracting logprobs from diffusion models
     export ALL_MODELS_NO_DIFFUSION=true
-    REF_PROBS=$(USE_LLAMA=true collect_logprobs)
+    REF_PROBS=$(USE_LLAMA=true collect_logprobs) ||COLLECT_LOGPROBS_FAIL=true
     ;;
   stateless)
     # stateless vs cached has no meaning for diffusion models
     export ALL_MODELS_NO_DIFFUSION=true
-    REF_PROBS=$(STATELESS=true collect_logprobs)
-      STATELESS_CHECK0=$(grep 'stateless=true' "${LOG}")
-      [[ -n "${STATELESS_CHECK0}" ]] || {
-        echo "FAIL: stateless false when it should be true" 1>&2
-        exit 1
-      }
+    REF_PROBS=$(STATELESS=true collect_logprobs) ||COLLECT_LOGPROBS_FAIL=true
+    STATELESS_CHECK0=$(grep 'stateless=true' "${LOG}")
+    [[ -n "${STATELESS_CHECK0}" ]] || {
+      echo "FAIL: stateless false when it should be true" 1>&2
+      exit 1
+    }
     ;;
   standard-attention)
-    REF_PROBS=$(FLASH=false collect_logprobs)
-      FLASH_CHECK0=$(grep 'flash_attention_used=false' "${LOG}")
-      [[ -n "${FLASH_CHECK0}" ]] || {
-        echo "FAIL: flash_attention true when it should be false" 1>&2
-        exit 1
-      }
+    REF_PROBS=$(FLASH=false collect_logprobs) ||COLLECT_LOGPROBS_FAIL=true
+    FLASH_CHECK0=$(grep 'flash_attention_used=false' "${LOG}")
+    [[ -n "${FLASH_CHECK0}" ]] || {
+      echo "FAIL: flash_attention true when it should be false" 1>&2
+      exit 1
+    }
     ;;
   gguf-st)
-    unset ALL_MODELS
-    MODEL_ARG=${MODEL:-$(find models \( -name \*.st -o -name \*.st.bin \) -maxdepth 1 | sort | head -1)}
-    [[ ! -n ${MODEL} && ! -n ${MODEL_ARG} ]] && {
-      echo "No safetensor models present to test. skipping."
-      exit 0
-    }
-    # trim potential leading ./ and trailing /
-    MODEL_NAME=${MODEL_ARG/\.\//}
-    MODEL_NAME=${MODEL_NAME%/}
-    MODEL_NAME=${MODEL_NAME/models\//}
-    MODEL_NAME=${MODEL_NAME%.bin}
-    MODEL_NAME=${MODEL_NAME%.gguf}
-    MODEL_NAME=${MODEL_NAME%.st}
-    MODEL_ST=models/${MODEL_NAME}.st
-    MODEL_ST_BIN=${MODEL_ST}.bin
-    MODEL_GGUF=models/${MODEL_NAME}.gguf
-    MODEL_GGUF_BIN=${MODEL_GGUF}.bin
-    MODEL_GGUF_BIN_RENAMED=false
-    MODEL_GGUF_HIDE=${MODEL_GGUF}.$$.bin
-
-    ([[ -f "${MODEL_ST}/config.json" || -f "${MODEL_ST_BIN}/config.json" ]] && [[ -f "${MODEL_GGUF}" || -f "${MODEL_GGUF_BIN}" ]]) || {
-      echo "model: ${MODEL_ARG}" 1>&2
-      [[ -f "${MODEL_ST}/config.json" ]] || echo "${MODEL_ST} is not safetensors directory" 1>&2
-      [[ -f "${MODEL_GGUF}" || -f "${MODEL_GGUF_BIN}" ]] || echo "${MODEL_GGUF} or ${MODEL_GGUF_BIN} must exist" 1>&2
-      exit 1
-    }
-    [[ -f "${MODEL_ST}/tokenizer.gguf" || -f "${MODEL_ST_BIN}/tokenizer.gguf" ]] || {
-      echo "error: ${MODEL_ST}/tokenizer.gguf missing. 'make ${MODEL_ST}/tokenizer.gguf' first." 1>&2
-      exit 1
+    [[ -n "${MODEL}" ]] && {
+      M=${MODEL}
+      # model was specified explicitly - an incomplete .gguf/.st pair is an error
+      [[ -f models/${M}.st/config.json ]] || { echo "${M} is not a safetensor model." 1>&2; exit 1; }
+      [[ -f models/${M}.st/tokenizer.gguf ]] || { echo "${M} is missing tokenizer.gguf. ('make st-tok-ggufs')" 1>&2; exit 1; }
+      [[ -f models/${M}.gguf ]] || { echo "${M} has no gguf. ('make st-ggufs')" 1>&2; exit 1; }
+      MODELS=("${M}")
+      unset M
+    } || {
+      MODELS_ST=$(find models -name \*.st -maxdepth 1 | sort)
+      # trim relative directory and extension from elements
+      MODELS_ST=${MODELS_ST//models\//}
+      MODELS_ST=${MODELS_ST//\.st/}
+      MODELS=()
+      for M in ${MODELS_ST}; do
+        # we're auto-assembling a list of .gguf/.st pairs - an incomplete pair is not an error
+        [[ -f models/${M}.st/config.json ]] || { echo "${M} is not a safetensor model. skipping."; continue; }
+        [[ -f models/${M}.st/tokenizer.gguf ]] || { echo "${M} is missing tokenizer.gguf. skipping. ('make st-tok-ggufs')"; continue; }
+        [[ -f models/${M}.gguf ]] || { echo "${M} has no gguf. skipping. ('make st-ggufs')"; continue; }
+        MODELS+=("${M}")
+      done
+      unset M MODELS_ST
+      [[ -n "${MODELS[*]}" ]] || { echo "No .gguf/.st models pairs to test. skipping."; exit 0; }
     }
 
-    [[ -f "${MODEL_GGUF}" || -f "${MODEL_GGUF_BIN}" ]] || {
-      echo " models/${MODEL_NAME}.gguf does not exist. create one with 'make models/${MODEL_NAME}.gguf' first."
+    REF_PROBS=$(FORCE_MODEL_LIST="${MODELS[*]}" PREFER_ST=false collect_logprobs) ||COLLECT_LOGPROBS_FAIL=true
+    GGUF_CHECK0=$(grep 'ModelReader\[gguf\] created' "${LOG}")
+    ST_CHECK0=$(grep 'ModelReader\[safetensors\] created' "${LOG}")
+    [[ -n "${GGUF_CHECK0}" && -z "${ST_CHECK0}" ]] || {
+      echo "FAIL: model should have been loaded as gguf but was loaded as safetensors." 1>&2
       exit 1
     }
-
-    # ensure a gguf
-    [[ -f "${MODEL_GGUF_BIN}" && ! -f "${MODEL_GGUF}" ]] && {
-      MODEL_GGUF_BIN_RENAMED=true
-      mv "${MODEL_GGUF_BIN}" "${MODEL_GGUF}"
-    }
-    [[ -f ${MODEL_GGUF} ]] || {
-      echo "internal error: the ${MODEL_GGUF} should have be visible" 1>&2
-      exit 1
-    }
-    REF_PROBS=$(MODEL=${MODEL_NAME} collect_logprobs)
-    # hide the gguf so the server will find the .st
-    ${MODEL_GGUF_BIN_RENAMED} && mv "${MODEL_GGUF}" "${MODEL_GGUF_BIN}" || mv "${MODEL_GGUF}" "${MODEL_GGUF_HIDE}"
     ;;
   *)
     echo "Usage: [MODEL=<model>] ${THIS_SCRIPT} [llama|stateless|standard-attention|gguf-st]" 1>&2
@@ -158,14 +148,23 @@ esac
   exit 1
 }
 
-echo "Collecting lab-bench results..."
+echo ""
+echo "${EQUIV} referent results:"
+echo "${REF_PROBS}"
+
+if ${COLLECT_LOGPROBS_FAIL}; then
+  exit 1
+fi
+
+echo ""
+echo "Collecting ${EQUIV} check results..."
 
 case "${EQUIV}" in
   llama)
-    BENCH_PROBS=$(USE_LLAMA=false collect_logprobs)
+    CHECK_PROBS=$(USE_LLAMA=false collect_logprobs) ||COLLECT_LOGPROBS_FAIL=true
     ;;
   stateless)
-    BENCH_PROBS=$(STATELESS=false collect_logprobs)
+    CHECK_PROBS=$(STATELESS=false collect_logprobs) ||COLLECT_LOGPROBS_FAIL=true
     STATELESS_CHECK1=$(grep 'stateless=true' "${LOG}")
     # there should be no new stateless lines
     [[ "${STATELESS_CHECK1}" == "${STATELESS_CHECK0}" ]] || {
@@ -173,54 +172,51 @@ case "${EQUIV}" in
     }
     ;;
   standard-attention)
-    BENCH_PROBS=$(FLASH=true collect_logprobs)
+    CHECK_PROBS=$(FLASH=true collect_logprobs) ||COLLECT_LOGPROBS_FAIL=true
     FLASH_CHECK1=$(grep 'flash_attention_used=false' "${LOG}")
     [[ "${FLASH_CHECK1}" == "${FLASH_CHECK0}" ]] || {
       echo "FAIL: flash false when it should be true" 1>&2; exit 1;
     }
     ;;
   gguf-st)
-    [[ ! -f ${MODEL_GGUF} ]] || {
-      echo "internal error: the ${MODEL_GGUF} should have been hidden as a .bin file" 1>&2
-      exit 1
-    }
-    # ensure .st
-    MODEL_ST_UNHIDDEN=false
-    [[ -f "${MODEL_ST}/config.json" ]] || {
-      mv "${MODEL_ST_BIN}" "${MODEL_ST}"
-      MODEL_ST_UNHIDDEN=true
-    }
-
-    BENCH_PROBS=$(MODEL=${MODEL_NAME} collect_logprobs)
-    # unhide the gguf if we did the hiding
-    [[ -f "${MODEL_GGUF_HIDE}" ]] && mv "${MODEL_GGUF_HIDE}" "${MODEL_GGUF}"
-    # re-hide the ST if we did the unhiding
-    ${MODEL_ST_UNHIDDEN} && mv "${MODEL_ST}" "${MODEL_ST_BIN}"
+      CHECK_PROBS=$(FORCE_MODEL_LIST="${MODELS[*]}" PREFER_ST=true collect_logprobs) ||COLLECT_LOGPROBS_FAIL=true
+      GGUF_CHECK1=$(grep 'ModelReader\[gguf\] created' "${LOG}")
+      ST_CHECK1=$(grep 'ModelReader\[safetensors\] created' "${LOG}")
+      [[ "${GGUF_CHECK1}" == "${GGUF_CHECK0}" && -n "${ST_CHECK1}" ]] || {
+        echo "FAIL: model should have been loaded as safetensors but was loaded as gguf." 1>&2
+        exit 1
+      }
     ;;
   *)
     echo "internal error. unhandled case: ${EQUIV}" 1>&2
     exit 1;;
 esac
 
-[[ -n "${BENCH_PROBS}" ]] || {
+[[ -n "${CHECK_PROBS}" ]] || {
   echo "FAIL: no lab-bench results collected" 1>&2
   exit 1
 }
 
-RESULTS=$( (echo "${REF_PROBS}"; echo "${BENCH_PROBS}") | compare_logprobs "${PASS_THRESH}")
-
-echo "RESULTS:"
-echo "${RESULTS}"
 echo ""
+echo "${EQUIV} check results:"
+echo "${CHECK_PROBS}"
 
+if ${COLLECT_LOGPROBS_FAIL}; then
+  exit 1
+fi
+
+RESULTS=$( (echo "${REF_PROBS}" && echo "${CHECK_PROBS}") | compare_logprobs "${PASS_THRESH}" )
+
+echo ""
+echo "EQUIV RESULTS:"
+echo "${RESULTS}"
+
+echo ""
 [[ "${RESULTS}" == *"FAIL"* ]] && { echo "FAIL: one or more results failed"; exit 1; }
-
-ERRORS=$(grep '\[ERROR\]' "${LOG}")
-[[ -n "${ERRORS}" ]] && {
+ERRORS=$(grep '\[ERROR\]' "${LOG}") && {
   echo "FAIL: log contains [ERROR] messages" 1>&2
   echo "${ERRORS}" 1>&2
   exit 1
 }
-
 echo "All checked models passed ${EQUIV} inference equivalence test"
 exit 0

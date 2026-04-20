@@ -79,7 +79,7 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 				weights.Layers[i].FFNAlt = nil
 			}
 		}
-		mm := arch.BuildModuleMap(weights)
+		mm := arch.BuildModuleMap(def, weights)
 		layersPath := filepath.Join(filepath.Dir(outputPath), def.Architecture.Name+".layers.svg")
 		subtitle := " Layers"
 		if err := arch.RenderModuleMapDiagram(def, mm, layersPath, subtitle, nil, nil); err != nil {
@@ -110,7 +110,7 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 		// Alt layers diagram (with FFNAlt → MoE modules)
 		if svgLayers > 0 {
 			altWeights := arch.ResolveWeightsFromDef(def, svgLayers)
-			altMM := arch.BuildModuleMap(altWeights)
+			altMM := arch.BuildModuleMap(def, altWeights)
 			altLayersPath := filepath.Join(filepath.Dir(outputPath),
 				def.Architecture.Name+altSuffix+".layers.svg")
 			subtitle := " Layers ("+def.FFNAlt.Builder+" variant)"

@@ -30,14 +30,8 @@ type GenericModel struct {
 	cachedCtx   *ggml.GraphContext
 	cachedSched *ggml.Sched
 
-	// Pre-allocated scratch buffers for the hot decode path (ForwardCached).
-	ffnScratch map[string]ggml.Tensor // reused by buildFFNBlock each layer
-	logitBuf   []float32              // reused by readLogitsInto each token
-
-	// rlb bundles all RLB-specific state (block ranges, lazy scratch
-	// context/scheduler). Defined in graph_rlb.go so RLB internals stay out
-	// of this file.
-	rlb rlbState
+	// Pre-allocated scratch buffer for the hot decode path (ForwardCached).
+	logitBuf []float32 // reused by readLogitsInto each token
 }
 
 // NewGenericModelFromGGUF loads a GGUF model using the named architecture definition.
@@ -167,7 +161,6 @@ func (b *genericModelBuilder) cleanupOnError() {
 			b.m.cachedCtx.Free()
 			b.m.cachedCtx = nil
 		}
-		b.m.rlb.Free()
 	}
 	// Store owns gpu/cpu/weightCtx/weightBuf — its Close frees everything.
 	if b.store != nil {
@@ -224,7 +217,7 @@ func (b *genericModelBuilder) resolveArch() error {
 	b.params = params
 	b.weights = weights
 	b.headDim = params.Ints[ParamHeadDim]
-	b.canonicalMM = BuildModuleMap(weights)
+	b.canonicalMM = BuildModuleMap(b.def, weights)
 	b.tensorDims = BuildTensorDimsMap(weights, func(name string) (int64, int64, int64, bool) {
 		if s, ok := b.reader.TensorSpec(name); ok {
 			return s.Ne[0], s.Ne[1], int64(s.Size), true
@@ -339,17 +332,21 @@ func (b *genericModelBuilder) buildWeightStore() error {
 	}
 
 	nLayers := b.params.Ints[ParamNLayers]
-	store.layers = make([]map[string]ggml.Tensor, nLayers)
+	store.layers = make([]LayerTensors, nLayers)
 
 	for i, lw := range b.weights.Layers {
-		lt := make(map[string]ggml.Tensor)
+		lt := LayerTensors{
+			Common: make(map[string]ggml.Tensor),
+			Block:  make(map[string]ggml.Tensor),
+			FFN:    make(map[string]ggml.Tensor),
+		}
 
 		for logicalName, tensorName := range lw.Common {
 			t, ok := b.weightTensorIndex[tensorName]
 			if !ok {
 				t = ggml.NilTensor()
 			}
-			lt[logicalName] = t
+			lt.Common[logicalName] = t
 		}
 
 		blockDef := b.def.Blocks[lw.BlockName]
@@ -364,7 +361,7 @@ func (b *genericModelBuilder) buildWeightStore() error {
 			if !ok {
 				t = ggml.NilTensor()
 			}
-			lt[logicalName] = t
+			lt.Block[logicalName] = t
 		}
 
 		// n_kv_shared_layers: non-KV layers still have weights in the model but
@@ -373,8 +370,8 @@ func (b *genericModelBuilder) buildWeightStore() error {
 		if nKVShared, ok := b.params.Ints[ParamNKVSharedLayers]; ok && nKVShared > 0 {
 			nKVFromStart := nLayers - nKVShared
 			if i >= nKVFromStart {
-				lt[WeightAttnK] = ggml.NilTensor()
-				lt[WeightAttnV] = ggml.NilTensor()
+				lt.Block[WeightAttnK] = ggml.NilTensor()
+				lt.Block[WeightAttnV] = ggml.NilTensor()
 			}
 		}
 
@@ -383,16 +380,16 @@ func (b *genericModelBuilder) buildWeightStore() error {
 			if !ok {
 				t = ggml.NilTensor()
 			}
-			lt[PrefixFFNWeight+logicalName] = t
+			lt.FFN[logicalName] = t
 		}
 
-		// FFN alt weights (also prefixed with ffn_)
+		// FFN alt weights
 		for logicalName, tensorName := range lw.FFNAlt {
 			t, ok := b.weightTensorIndex[tensorName]
 			if !ok {
 				t = ggml.NilTensor()
 			}
-			lt[PrefixFFNWeight+logicalName] = t
+			lt.FFN[logicalName] = t
 		}
 
 		store.layers[i] = lt
@@ -401,7 +398,7 @@ func (b *genericModelBuilder) buildWeightStore() error {
 		if bb, ok := GetBlockBuilder(blockDef.Builder); ok {
 			contract := bb.Contract()
 			for _, req := range contract.RequiredWeights {
-				if lt[req].IsNil() {
+				if lt.Block[req].IsNil() {
 					return fmt.Errorf("layer %d (block %q): required weight %q is missing from model", i, lw.BlockName, req)
 				}
 			}
@@ -464,11 +461,6 @@ func (b *genericModelBuilder) assignBuilders() error {
 		}
 	}
 
-	// Compute block boundaries for per-block RLB. InitBlockRanges is a no-op
-	// when full_attn_interval is absent or zero; the per-block driver then
-	// falls back to a single block covering all layers.
-	m.rlb.InitBlockRanges(nLayers, b.params.Ints[ParamFullAttnInterval])
-
 	blockCounts := make(map[string]int)
 	for _, name := range m.LayerBlockNames {
 		blockCounts[name]++
@@ -497,7 +489,6 @@ func (b *genericModelBuilder) createComputeResources() error {
 	if b.m.cachedSched == nil {
 		return fmt.Errorf("failed to create cached scheduler")
 	}
-	b.m.ffnScratch = make(map[string]ggml.Tensor)
 	b.m.logitBuf = make([]float32, b.params.Ints[ParamNVocab])
 	return nil
 }
@@ -539,7 +530,7 @@ func layerHasAltFFN(store *WeightStore, lw ResolvedLayerWeights) bool {
 		if _, ok := shared[tensorName]; ok {
 			continue
 		}
-		if t := lt[PrefixFFNWeight+logicalName]; !t.IsNil() {
+		if t := lt.FFN[logicalName]; !t.IsNil() {
 			return true
 		}
 	}
@@ -556,7 +547,6 @@ func (m *GenericModel) Close() {
 		m.cachedCtx.Free()
 		m.cachedCtx = nil
 	}
-	m.rlb.Free()
 	if m.Store != nil {
 		m.Store.Close()
 		m.Store = nil
