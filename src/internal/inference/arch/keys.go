@@ -190,12 +190,17 @@ const (
 	MoEPostNorm2    = "post_norm_2"
 )
 
-// SuffixExps is the weight name substring that distinguishes MoE expert
-// tensors from shared/dense FFN tensors (used in diagram heuristics).
-const SuffixExps = "_exps"
+// MoEExpertWeights is the set of MoE weight names that are routed expert tensors
+// (as opposed to router, shared expert, or norm weights). Used by the diagram
+// renderer to partition MoE module weights into expert vs shared groups.
+var MoEExpertWeights = map[string]bool{
+	MoEGateExps:   true,
+	MoEUpExps:     true,
+	MoEGateUpExps: true,
+	MoEDownExps:   true,
+	MoEDownExpsS:  true,
+}
 
-// FFN weight prefix (for dynamic collection of ffn_* keys).
-const PrefixFFNWeight = "ffn_"
 
 // --------------- Module name constants ---------------
 

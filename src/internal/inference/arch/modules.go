@@ -24,12 +24,13 @@ const ModuleCulled = math.MinInt32
 //     (e.g. "ssm_dt.bias" -> "blk.5.ssm_dt.bias", "ssm_a" -> "blk.5.ssm_a").
 //   - If WeightContext is empty the context prefix step is skipped.
 type Module struct {
-	ID            int      `toml:"id"`
-	Name          string   `toml:"name"`
-	BlockName     string   `toml:"block_name,omitempty"`    // routing-resolved block type; empty for FFN/global
-	WeightContext string   `toml:"weight_context,omitempty"`
-	Weights       []string `toml:"weights,omitempty"`       // short names, get ".weight" appended on reconstruction
-	Params        []string `toml:"params,omitempty"`        // short names used verbatim (bias, bare scalars, etc.)
+	ID              int      `toml:"id"`
+	Name            string   `toml:"name"`
+	BlockName       string   `toml:"block_name,omitempty"`       // routing-resolved block type; empty for FFN/global
+	FFNExpertRouted bool     `toml:"ffn_expert_routed,omitempty"` // true for MoE FFN modules (from builder contract)
+	WeightContext   string   `toml:"weight_context,omitempty"`
+	Weights         []string `toml:"weights,omitempty"`           // short names, get ".weight" appended on reconstruction
+	Params          []string `toml:"params,omitempty"`            // short names used verbatim (bias, bare scalars, etc.)
 }
 
 // FullWeightNames reconstructs the complete GGUF tensor names for this module.

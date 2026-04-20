@@ -1,7 +1,7 @@
 DIAGRAM_TARGETS  := $(patsubst models/arch/%.arch.toml,models/arch/%.arch.svg,$(wildcard models/arch/*.arch.toml))
 ST_TOK_TARGETS  := $(patsubst models/%.st/tokenizer.json,models/%.st/tokenizer.gguf,$(wildcard models/*.st/tokenizer.json))
 ST_GGUF_TARGETS := $(patsubst models/%.st,models/%.gguf,$(wildcard models/*.st))
-.PHONY: all arch-diagrams arch-diagram-targets build test integration-test equiv-test update-dependencies serve chat model-diagrams clean agents st-tok-ggufs st-ggufs
+.PHONY: all arch-diagrams arch-diagram-targets build test integration-test equiv-test update-dependencies serve chat model-diagrams clean st-tok-ggufs st-ggufs
 
 all: build
 
@@ -26,8 +26,9 @@ equiv-test: build
 PROMPT ?= explain pi in one short sentence.
 integration-test: build
 	@(ls models/*.gguf 2>&1) > /dev/null || (echo "$@: No model/.gguf files." 1>&2 && exit 1)
-	@(rm -f ./bin/itest.log 2>&1) > /dev/null || true
-	LOG=./bin/itest.log FORCE_NEW_SERVER=true ALL_MODELS=true THINK=true MAX_TOKENS=1000 ./test_inference.sh "$(PROMPT)"
+	@(rm -f ./bin/itest*.log 2>&1) > /dev/null || true
+	LOG=./bin/itest.log FORCE_NEW_SERVER=true ALL_MODELS=true THINK=true MAX_TOKENS=1000 ./test_inference.sh "$(PROMPT)" 2>&1 | tee ./bin/itest_stdout.log
+	@grep '<NO-MODEL-RESPONSE>' ./bin/itest_stdout.log && exit 1 || true
 	@grep '\[ERROR\]' ./bin/itest.log && exit 1 || true
 
 st-tok-ggufs: $(ST_TOK_TARGETS)

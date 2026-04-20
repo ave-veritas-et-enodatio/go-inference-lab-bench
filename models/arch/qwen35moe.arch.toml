@@ -123,7 +123,7 @@ builder = "gated_delta_net"
 builder = "moe"
 
   [ffn.config]
-  norm_w = "true"
+  norm_w = true
 
   [ffn.weights]
   # Router

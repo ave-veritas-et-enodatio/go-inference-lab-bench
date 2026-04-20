@@ -145,12 +145,8 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 		if m.BlockName != "" {
 			return m.BlockName
 		}
-		// TODO: what is this magic? this looks like a heuristic that happens to work for the current set of supported architectures
-		//       almost certainly should either be a value from .arch.toml or a cleaner MoE detection approach
-		for _, w := range m.Weights {
-			if strings.Contains(w, SuffixExps) {
-				return TypeFFNMoE
-			}
+		if m.FFNExpertRouted {
+			return TypeFFNMoE
 		}
 		return TypeFFN
 	}
@@ -289,10 +285,8 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 
 	// ffnSymKey maps an FFN module to its symbol key: FFNSymDense or FFNSymMoE.
 	ffnSymKey := func(m *Module) string {
-		for _, w := range m.Weights {
-			if strings.Contains(w, SuffixExps) {
-				return FFNSymMoE
-			}
+		if m.FFNExpertRouted {
+			return FFNSymMoE
 		}
 		return FFNSymDense
 	}
@@ -556,7 +550,7 @@ func RenderModuleMapDiagram(arch *ArchDef, mm *ModuleMap, moduleMapPath string, 
 				switch {
 				case isFFNNorm(w):
 					// already handled
-				case strings.Contains(w, SuffixExps):
+				case MoEExpertWeights[w]:
 					expertWts = append(expertWts, w)
 				default:
 					sharedWts = append(sharedWts, w)

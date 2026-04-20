@@ -3,7 +3,6 @@ package arch
 import (
 	"fmt"
 	"math"
-	"strings"
 	"unsafe"
 
 	ggml "inference-lab-bench/internal/ggml"
@@ -61,10 +60,11 @@ func buildSWAMaskData(buf []float32, nQuery, nKV int64, startPos, window int) []
 }
 
 // blockFunc is the per-layer block builder call, injected by the caller to
-// select BuildStateless or BuildCached. The surrounding layer loop (runLayers)
+// select BuildStateless or BuildCached. Receives the block-specific weight map
+// (not common or FFN weights). The surrounding layer loop (runLayers)
 // enforces the residual stream invariant: norm → block → residual → FFN → residual.
 type blockFunc func(gctx *ggml.GraphContext, cur ggml.Tensor,
-	lt map[string]ggml.Tensor, il int, config map[string]any,
+	weights map[string]ggml.Tensor, il int, config map[string]any,
 	inputs *GraphInputs) ggml.Tensor
 
 // runLayers executes the per-layer forward pass: for each layer, apply attention/SSM
@@ -86,12 +86,12 @@ func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
 		inputs.CurrentLayer = il
 
 		xPreBlock := x
-		if !lt[WeightAttnNorm].IsNil() {
-			cur := rmsNormApply(gctx, x, lt[WeightAttnNorm], rmsEps)
-			cur = blkFn(gctx, cur, lt, il, blockDef.Config, inputs)
+		if !lt.Common[WeightAttnNorm].IsNil() {
+			cur := rmsNormApply(gctx, x, lt.Common[WeightAttnNorm], rmsEps)
+			cur = blkFn(gctx, cur, lt.Block, il, blockDef.Config, inputs)
 			// Optional post-attention norm
-			if !lt["attn_post_norm"].IsNil() {
-				cur = rmsNormApply(gctx, cur, lt["attn_post_norm"], rmsEps)
+			if !lt.Common["attn_post_norm"].IsNil() {
+				cur = rmsNormApply(gctx, cur, lt.Common["attn_post_norm"], rmsEps)
 			}
 			x = ggml.Add(gctx, x, cur)
 			if engagement != nil {
@@ -106,48 +106,41 @@ func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
 		}
 
 		// Per-layer embedding injection (Gemma 4)
-		if !perLayerEmbd.IsNil() && !lt["pe_inp_gate"].IsNil() {
-			x = m.perLayerEmbedInject(gctx, x, lt, il, perLayerEmbd, rmsEps)
+		if !perLayerEmbd.IsNil() && !lt.Common["pe_inp_gate"].IsNil() {
+			x = m.perLayerEmbedInject(gctx, x, lt.Common, il, perLayerEmbd, rmsEps)
 		}
 
 		// Layer output scaling
-		if !lt["layer_output_scale"].IsNil() {
-			x = ggml.Mul(gctx, x, lt["layer_output_scale"])
+		if !lt.Common["layer_output_scale"].IsNil() {
+			x = ggml.Mul(gctx, x, lt.Common["layer_output_scale"])
 		}
 	}
 	return x
 }
 
-// buildFFNBlock extracts FFN weights, applies norm, builds FFN, and adds residual.
+// buildFFNBlock applies norm, builds FFN, and adds residual.
 // Returns x unchanged if all FFN tensors are culled.
 func (m *GenericModel) buildFFNBlock(ctx *ggml.GraphContext, x ggml.Tensor,
-	lt map[string]ggml.Tensor, il int, rmsEps float32) ggml.Tensor {
+	lt *LayerTensors, il int, rmsEps float32) ggml.Tensor {
 	ffnInp := x
-	ffnWeights := m.ffnScratch
-	clear(ffnWeights)
-	for k, v := range lt {
-		if after, ok := strings.CutPrefix(k, PrefixFFNWeight); ok {
-			ffnWeights[after] = v
-		}
-	}
-	if anyNonNil(ffnWeights) {
+	if anyNonNil(lt.FFN) {
 		ffnConfig := m.FFNConfigs[il]
 		// Self-normed builders manage their own pre/post norms internally
 		// (e.g. MoE with parallel shared+expert paths that need separate norms).
 		if configBoolOr(ffnConfig, ConfigSelfNormed, false) {
-			ffnOut := m.FFNBuilders[il].BuildFFN(ctx, x, ffnWeights, m.Params, ffnConfig)
+			ffnOut := m.FFNBuilders[il].BuildFFN(ctx, x, lt.FFN, m.Params, ffnConfig)
 			// Self-normed builders handle internal pre/post norms for each path,
 			// but the common post-FFN norm still wraps the combined output.
-			if !lt["ffn_post_norm"].IsNil() {
-				ffnOut = rmsNormApply(ctx, ffnOut, lt["ffn_post_norm"], rmsEps)
+			if !lt.Common["ffn_post_norm"].IsNil() {
+				ffnOut = rmsNormApply(ctx, ffnOut, lt.Common["ffn_post_norm"], rmsEps)
 			}
 			return ggml.Add(ctx, ffnInp, ffnOut)
 		}
-		xn2 := rmsNormApply(ctx, x, ffnNorm(lt), rmsEps)
-		ffnOut := m.FFNBuilders[il].BuildFFN(ctx, xn2, ffnWeights, m.Params, ffnConfig)
+		xn2 := rmsNormApply(ctx, x, lt.Common[WeightFFNNorm], rmsEps)
+		ffnOut := m.FFNBuilders[il].BuildFFN(ctx, xn2, lt.FFN, m.Params, ffnConfig)
 		// Optional post-FFN norm
-		if !lt["ffn_post_norm"].IsNil() {
-			ffnOut = rmsNormApply(ctx, ffnOut, lt["ffn_post_norm"], rmsEps)
+		if !lt.Common["ffn_post_norm"].IsNil() {
+			ffnOut = rmsNormApply(ctx, ffnOut, lt.Common["ffn_post_norm"], rmsEps)
 		}
 		return ggml.Add(ctx, ffnInp, ffnOut)
 	}
@@ -165,11 +158,6 @@ func anyNonNil(weights map[string]ggml.Tensor) bool {
 	return false
 }
 
-// ffnNorm returns the pre-FFN norm weight from the layer tensor map.
-// All architectures use WeightFFNNorm as the canonical logical key in layers.common_weights.
-func ffnNorm(lt map[string]ggml.Tensor) ggml.Tensor {
-	return lt[WeightFFNNorm]
-}
 
 // buildLogits extracts the last token's embedding, applies final norm, and projects
 // through the LM head. Returns the logits tensor (already marked as output).
@@ -320,12 +308,12 @@ func (m *GenericModel) forwardStatelessCore(
 
 	var zeroFill []ggml.Tensor
 	blkFn := func(gctx *ggml.GraphContext, cur ggml.Tensor,
-		lt map[string]ggml.Tensor, il int, config map[string]any,
+		weights map[string]ggml.Tensor, il int, config map[string]any,
 		inputs *GraphInputs) ggml.Tensor {
 		if inputs.Captures != nil {
 			inputs.Captures.currentLayer = il
 		}
-		return m.BlockBuilders[il].BuildStateless(gctx, cur, lt, m.Params, config, inputs, &zeroFill)
+		return m.BlockBuilders[il].BuildStateless(gctx, cur, weights, m.Params, config, inputs, &zeroFill)
 	}
 	x = m.runLayers(gctx, x, inputs, rmsEps, mask, blkFn, perLayerEmbd, engagement)
 
@@ -577,9 +565,9 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, mask *C
 	gf := ggml.NewGraph(gctx, maxGraphNodes)
 
 	blkFn := func(gctx *ggml.GraphContext, cur ggml.Tensor,
-		lt map[string]ggml.Tensor, il int, config map[string]any,
+		weights map[string]ggml.Tensor, il int, config map[string]any,
 		inputs *GraphInputs) ggml.Tensor {
-		return m.BlockBuilders[il].BuildCached(gctx, gf, cur, lt, m.Params, config, inputs,
+		return m.BlockBuilders[il].BuildCached(gctx, gf, cur, weights, m.Params, config, inputs,
 			&gc.Layers[il])
 	}
 	x = m.runLayers(gctx, x, inputs, rmsEps, mask, blkFn, perLayerEmbd, nil)
