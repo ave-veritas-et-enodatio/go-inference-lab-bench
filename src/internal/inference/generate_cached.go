@@ -3,13 +3,11 @@ package inference
 import (
 	"fmt"
 	"time"
-
-	"inference-lab-bench/internal/inference/arch"
 )
 
 func (e *Engine) generateCached(
 	promptIDs []int32, maxTokens int, stopSet map[int32]bool,
-	params GenerateParams, mask *arch.CullingMask,
+	params GenerateParams,
 	onToken func(string) bool, metrics *InferenceMetrics,
 ) error {
 	cache, err := e.model.NewCache(e.maxSeqLen)
@@ -19,7 +17,7 @@ func (e *Engine) generateCached(
 	defer cache.Free()
 
 	prefillStart := time.Now()
-	logits, err := e.model.ForwardCached(cache, promptIDs, mask, *params.FlashAttention)
+	logits, err := e.model.ForwardCached(cache, promptIDs, *params.FlashAttention)
 	if err != nil {
 		return fmt.Errorf("prefill forward: %w", err)
 	}
@@ -45,16 +43,16 @@ func (e *Engine) generateCached(
 			break
 		}
 		metrics.CompletionTokens++
-		logits, err = e.model.ForwardCached(cache, []int32{nextID}, mask, *params.FlashAttention)
+		logits, err = e.model.ForwardCached(cache, []int32{nextID}, *params.FlashAttention)
 		if err != nil {
 			return fmt.Errorf("decode forward: %w", err)
 		}
 	}
 	metrics.DecodeDuration = time.Since(decodeStart)
 	if hitStop {
-		metrics.FinishReason = "stop"
+		metrics.FinishReason = FinishReasonStop
 	} else {
-		metrics.FinishReason = "length"
+		metrics.FinishReason = FinishReasonLength
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sync"
 
 	ggufparser "github.com/gpustack/gguf-parser-go"
 )
@@ -15,9 +16,15 @@ type TensorInfo struct {
 }
 
 // GGUFMetadata holds parsed model metadata and the tensor index.
-// Supported architectures
-// supportedArchitectures is populated at runtime by scanArchDefinitions.
-var supportedArchitectures = map[string]bool{}
+
+// supportedArchitectures is populated by scanArchDefinitions, which is called
+// at startup (NewManager) and on every List() / tryLoadOne*() call to pick up
+// newly-dropped .arch.toml files. Because List() is called from HTTP handlers,
+// concurrent writes are possible; all access must hold archMu.
+var (
+	archMu               sync.RWMutex
+	supportedArchitectures = map[string]bool{}
+)
 
 type GGUFMetadata struct {
 	Architecture string // e.g. "qwen35", "qwen35moe"

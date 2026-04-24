@@ -4,16 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	ggufparser "github.com/gpustack/gguf-parser-go"
 
 	"inference-lab-bench/internal/inference/arch"
-	"inference-lab-bench/internal/inference/culling"
 	"inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/model"
-	"inference-lab-bench/internal/util"
 	"inference-lab-bench/internal/ggml"
 )
 
@@ -29,21 +26,19 @@ func IsComputeFailure(err error) bool {
 
 // Engine runs inference for a single loaded model.
 type Engine struct {
-	model       *arch.GenericModel
-	tokenizer   *Tokenizer
-	nLayers     int
-	maxSeqLen   int
-	cullingMeta *culling.CullingMeta // optional sidecar metadata (nil = none)
-	flashAttn   bool                 // server default: use FA2 when head geometry allows
-	diagDir     string               // directory for diagnostic output (resolved by caller)
+	model     *arch.GenericModel
+	tokenizer *Tokenizer
+	nLayers   int
+	maxSeqLen int
+	flashAttn bool   // server default: use FA2 when head geometry allows
+	diagDir   string // directory for diagnostic output (resolved by caller)
 }
 
 // NewEngine creates an inference engine for the given model.
 // archDir is the directory containing architecture definition TOML files.
-// diagDir is the directory where diagnostic files (cullmap, engagement) are written.
+// diagDir is the directory where diagnostic files are written.
 // maxSeqLen is the KV cache size in tokens (0 = default 8192).
 // flashAttention is the server default for FA2 (true = enable when head geometry allows).
-// Automatically loads a .modulemap sidecar file if present next to the GGUF.
 func NewEngine(memStats ggml.MemoryStats, info *model.ModelInfo, archDir, diagDir string, maxSeqLen int, flashAttention bool) (*Engine, error) {
 	var (
 		m   *arch.GenericModel
@@ -114,21 +109,6 @@ func NewEngine(memStats ggml.MemoryStats, info *model.ModelInfo, archDir, diagDi
 		}
 	}
 
-	// Load culling metadata sidecar if present: <model_stem>.<method>.cullmeta
-	var cullingMeta *culling.CullingMeta
-	dir := filepath.Dir(info.Path)
-	stem := strings.TrimSuffix(filepath.Base(info.Path), filepath.Ext(info.Path))
-	metaPaths, _ := filepath.Glob(filepath.Join(dir, stem+".*"+util.ExtCullMeta))
-	if len(metaPaths) > 0 {
-		cm, err := culling.LoadCullingMeta(metaPaths[0])
-		if err != nil {
-			log.Warn("failed to load culling metadata: %v", err)
-		} else if cm != nil {
-			cullingMeta = cm
-			log.Info("loaded culling metadata: %s (method=%s)", metaPaths[0], cm.Method)
-		}
-	}
-
 	// Resolve flash attention: check head geometry against Metal FA2 supported dims.
 	headDim := m.HeadDim
 	flashAttn := flashAttention && arch.FlashAttnSupported(headDim)
@@ -142,13 +122,12 @@ func NewEngine(memStats ggml.MemoryStats, info *model.ModelInfo, archDir, diagDi
 	}
 
 	return &Engine{
-		model:       m,
-		tokenizer:   tok,
-		nLayers:     nLayers,
-		maxSeqLen:   maxSeqLen,
-		cullingMeta: cullingMeta,
-		flashAttn:   flashAttn,
-		diagDir:     diagDir,
+		model:     m,
+		tokenizer: tok,
+		nLayers:   nLayers,
+		maxSeqLen: maxSeqLen,
+		flashAttn: flashAttn,
+		diagDir:   diagDir,
 	}, nil
 }
 
@@ -223,7 +202,6 @@ type GenerateParams struct {
 	TopP               float32
 	Stateless          bool             // bypass KV cache (for testing/comparison)
 	Streaming          bool             // true if the caller is using SSE streaming
-	CullMethod         string           // "" or "none" = no culling; "random" = random test pattern
 	ThinkingEnabled    bool             // mirrors ChatTemplateKwargs[KwEnableThinking]; used for thinkFilter init + internal logic
 	ChatTemplateKwargs map[string]any   // passed to the chat template renderer; llama.cpp-compatible shape
 	LogProbs           bool             // include log-probabilities in response
@@ -287,32 +265,12 @@ func (e *Engine) Generate(
 	params.FlashAttention = &flashAttn
 	log.Info("flash_attention_used=%v", *params.FlashAttention)
 
-	// Per-query culling: clone canonical map, apply method, compile mask.
-	var cullMap *arch.ModuleMap
-	var mask *arch.CullingMask
-	if params.CullMethod != "" && params.CullMethod != "none" {
-		prompt := lastUserContent(messages)
-		cullMap, mask = culling.ApplyCulling(
-			e.model.CanonicalModuleMap, params.CullMethod, promptIDs, prompt, e.cullingMeta)
-	}
-
 	maxTokens := params.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 512
-	}
 
 	stopSet := e.tokenizer.BuildStopSet(e.model.Def.Tokens.ExtraEOS)
 
 	metrics := &InferenceMetrics{
 		PromptTokens: len(promptIDs),
-	}
-	if mask != nil {
-		metrics.ZeroedTensors = mask.NumZeroed()
-	}
-	// Count total tensors: globals + layers
-	metrics.TotalTensors = len(e.model.Weights.Global)
-	for _, lw := range e.model.Weights.Layers {
-		metrics.TotalTensors += len(lw.Common) + len(lw.Block) + len(lw.FFN)
 	}
 
 	start := time.Now()
@@ -326,20 +284,15 @@ func (e *Engine) Generate(
 			}
 			log.Warn("streaming request on diffusion model; response will be returned as a burst after %d denoising steps", T)
 		}
-		genErr = e.generateDiffusion(promptIDs, maxTokens, stopSet, params, mask, onToken, metrics)
+		genErr = e.generateDiffusion(promptIDs, maxTokens, stopSet, params, onToken, metrics)
 	} else if params.Stateless {
 		log.Info("stateless inference (no KV cache), prompt=%d tokens", len(promptIDs))
-		genErr = e.generateStateless(promptIDs, maxTokens, stopSet, params, mask, onToken, metrics)
+		genErr = e.generateStateless(promptIDs, maxTokens, stopSet, params, onToken, metrics)
 	} else {
-		genErr = e.generateCached(promptIDs, maxTokens, stopSet, params, mask, onToken, metrics)
+		genErr = e.generateCached(promptIDs, maxTokens, stopSet, params, onToken, metrics)
 	}
 
 	metrics.TotalDuration = time.Since(start)
-
-	// Write diagnostic files.
-	if cullMap != nil {
-		culling.WriteCullDiagnostics(e.diagDir, e.model.Def, cullMap, e.model.ModelPath, e.model.TensorDims, metrics.Engagement, e.model.Def.Architecture.NonCausal, e.model.Def.Architecture.Generation)
-	}
 
 	return metrics, genErr
 }
@@ -367,14 +320,4 @@ func (e *Engine) sample(logits []float32, params GenerateParams) (int32, error) 
 			next, logits[next], len(logits), params.Temperature, params.TopP)
 	}
 	return next, nil
-}
-
-// lastUserContent returns the content of the last user message, used as diagnostic context for culling.
-func lastUserContent(msgs []ChatMessage) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" {
-			return msgs[i].Content
-		}
-	}
-	return ""
 }

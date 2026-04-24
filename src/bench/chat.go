@@ -41,7 +41,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	}
 	paths, err := util.ResolvePaths()
 	if err != nil {
-		log.Fatal("resolve paths: %v", err)
+		return fmt.Errorf("resolve paths: %w", err)
 	}
 	return chatclient.Run(chatclient.Options{
 		ConfigPath:    filepath.Join(paths.ConfigDir, "chat_config.toml"),

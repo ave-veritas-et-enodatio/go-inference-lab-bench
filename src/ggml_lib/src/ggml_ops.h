@@ -32,7 +32,7 @@ enum {
     GGML_GO_TYPE_Q6_K  = 14,
 };
 enum {
-    GGML_GO_ROPE_NEOX = 2,
+    GGML_GO_ROPE_TYPE_NEOX = 2,
 };
 enum {
     GGML_GO_PREC_F32 = 1, /* GGML_PREC_F32 */

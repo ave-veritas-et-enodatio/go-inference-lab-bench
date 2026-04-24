@@ -160,13 +160,10 @@
   </symbol>
   <symbol id="summary" overflow="visible">
   <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Summary</text>
-  <rect width="170" height="96" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <rect width="170" height="60" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
   <text class="shdr" x="4" y="11">65 modules</text>
-  <text class="ltxt" x="4" y="24">  0 culled (0%)</text>
-  <text class="shdr" x="4" y="41">427 tensors</text>
-  <text class="ltxt" x="4" y="54">  0 culled (0%)</text>
-  <text class="shdr" x="4" y="71">379 weights</text>
-  <text class="ltxt" x="4" y="84">  0 elided (0%)</text>
+  <text class="shdr" x="4" y="29">427 tensors</text>
+  <text class="shdr" x="4" y="47">379 weights</text>
   </symbol>
 </defs>
   <rect width="588" height="1173" fill="#fafafa" rx="8"/>

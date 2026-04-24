@@ -15,6 +15,7 @@ import (
 	"github.com/nikolalohinski/gonja/v2"
 	"github.com/nikolalohinski/gonja/v2/exec"
 
+	"inference-lab-bench/internal/inference/arch"
 	log "inference-lab-bench/internal/log"
 )
 
@@ -61,7 +62,7 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 
 	// ---- Merges ----
 	var merges []string
-	mergesKV, ok := kvs.Get("tokenizer.ggml.merges")
+	mergesKV, ok := kvs.Get(arch.GGUFKeyTokenizerMerges)
 	if ok {
 		merges = mergesKV.ValueArray().ValuesString()
 	}
@@ -90,7 +91,7 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 
 	// Read mask token ID for diffusion models; absent in standard models.
 	maskID := int32(-1)
-	if maskKV, ok := kvs.Get("tokenizer.ggml.mask_token_id"); ok {
+	if maskKV, ok := kvs.Get(arch.GGUFKeyTokenizerMaskTokenID); ok {
 		switch maskKV.ValueType {
 		case ggufparser.GGUFMetadataValueTypeUint32:
 			maskID = int32(maskKV.ValueUint32())
@@ -102,7 +103,7 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 	// Compile chat template from GGUF.
 	// Patch Python slice syntax gonja doesn't support: x[::-1] → x|reverse
 	var chatTpl *exec.Template
-	if tplKV, ok := kvs.Get("tokenizer.chat_template"); ok {
+	if tplKV, ok := kvs.Get(arch.GGUFKeyTokenizerChatTemplate); ok {
 		src := strings.ReplaceAll(tplKV.ValueString(), "[::-1]", "|reverse")
 		tpl, err := gonja.FromString(src)
 		if err != nil {
@@ -113,7 +114,7 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 
 	// Detect tokenizer type: "gpt2" uses byte-level encoding, everything else is SentencePiece.
 	useByteLevel := true
-	if modelKV, ok := kvs.Get("tokenizer.ggml.model"); ok {
+	if modelKV, ok := kvs.Get(arch.GGUFKeyTokenizerModel); ok {
 		if modelKV.ValueString() != "gpt2" {
 			useByteLevel = false
 		}
@@ -122,10 +123,10 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 	// Build special tokens list from token_type metadata.
 	// Type 3 = CONTROL, Type 4 = USER_DEFINED — these are the special tokens.
 	var specialTokens []string
-	if typesKV, ok := kvs.Get("tokenizer.ggml.token_type"); ok {
+	if typesKV, ok := kvs.Get(arch.GGUFKeyTokenizerTokenType); ok {
 		types := typesKV.ValueArray().ValuesInt32()
 		for i, tt := range types {
-			if (tt == 3 || tt == 4) && i < len(tokens) && len(tokens[i]) > 0 {
+			if (tt == arch.GGUFTokenTypeControl || tt == arch.GGUFTokenTypeUserDefined) && i < len(tokens) && len(tokens[i]) > 0 {
 				specialTokens = append(specialTokens, tokens[i])
 			}
 		}
@@ -541,7 +542,7 @@ func readGGUFTokensRaw(path string) ([]string, error) {
 			return nil, fmt.Errorf("read KV type %d: %w", i, err)
 		}
 
-		if key == "tokenizer.ggml.tokens" && vtype == 9 { // array
+		if key == arch.GGUFKeyTokenizerTokens && vtype == 9 { // array
 			var atype uint32
 			var acount uint64
 			if err := binary.Read(f, binary.LittleEndian, &atype); err != nil {

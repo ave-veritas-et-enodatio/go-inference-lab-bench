@@ -8,6 +8,9 @@ import (
 	log "inference-lab-bench/internal/log"
 )
 
+// DefaultAPIServerPort is the default listen port for the API server.
+const DefaultAPIServerPort = 11116
+
 type Config struct {
 	Server    ServerConfig    `toml:"server"`
 	Models    ModelsConfig    `toml:"models"`
@@ -25,12 +28,10 @@ type ModelsConfig struct {
 }
 
 type InferenceConfig struct {
-	NThreads              int    `toml:"n_threads"`
 	LogThinking           bool   `toml:"log_thinking"`
 	EnableThinkingDefault bool   `toml:"enable_thinking_default"`
 	MaxSeqLen             int    `toml:"max_seq_len"`            // KV cache size in tokens (default: 4096)
 	ElideThinkingDefault  *bool  `toml:"elide_thinking_default"` // nil = default true; strip <think>...</think> from output
-	CullMethodDefault     string `toml:"cull_method_default"`    // "" = no culling; "random", etc.
 	SingleResidentModel   *bool  `toml:"single_resident_model"`  // nil/true (default): evict previous model on switch; false: keep all loaded
 	MaxRequestSeqLen      int    `toml:"max_request_seq_len"`    // hard limit on request context + max_tokens (0 = disabled)
 	StrictMode            bool   `toml:"strict_mode"`            // true = reject requests exceeding limit; false = warn only
@@ -57,7 +58,7 @@ func LoadConfig(path string) (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
 			Host: "0.0.0.0",
-			Port: 11116,
+			Port: DefaultAPIServerPort,
 		},
 		Models: ModelsConfig{
 			Default:   "first",
@@ -96,9 +97,6 @@ func (c *Config) validate() error {
 	}
 
 	// inference
-	if c.Inference.NThreads < 0 {
-		return fmt.Errorf("inference.n_threads must be >= 0, got %d", c.Inference.NThreads)
-	}
 	if c.Inference.MaxSeqLen < 1 {
 		return fmt.Errorf("inference.max_seq_len must be >= 1, got %d", c.Inference.MaxSeqLen)
 	}

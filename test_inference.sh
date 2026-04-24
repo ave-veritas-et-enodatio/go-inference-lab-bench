@@ -13,6 +13,8 @@ LOOP_MODE=false
 ALL_MODELS_NO_DIFFUSION=${ALL_MODELS_NO_DIFFUSION:-false}
 ${ALL_MODELS_NO_DIFFUSION} && ALL_MODELS=true || ALL_MODELS=${ALL_MODELS:-false}
 USE_LLAMA=${USE_LLAMA:-false}
+# prefer safetensors over gguf
+PREFER_ST=${PREFER_ST:-false}
 
 TOP_LOGPROBS=${TOP_LOGPROBS:-0}
 if [[ "${TOP_LOGPROBS}" -gt 0 ]]; then
@@ -50,8 +52,6 @@ LLAMA_API_BASE_URL=${LLAMA_BASE_URL}/v1
 
 
 STATELESS=${STATELESS:-null}
-# CULL_METHOD: null (no culling, use server config), "none", or "random".
-CULL_METHOD=${CULL_METHOD:-null}
 THINK=${THINK:-null}
 ELIDE_THINK=${ELIDE_THINK:-null}
 FLASH=${FLASH:-null}
@@ -70,7 +70,16 @@ LLAMA_DIFFUSION_NGL=${LLAMA_DIFUSE_NGL:-99}
 # llama-diffusion-cli microbatch size (we don't implement microbatching yet)
 LLAMA_DIFFUSION_UB=${LLAMA_DIFUSE_UB:-512}
 FORCE_DIFFUSION_CLI=${FORCE_DIFFUSION_CLI:-false}
-
+USE_RLB_GEN=${USE_RLB_GEN:-false}
+RLB_PREFILL=${RLB_PREFILL:-false}
+RLB_ALPHA=${RLB_ALPHA:-auto}
+RLB_HALT_RULE=${RLB_HALT_RULE:-}
+# RLB_TERMINAL_HALT_RULE: separate halt rule for the terminal block only; empty
+# = reuse RLB_HALT_RULE for every block. Lets a run use a Tier 2 convergence
+# rule (e.g. dH_threshold) on upstream blocks while a Tier 1 logit-shape rule
+# runs on the terminal block where lm_head output is actually meaningful.
+RLB_TERMINAL_HALT_RULE=${RLB_TERMINAL_HALT_RULE:-}
+RLB_MAG_NORM=${RLB_MAG_NORM:-false}
 # Collect arch names that declare generation = "diffusion" from the arch TOMLs.
 DIFFUSION_ARCH_NAMES=$(grep -rl 'generation\s*=\s*"diffusion"' models/arch/*.arch.toml 2>/dev/null \
   | sed 's|.*/||; s|\.arch\.toml||' | tr '\n' ' ')
@@ -93,8 +102,9 @@ print("\n".join(models))
 ' 2> /dev/null
 }
 
-MODEL_LIST=
-
+MODEL_LIST=()
+FORCE_MODEL_LIST=${FORCE_MODEL_LIST:-}
+FORCE_MODEL_LIST=(${FORCE_MODEL_LIST//,/ })
 
 function parse_response() {
   # maybe fall back to a more brittle awk-based extractor ?
@@ -215,7 +225,6 @@ function query_one() {
     local bench_params
 
     [[ -n "${STATELESS}" && "${STATELESS}" != "null" ]] && bench_params+="\"stateless\": ${STATELESS},"
-    [[ -n "${CULL_METHOD}" && "${CULL_METHOD}" != "null" ]] && bench_params+="\"cull_method\": \"${CULL_METHOD}\","
     [[ -n "${ELIDE_THINK}" && "${ELIDE_THINK}" != "null" ]] && bench_params+="\"elide_thinking\": ${ELIDE_THINK},"
     [[ -n "${FLASH}" && "${FLASH}" != "null" ]] && bench_params+="\"flash_attention\": ${FLASH},"
 
@@ -226,6 +235,30 @@ function query_one() {
       bench_params+="\"diffusion\": {${diffusion_inner%,}},"
       # local alias only
       MAX_TOKENS=${DIFFUSION_TOKENS}
+    fi
+
+    if ${USE_RLB_GEN}; then
+      # special value -1.0 used by generate_rlb to denote "auto" mode
+      # it's a bit of a hack but for test code it made more sense than
+      # supporting string-or-float values
+      local auto_alpha=-1.0
+      bench_params+="\"use_rlb_gen\": true,"
+      [[ -n "${RLB_PREFILL}" ]] && \
+        bench_params+="\"enable_rlb_on_prefill\": ${RLB_PREFILL},"
+      # RLB_ALPHA="auto" is the human-facing sentinel for "use the halt rule's
+      # confidence-derived alpha per iter"; the server expects 0.0 for that
+      # mode. Translate at payload-construction time — keep RLB_ALPHA itself
+      # untouched so subsequent sweep logic / logs see the word "auto".
+      local rlb_alpha="${RLB_ALPHA}"
+      [[ "${rlb_alpha}" == "auto" ]] && rlb_alpha=${auto_alpha}
+      [[ -n "${rlb_alpha}" ]] && bench_params+="\"rlb_alpha\": ${rlb_alpha},"
+      [[ -n "${RLB_HALT_RULE}" ]] && bench_params+="\"rlb_halt_rule\": \"${RLB_HALT_RULE}\","
+      # Terminal halt rule is optional — only include when set, so the server
+      # sees an empty string and reuses RLB_HALT_RULE for every block.
+      [[ -n "${RLB_TERMINAL_HALT_RULE}" ]] && \
+        bench_params+="\"rlb_terminal_halt_rule\": \"${RLB_TERMINAL_HALT_RULE}\","
+      [[ "${RLB_MAG_NORM}" == "true" ]] && \
+        bench_params+="\"rlb_magnitude_norm\": true,"
     fi
 
     if [[ -n "${bench_params}" ]]; then
@@ -273,7 +306,7 @@ function query_one() {
 function query() {
   local model
   if ${ALL_MODELS}; then
-    for model in ${MODEL_LIST}; do
+    for model in "${MODEL_LIST[@]}"; do
       echo "${model} <-- \"${*}\""
       MODEL=${model} query_one "${@}"
       # llama server tries to hold all models in memory and fails
@@ -293,24 +326,30 @@ function loop_help() {
   cat << __EOF
 Acontextual Loop Mode
 =====================
-/help: show this help message
 /all-models: toggle all-models mode (currently: ${ALL_MODELS})
+/cls: clear the screen
 /debug-post: toggle display of post json (currently: ${DEBUG_POST})
 /debug-response: toggle display of response json (currently: ${DEBUG_RESPONSE})
-/flash: toggle flash attention mode (currently: ${FLASH})
-/stateless: toggle stateless mode (currently: ${STATELESS})
-/cull [method]: set cull method (currently: ${CULL_METHOD}); "random", "none", or null
-/think: toggle think mode (currently: ${THINK})
-/elide-think: toggle elision of thinking output (currently: ${ELIDE_THINK})
-/max-tokens [token_count]: show or set MAX_TOKENS (currently: ${MAX_TOKENS})
-/diffusion-steps [steps]: show or set DIFFUSION_STEPS (currently: ${DIFFUSION_STEPS})
 /diffusion-block-length [length]: show or set DIFFUSION_BLOCK_LENGTH (currently: ${DIFFUSION_BLOCK_LENGTH})
+/diffusion-steps [steps]: show or set DIFFUSION_STEPS (currently: ${DIFFUSION_STEPS})
 /diffusion-tokens [count]: show or set DIFFUSION_TOKENS (currently: ${DIFFUSION_TOKENS})
-/model [index]: show or set current model (currently: ${MODEL})
-/temperature [temperature]: show or set TEMPERATURE (currently: ${TEMPERATURE})
-/cls: clear the screen
-/new-server: shuts down old server and starts a new one.
+/elide-think: toggle elision of thinking output (currently: ${ELIDE_THINK})
+/flash: toggle flash attention mode (currently: ${FLASH})
+/help: show this help message
 /llama: toggle between using llama-server and bench serve-api. (currently: USE_LLAMA=${USE_LLAMA})
+/max-tokens [token_count]: show or set MAX_TOKENS (currently: ${MAX_TOKENS})
+/model [index]: show or set current model (currently: ${MODEL})
+/new-server: shuts down old server and starts a new one.
+/prefer-st: toggle prefer safetensors mode (currently: ${PREFER_ST})
+/rlb-alpha <0-1>|auto: set RLB SSM state alpha blending factor (currently: ${RLB_ALPHA})
+/rlb-gen: toggle RLB generation mode (currently: ${USE_RLB_GEN})
+/rlb-halt-rule [name]: set RLB halt rule (currently: ${RLB_HALT_RULE})
+/rlb-mag-norm: toggle RLB magnitude normalization (currently: ${RLB_MAG_NORM})
+/rlb-prefill: toggle RLB during prefill (currently: ${RLB_PREFILL})
+/rlb-terminal-halt-rule [name|-]: set RLB halt rule for terminal block only; "-" to clear (currently: ${RLB_TERMINAL_HALT_RULE:-<reuse halt-rule>})
+/stateless: toggle stateless mode (currently: ${STATELESS})
+/temperature [temperature]: show or set TEMPERATURE (currently: ${TEMPERATURE})
+/think: toggle think mode (currently: ${THINK})
 /quit: exit loop mode
 
 __EOF
@@ -357,8 +396,13 @@ function loop_mode() {
     line=${line% }
     [[ -n "${line}" ]] && history -s "${line}"
     case "${line}" in
-      quit|exit)
-        break;;
+      /all-models)
+        ALL_MODELS=$(toggle "${ALL_MODELS}")
+        echo "ALL_MODELS=${ALL_MODELS}"
+        continue;;
+      /cls)
+        clear
+        continue;;
       /new-server)
         force_cycle_server
         continue;;
@@ -367,22 +411,23 @@ function loop_mode() {
         echo "USE_LLAMA=${USE_LLAMA}"
         force_cycle_server
         continue;;
-      /help|/)
+      /help|/h|/|/\?)
         loop_help
         continue;;
-      /model*)
+      /model*|/m)
         local MI=$(set ${line}; echo ${2})
         if [[ "${MI:-0}" -gt 0 ]]; then
-          MODEL=$(set ${MODEL_LIST}; eval "echo \$${MI}")
+          MODEL=${MODEL_LIST[$((MI - 1))]}
         else
           update_model_list
           show_models
         fi
         echo "MODEL=${MODEL}"
         continue;;
-      /all-models)
-        ALL_MODELS=$(toggle "${ALL_MODELS}")
-        echo "ALL_MODELS=${ALL_MODELS}"
+      /prefer-st)
+        PREFER_ST=$(toggle "${PREFER_ST}")
+        echo "PREFER_ST=${PREFER_ST}"
+        force_cycle_server
         continue;;
       /flash)
         FLASH=$(rotate "${FLASH}")
@@ -391,20 +436,6 @@ function loop_mode() {
       /stateless)
         STATELESS=$(rotate "${STATELESS}")
         echo "STATELESS=${STATELESS}"
-        continue;;
-      /cls)
-        clear
-        continue;;
-      /cull*)
-        local CM=$(set ${line}; echo ${2})
-        if [[ -n "${CM}" ]]; then
-          if [[ "${CM}" == "null" || "${CM}" == "none" ]]; then
-            CULL_METHOD=null
-          else
-            CULL_METHOD="\"${CM}\""
-          fi
-        fi
-        echo "CULL_METHOD=${CULL_METHOD}"
         continue;;
       /debug-post)
         DEBUG_POST=$(toggle "${DEBUG_POST}")
@@ -461,6 +492,48 @@ function loop_mode() {
         fi
         echo "TEMPERATURE=${TEMPERATURE}"
         continue;;
+      /rlb-gen)
+        USE_RLB_GEN=$(toggle "${USE_RLB_GEN}")
+        echo "USE_RLB_GEN=${USE_RLB_GEN}"
+        continue;;
+      /rlb-mag-norm)
+        RLB_MAG_NORM=$(toggle "${RLB_MAG_NORM}")
+        echo "RLB_MAG_NORM=${RLB_MAG_NORM}"
+        continue;;
+      /rlb-prefill)
+        RLB_PREFILL=$(toggle "${RLB_PREFILL}")
+        echo "RLB_PREFILL=${RLB_PREFILL}"
+        continue;;
+      /rlb-alpha*)
+        local RA
+        RA=$(set ${line}; echo ${2})
+        if [[ "${RA}" == "auto" ]] || echo "${RA:-1}" | awk '{exit !($1 >= 0 && $1 <= 1)}'; then
+          RLB_ALPHA=${RA}
+        fi
+        echo "RLB_ALPHA=${RLB_ALPHA}"
+        continue;;
+      /rlb-terminal-halt-rule*)
+        # Must precede /rlb-halt-rule* in the case list — bash case-match is
+        # first-match, and /rlb-halt-rule* prefixes /rlb-terminal-halt-rule.
+        local THR
+        THR=$(set ${line}; echo ${2})
+        case "${THR}" in
+          "") ;; # no arg: just print current
+          -) RLB_TERMINAL_HALT_RULE= ;; # explicit clear → reuse main rule
+          *) RLB_TERMINAL_HALT_RULE="${THR}" ;;
+        esac
+        echo "RLB_TERMINAL_HALT_RULE=${RLB_TERMINAL_HALT_RULE:-<reuse halt-rule>}"
+        continue;;
+      /rlb-halt-rule*)
+        local HR
+        HR=$(set ${line}; echo ${2})
+        if [[ -n "${HR}" ]]; then
+          RLB_HALT_RULE="${HR}"
+        fi
+        echo "RLB_HALT_RULE=${RLB_HALT_RULE}"
+        continue;;
+      quit|exit)
+        break;;
       /*)
         echo "unknown / command ${line}" 1>&2
         loop_help
@@ -497,17 +570,19 @@ function update_model_list() {
   models=${models//\.st/}
   models=$(sort -u <<< "${models}")
 
+  MODEL_LIST=()
+
   if ${ALL_MODELS_NO_DIFFUSION}; then
     for model in ${models}; do
-      is_diffusion_model "${model}" || MODEL_LIST+="${model} "
+      is_diffusion_model "${model}" || MODEL_LIST+=("${model}")
     done
   else
     for model in ${models}; do
-      MODEL_LIST+="${model} "
+      MODEL_LIST+=("${model}")
     done
   fi
-  MODEL_LIST=${MODEL_LIST% }
-  [[ ${MODEL} == "default" ]] && MODEL=$(set ${MODEL_LIST}; echo $1)
+  [[ -n "${FORCE_MODEL_LIST[*]}" ]] && MODEL_LIST=("${FORCE_MODEL_LIST[@]}")
+  [[ ${MODEL} == "default" ]] && MODEL=${MODEL_LIST[0]}
 }
 
 function show_models() {
@@ -516,8 +591,8 @@ function show_models() {
   echo "models"
   echo "======"
   i=1
-  for model in ${MODEL_LIST}; do
-    [[ ${model} == ${MODEL} ]] && echo "${i}) ${model}*" || echo "${i}) ${model}"
+  for model in "${MODEL_LIST[@]}"; do
+    [[ "${model}" == "${MODEL}" ]] && echo "${i}) ${model}*" || echo "${i}) ${model}"
     i=$((i + 1))
   done
   echo ""
@@ -538,8 +613,10 @@ function wait_for_starting_server() {
 
 function start_api_server() {
   [[ -x "./bin/bench" ]] || { echo "./bin/bench binary missing. 'make all' first." 1>&2; return 1; }
+  local prefer_st_arg=""
+  [[ ${PREFER_ST} == true ]] && prefer_st_arg="--prefer-st"
   API_BASE_URL=${BENCH_API_BASE_URL}
-  ./bin/bench serve-api --log ${LOG:-"bin/test_inference.log"} --log-level NONE &
+  ./bin/bench serve-api --log ${LOG:-"bin/test_inference.log"} --log-level NONE ${prefer_st_arg} &
   SERVER_PID=$!
   wait_for_starting_server
 }

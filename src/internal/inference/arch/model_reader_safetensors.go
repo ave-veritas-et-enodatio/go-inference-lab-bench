@@ -465,7 +465,7 @@ func matchHFName(hfName, before, after string) (int, string, bool) {
 }
 
 // ---------------------------------------------------------------------------
-// GGUFReader interface implementations
+// ModelReader metadata-access methods
 // ---------------------------------------------------------------------------
 
 func (r *stModelReader) GetU32(key string) (uint32, bool) {
@@ -841,11 +841,9 @@ func (r *stModelReader) estimateCacheVRAM(maxSeqLen int) uint64 {
 	perTokenPerLayer := 2 * (headDimK + headDimV) * nKVHeads * 4
 	cacheVRAM := uint64(maxSeqLen * nLayers * perTokenPerLayer)
 
-	_, hasSSM := r.archDef.Blocks["recurrent_ssm"]
-
-	// SSM state: models using SSM have per-layer conv state — estimate as similar footprint to KV.
-	// if arch == "qwen35" || arch == "llada" || arch == "llada-moe" {
-	if hasSSM {
+	// SSM state: models with blocks declaring conv/SSM cache have per-layer
+	// recurrent state — estimate as similar footprint to KV.
+	if r.archDef.HasRecurrentCache() {
 		cacheVRAM *= 2
 	}
 

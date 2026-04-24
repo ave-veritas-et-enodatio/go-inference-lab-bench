@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"inference-lab-bench/internal/inference/arch"
 	log "inference-lab-bench/internal/log"
 )
 
@@ -70,7 +69,7 @@ func linearUnmaskSchedule(count, steps int) []int {
 // used (equivalent to the original simultaneous denoising approach).
 func (e *Engine) generateDiffusion(
 	promptIDs []int32, maxTokens int, stopSet map[int32]bool,
-	params GenerateParams, mask *arch.CullingMask,
+	params GenerateParams,
 	onToken func(string) bool, metrics *InferenceMetrics,
 ) error {
 	maskID := e.tokenizer.MaskTokenID()
@@ -89,6 +88,7 @@ func (e *Engine) generateDiffusion(
 		seq[promptLen+i] = maskID
 	}
 
+	const defaultDiffusionSteps = 64
 	var T int
 	var blockLength int
 	if params.Diffusion != nil {
@@ -96,7 +96,7 @@ func (e *Engine) generateDiffusion(
 		blockLength = params.Diffusion.BlockLength
 	}
 	if T <= 0 {
-		T = 64
+		T = defaultDiffusionSteps
 	}
 
 	// Determine block layout. Single block when blockLength is unset or covers all output.
@@ -152,7 +152,7 @@ func (e *Engine) generateDiffusion(
 			}
 
 			// Full sequence every time — completed earlier blocks condition the model.
-			allLogits, err := e.model.ForwardStatelessAllLogits(seq, mask, *params.FlashAttention)
+			allLogits, err := e.model.ForwardStatelessAllLogits(seq, *params.FlashAttention)
 			if err != nil {
 				return fmt.Errorf("diffusion block %d step %d forward: %w", blockNum, step, err)
 			}
@@ -237,7 +237,7 @@ func (e *Engine) generateDiffusion(
 	var logprobLogits []float32
 	var logprobNVocab int
 	if params.LogProbs {
-		lpl, err := e.model.ForwardStatelessAllLogits(seq, mask, *params.FlashAttention)
+		lpl, err := e.model.ForwardStatelessAllLogits(seq, *params.FlashAttention)
 		if err != nil {
 			return fmt.Errorf("diffusion logprob forward: %w", err)
 		}
@@ -272,9 +272,9 @@ func (e *Engine) generateDiffusion(
 		metrics.CompletionTokens++
 	}
 	if hitStop {
-		metrics.FinishReason = "stop"
+		metrics.FinishReason = FinishReasonStop
 	} else {
-		metrics.FinishReason = "length"
+		metrics.FinishReason = FinishReasonLength
 	}
 	return nil
 }

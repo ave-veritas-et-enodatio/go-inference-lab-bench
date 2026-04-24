@@ -3,7 +3,7 @@
 # LLAMA.CPP USED FOR REFERENCE ONLY.
 
 # DO NOT MANUALLY EDIT vvv - use make update-dependencies
-LLAMA_VERSION := b8809
+LLAMA_VERSION := b8892
 LLAMA_REPO := https://github.com/ggerganov/llama.cpp.git
 
 LLAMA_DIR := llama.cpp
@@ -21,21 +21,21 @@ $(LLAMA_MARKER):
 		@[[ -d $(LLAMA_DIR) ]] && (cd $(LLAMA_DIR) && git fetch --tags) || git clone $(LLAMA_REPO) $(LLAMA_DIR)
 		@cd $(LLAMA_DIR) && git -c advice.detachedHead=false checkout $(LLAMA_VERSION)
 
-MAKEFILE := $(shell pwd)/Makefile
 update-dependencies: llama-cpp
 	# update llama.cpp to the latest tagged version
-	@cd $(LLAMA_DIR) && git tag --sort=-committerdate  | head -1 | xargs git -c advice.detachedHead=false checkout
+	@git -C $(LLAMA_DIR) fetch --tags
+	@git -C $(LLAMA_DIR) tag --sort=committerdate  | tail -1 | xargs git -C $(LLAMA_DIR) -c advice.detachedHead=false checkout
 	# update our borrowed script and requirements
-	@( \
-	  cp -f $(LLAMA_DIR)/convert_hf_to_gguf.py ./ && \
-		cp -f $(LLAMA_DIR)/requirements/*.txt ./requirements/ && \
-		git clean -fxd requirements/ > /dev/null \
-	)
+	@cp -f $(LLAMA_DIR)/convert_hf_to_gguf.py ./
+	@rm -rf requirements/
+	@cp -r $(LLAMA_DIR)/requirements .
+	@git clean -fxd requirements/ > /dev/null
+	@rm -rf gguf/
+	@cp -r $(LLAMA_DIR)/gguf-py/gguf .
 	# update Makefile with the new version tag.
 	@( \
-		cd $(LLAMA_DIR) && \
-		VTAG=$$(git describe --tag) && \
-		sed "s/^LLAMA_VERSION := $(LLAMA_VERSION)/LLAMA_VERSION := $$VTAG/" $(MAKEFILE) > $(MAKEFILE).tmp && \
-		mv -f $(MAKEFILE).tmp $(MAKEFILE) && \
-		echo "LLAMA_VERSION := $$VTAG" \
+		VTAG=$$(git -C $(LLAMA_DIR) describe --tag) && \
+		sed "s/^LLAMA_VERSION := $(LLAMA_VERSION)/LLAMA_VERSION := $$VTAG/" Makefile > Makefile.tmp && \
+		mv -f Makefile.tmp Makefile && \
+		echo "LLAMA_VERSION: $(LLAMA_VERSION) -> $$VTAG" \
 	)

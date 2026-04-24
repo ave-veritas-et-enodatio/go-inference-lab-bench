@@ -105,8 +105,7 @@ func BuildTensorDimsMap(weights *ResolvedWeights, dimLookup func(string) (int64,
 //
 // Common weights are split by purpose: attn_norm belongs to block_L (it normalizes
 // the block's input); all other common weights (ffn_norm) belong
-// to ffn_L because they normalize the FFN's input. This ensures culling block_L does
-// not silence the FFN's pre-normalization step.
+// to ffn_L because they normalize the FFN's input.
 //
 // Each FFN module's FFNExpertRouted field is resolved from the builder's contract
 // via the registry: layers with FFNAlt weights use def.FFNAlt.Builder; others use

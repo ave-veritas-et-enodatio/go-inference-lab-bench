@@ -104,12 +104,6 @@
   <rect x="2" y="3" width="12" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
   <text class="tlbl" x="8" y="20" transform="rotate(-90,8,20)">norm</text>
   <line x1="15" y1="0" x2="15" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
-  <rect x="17" y="8" width="32" height="32" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5"/>
-  <polygon points="17,8 24,1 56,1 49,8" fill="#ffe8cc" stroke="#EF6C00" stroke-width="0.5"/>
-  <text class="tlbl" x="33" y="24">Dx</text>
-  <rect x="56" y="8" width="32" height="32" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5"/>
-  <polygon points="56,8 63,1 95,1 88,8" fill="#ffe8cc" stroke="#EF6C00" stroke-width="0.5"/>
-  <text class="tlbl" x="72" y="24">exps</text>
   <line x1="98" y1="20" x2="108" y2="20" stroke="#AAAAAA" stroke-width="0.8"/>
   <polygon points="104,18 108,20 104,22" fill="#AAAAAA"/>
   </symbol>
@@ -170,13 +164,10 @@
   </symbol>
   <symbol id="summary" overflow="visible">
   <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Summary</text>
-  <rect width="170" height="96" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <rect width="170" height="60" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
   <text class="shdr" x="4" y="11">61 modules</text>
-  <text class="ltxt" x="4" y="24">  0 culled (0%)</text>
-  <text class="shdr" x="4" y="41">882 tensors</text>
-  <text class="ltxt" x="4" y="54">  0 culled (0%)</text>
-  <text class="shdr" x="4" y="71">822 weights</text>
-  <text class="ltxt" x="4" y="84">  0 elided (0%)</text>
+  <text class="shdr" x="4" y="29">882 tensors</text>
+  <text class="shdr" x="4" y="47">822 weights</text>
   </symbol>
 </defs>
   <rect width="588" height="1115" fill="#fafafa" rx="8"/>

@@ -105,10 +105,10 @@ func configBoolOr(config map[string]any, key string, defaultVal bool) bool {
 	return defaultVal
 }
 
-// configStr returns a string config value or "".
+// configStrOr returns a string config value, falling back to defaultVal.
 func configStrOr(config map[string]any, key string, defaultVal string) string {
 	if config == nil {
-		return ""
+		return defaultVal
 	}
 	if v, ok := config[key]; ok {
 		if s, ok := v.(string); ok {
@@ -116,4 +116,17 @@ func configStrOr(config map[string]any, key string, defaultVal string) string {
 		}
 	}
 	return defaultVal
+}
+
+// makeTensorFromSpec creates a new graph-context tensor from explicit type and dimension parameters.
+// Unused dimensions should be 1. Used for Go-parser tensor creation.
+func makeTensorFromSpec(gctx *ggml.GraphContext, typ ggml.GGMLType, ne0, ne1, ne2, ne3 int64) ggml.Tensor {
+	if ne3 > 1 {
+		return ggml.NewTensor4D(gctx, typ, ne0, ne1, ne2, ne3)
+	} else if ne2 > 1 {
+		return ggml.NewTensor3D(gctx, typ, ne0, ne1, ne2)
+	} else if ne1 > 1 {
+		return ggml.NewTensor2D(gctx, typ, ne0, ne1)
+	}
+	return ggml.NewTensor1D(gctx, typ, ne0)
 }

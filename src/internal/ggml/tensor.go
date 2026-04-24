@@ -101,7 +101,7 @@ func TensorType(t Tensor) GGMLType {
 
 // RoPE mode constants.
 const (
-	RopeNeoX = int(C.GGML_GO_ROPE_NEOX)
+	RopeTypeNeoX = int(C.GGML_GO_ROPE_TYPE_NEOX)
 )
 
 // Status constants.

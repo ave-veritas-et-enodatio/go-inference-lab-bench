@@ -113,7 +113,7 @@ func defaultRopeExt(ctx *ggml.GraphContext, a, pos ggml.Tensor, nRot int, freqBa
 // defaultRopeMulti applies multi-section RoPE with standard YaRN scaling defaults.
 func defaultRopeMulti(ctx *ggml.GraphContext, a, pos ggml.Tensor,
 	nRot int, sections [4]int, freqBase float32) ggml.Tensor {
-	return ggml.RopeMulti(ctx, a, pos, ggml.NilTensor(), nRot, sections, ggml.RopeNeoX, 0,
+	return ggml.RopeMulti(ctx, a, pos, ggml.NilTensor(), nRot, sections, ggml.RopeTypeNeoX, 0,
 		freqBase, 1.0, 0.0, 1.0, 32.0, 1.0)
 }
 

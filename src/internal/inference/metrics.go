@@ -3,8 +3,18 @@ package inference
 import (
 	"encoding/json"
 	"time"
+)
 
-	"inference-lab-bench/internal/inference/arch"
+// FinishReason is the canonical type for generation stop reason strings.
+// Values are OpenAI-compatible.
+type FinishReason = string
+
+// Finish-reason constants — canonical values for InferenceMetrics.FinishReason
+// and the finishReason helper in completions.go.
+const (
+	FinishReasonStop   FinishReason = "stop"
+	FinishReasonLength FinishReason = "length"
+	FinishReasonError  FinishReason = "error"
 )
 
 // TokenLogProb holds log-probability data for a single generated token.
@@ -38,25 +48,13 @@ type TopLogProb struct {
 
 // InferenceMetrics captures timing and throughput data for a single generation request.
 type InferenceMetrics struct {
-	PromptTokens     int                  // input token count
-	CompletionTokens int                  // output tokens generated
-	FinishReason     string               // "stop" or "length"
-	PrefillDuration  time.Duration        // wall-clock for prefill (all prompt tokens)
-	DecodeDuration   time.Duration        // wall-clock for all decode steps
-	TotalDuration    time.Duration        // wall-clock for entire generation
-	ZeroedTensors    int                  // number of weight tensors zeroed by culling mask
-	TotalTensors     int                  // total weight tensors in model
-	Diagnostic       *InferenceDiagnostic // nil unless inattention culling is active
-	TokenLogProbs    []TokenLogProb       // per-token log-probabilities (nil if not requested)
-	Engagement       *arch.EngagementData `json:"-"` // prefill engagement (stateless only)
-}
-
-// InferenceDiagnostic holds per-request results from the diagnostic capture pass.
-// Populated after a stateless forward pass with attention weight capture.
-type InferenceDiagnostic struct {
-	NAttnLayers int // number of layers with captured attention data
-	NHeads      int // attention heads per layer
-	NTokens     int // tokens in the captured sequence
+	PromptTokens     int            // input token count
+	CompletionTokens int            // output tokens generated
+	FinishReason     string         // "stop" or "length"
+	PrefillDuration  time.Duration  // wall-clock for prefill (all prompt tokens)
+	DecodeDuration   time.Duration  // wall-clock for all decode steps
+	TotalDuration    time.Duration  // wall-clock for entire generation
+	TokenLogProbs    []TokenLogProb // per-token log-probabilities (nil if not requested)
 }
 
 // TokensPerSec returns the decode throughput (output tokens per second).
@@ -83,12 +81,4 @@ func (m *InferenceMetrics) TotalTokensPerSec() float64 {
 		return 0
 	}
 	return float64(m.PromptTokens+m.CompletionTokens) / m.TotalDuration.Seconds()
-}
-
-// CullRatio returns the fraction of tensors zeroed (0.0 to 1.0).
-func (m *InferenceMetrics) CullRatio() float64 {
-	if m.TotalTensors <= 0 {
-		return 0
-	}
-	return float64(m.ZeroedTensors) / float64(m.TotalTensors)
 }

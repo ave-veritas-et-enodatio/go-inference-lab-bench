@@ -4,7 +4,9 @@ import (
 	"testing"
 )
 
-// mockGGUF simulates a Qwen3.5-4B GGUF file.
+// mockGGUF simulates a Qwen3.5-4B GGUF file. Implements ModelReader;
+// tensor-loading methods (TensorCount/Names/Spec, ReadTensor, MinMemoryRequired,
+// Close) are unused by ResolveParams/ResolveWeights and stubbed out.
 type mockGGUF struct {
 	u32s    map[string]uint32
 	f32s    map[string]float32
@@ -12,8 +14,8 @@ type mockGGUF struct {
 	tensors map[string][]int64 // tensor name → ne dims
 }
 
-func (m *mockGGUF) GetU32(key string) (uint32, bool) { v, ok := m.u32s[key]; return v, ok }
-func (m *mockGGUF) GetF32(key string) (float32, bool) { v, ok := m.f32s[key]; return v, ok }
+func (m *mockGGUF) GetU32(key string) (uint32, bool)    { v, ok := m.u32s[key]; return v, ok }
+func (m *mockGGUF) GetF32(key string) (float32, bool)   { v, ok := m.f32s[key]; return v, ok }
 func (m *mockGGUF) GetArrInts(key string) ([]int, bool) { v, ok := m.arrs[key]; return v, ok }
 func (m *mockGGUF) GetArrBools(key string) ([]bool, bool) { return nil, false }
 func (m *mockGGUF) GetTensorDim(name string, dim int) (int64, bool) {
@@ -23,6 +25,13 @@ func (m *mockGGUF) GetTensorDim(name string, dim int) (int64, bool) {
 	}
 	return dims[dim], true
 }
+
+func (m *mockGGUF) TensorCount() int                           { return 0 }
+func (m *mockGGUF) TensorNames() []string                      { return nil }
+func (m *mockGGUF) TensorSpec(string) (TensorSpec, bool)       { return TensorSpec{}, false }
+func (m *mockGGUF) ReadTensor(string, []byte) error            { return nil }
+func (m *mockGGUF) MinMemoryRequired(int) MemReq               { return MemReq{} }
+func (m *mockGGUF) Close() error                               { return nil }
 
 func newQwen35MockGGUF() *mockGGUF {
 	return &mockGGUF{

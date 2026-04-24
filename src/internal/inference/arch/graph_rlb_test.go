@@ -84,7 +84,7 @@ func TestRLBForwardLayerStackEquivalence(t *testing.T) {
 	defer cache1.Free()
 
 	// flashAttn=false for determinism; both paths must match this setting.
-	stackLogitsRaw, err := model.ForwardCached(cache1, promptIDs, nil, false)
+	stackLogitsRaw, err := model.ForwardCached(cache1, promptIDs, false)
 	if err != nil {
 		t.Fatalf("ForwardCached: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRLBForwardLayerStackEquivalence(t *testing.T) {
 
 	in, out := hidA, hidB
 	for il := 0; il < nLayers; il++ {
-		if err := model.RLBForwardLayer(cache2, il, in, positions, nil, false, out, nil); err != nil {
+		if err := model.RLBForwardLayer(cache2, il, in, positions, false, out, nil); err != nil {
 			t.Fatalf("RLBForwardLayer il=%d: %v", il, err)
 		}
 		in, out = out, in

@@ -1,5 +1,5 @@
 // Package archdiagram generates SVG architecture diagrams from TOML model definitions.
-package arch
+package archdiagram
 
 import (
 	"bufio"
@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"inference-lab-bench/internal/inference/arch"
 )
 
 // ArchDiagramOptions controls SVG generation.
@@ -27,9 +29,7 @@ type blockSVG struct {
 }
 
 // RenderDiagram writes a composite SVG for the given architecture definition.
-func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchDiagramOptions) error {
-	pal := diagramPalette()
-
+func RenderArchDiagram(def *arch.ArchDef, blockSVGDir string, w io.Writer, opts ArchDiagramOptions) error {
 	// Load block SVG fragments for all blocks and FFN referenced by this def.
 	// For each block, try <blockName>.svg first (allows block-specific overrides),
 	// then fall back to <builderName>.svg. Map is keyed by display key (block name
@@ -114,7 +114,7 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 
 	// Title
 	cx := svgWidth / 2
-	title := strings.Title(def.Architecture.Name) + " Architecture"
+	title := capitalizeASCII(def.Architecture.Name) + " Architecture"
 	if opts.UseFFNAlt && def.FFNAlt != nil {
 		title += " (" + def.FFNAlt.Builder + " variant)"
 	}
@@ -145,7 +145,7 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 		}
 		blk := blocks[rp.blockName]
 		ffnBlk := blocks[ffnKey]
-		strokeColor := blockColorByName(rp.blockName, pal)
+		strokeColor := blockColorByName(rp.blockName)
 
 		groupH := computeLayerGroupHeight(normHeight, boxGap, arrowLen, blk.Height, ffnBlk.Height)
 		groupW := svgWidth - 2*margin
@@ -162,7 +162,7 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 		// Pre-attn norm
 		normX := centerX(cx, normWidth)
 		cursor += boxGap
-		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, WeightAttnNorm))
+		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, arch.WeightAttnNorm))
 		cursor += normHeight
 		emitArrow(bw, cx, cursor, arrowLen)
 		cursor += arrowLen
@@ -178,7 +178,7 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 		cursor += blk.Height + boxGap
 
 		// Post-attn norm
-		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, WeightFFNNorm))
+		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, arch.WeightFFNNorm))
 		cursor += normHeight
 		emitArrow(bw, cx, cursor, arrowLen)
 		cursor += arrowLen
@@ -205,13 +205,13 @@ func RenderArchDiagram(def *ArchDef, blockSVGDir string, w io.Writer, opts ArchD
 	}
 
 	// Final norm
-	emitRMSNormBox(bw, centerX(cx, normWidth), cursor, normWidth, normHeight, weightNameOrDefault(def.Weights.Global, WeightOutputNorm))
+	emitRMSNormBox(bw, centerX(cx, normWidth), cursor, normWidth, normHeight, weightNameOrDefault(def.Weights.Global, arch.WeightOutputNorm))
 	cursor += normHeight
 	emitArrow(bw, cx, cursor, arrowLen)
 	cursor += arrowLen
 
 	// LM Head
-	lmLabel := def.Weights.Global[WeightOutput]
+	lmLabel := def.Weights.Global[arch.WeightOutput]
 	if def.Architecture.TiedEmbeddings {
 		lmLabel = "tied: reuses token_embd.weight"
 	}
@@ -266,7 +266,7 @@ type routingPath struct {
 	label     string // human-readable label
 }
 
-func collectRoutingPaths(def *ArchDef) []routingPath {
+func collectRoutingPaths(def *arch.ArchDef) []routingPath {
 	r := def.Layers.Routing
 	var paths []routingPath
 
@@ -311,7 +311,7 @@ type displayKeyEntry struct {
 	builderName string
 }
 
-func collectDisplayKeys(def *ArchDef, useFFNAlt bool) []displayKeyEntry {
+func collectDisplayKeys(def *arch.ArchDef, useFFNAlt bool) []displayKeyEntry {
 	seen := map[string]bool{}
 	var entries []displayKeyEntry
 	add := func(dk, builder string) {
@@ -350,13 +350,8 @@ func loadBlockSVGWithFallback(dir, displayKey, builderName string) (*blockSVG, e
 	return loadBlockSVG(dir, builderName)
 }
 
-func blockColor(builderName string, pal map[string]string) string {
-	return pal[palPrefixBuilder(builderName)+".stroke"]
-}
-
 // blockColorByName returns the stroke color for a block name (e.g. "swa_attention").
-// Uses palPrefix (block-name aware) rather than palPrefixBuilder (builder-name only).
-func blockColorByName(blockName string, pal map[string]string) string {
+func blockColorByName(blockName string) string {
 	return pal[palPrefix(blockName)+".stroke"]
 }
 
@@ -405,24 +400,22 @@ func loadBlockSVG(dir, builderName string) (*blockSVG, error) {
 }
 
 func emitArrow(w *bufio.Writer, cx, y, length int) {
-	pal := diagramPalette()
 	fmt.Fprintf(w, "  <line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke=\"%s\" stroke-width=\"1.5\" marker-end=\"url(#arrow)\"/>\n",
 		cx, y, cx, y+length, pal["ui.arrow"])
 }
 
 func emitSharedDefs(w *bufio.Writer) {
-	pal := diagramPalette()
 	w.WriteString("  <defs>\n")
 	w.WriteString("    <marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"6\" refX=\"8\" refY=\"3\" orient=\"auto\">\n")
 	fmt.Fprintf(w, "      <path d=\"M0,0 L8,3 L0,6\" fill=\"%s\"/>\n", pal["ui.arrow"])
 	w.WriteString("    </marker>\n")
 	for _, def := range []struct{ id, prefix string }{
-		{"ssmGrad", TypeRecurrent},
-		{"attnGrad", TypeFullAttention},
-		{"swaGrad", TypeSWA},
-		{"ffnGrad", TypeFFN},
-		{"normGrad", TypeNorm},
-		{"globalGrad", ModuleGlobal},
+		{"ssmGrad", arch.TypeRecurrent},
+		{"attnGrad", arch.TypeFullAttention},
+		{"swaGrad", arch.TypeSWA},
+		{"ffnGrad", arch.TypeFFN},
+		{"normGrad", arch.TypeNorm},
+		{"globalGrad", arch.ModuleGlobal},
 	} {
 		fmt.Fprintf(w, "    <linearGradient id=\"%s\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n", def.id)
 		fmt.Fprintf(w, "      <stop offset=\"0%%\" stop-color=\"%s\"/><stop offset=\"100%%\" stop-color=\"%s\"/>\n",
@@ -434,27 +427,26 @@ func emitSharedDefs(w *bufio.Writer) {
 	w.WriteString("    </filter>\n")
 }
 
-func emitLegend(w *bufio.Writer, def *ArchDef, cx int, ffnKey string) {
-	pal := diagramPalette()
+func emitLegend(w *bufio.Writer, def *arch.ArchDef, cx int, ffnKey string) {
 	// First pass: compute total width
 	type legendItem struct {
 		label, fill, stroke string
 	}
 	// Gradient ID mapping for arch diagram legend
 	gradID := map[string]string{
-		TypeFullAttention: "url(#attnGrad)",
-		TypeSWA:           "url(#swaGrad)",
-		TypeRecurrent:     "url(#ssmGrad)",
-		TypeFFN:           "url(#ffnGrad)",
+		arch.TypeFullAttention: "url(#attnGrad)",
+		arch.TypeSWA:           "url(#swaGrad)",
+		arch.TypeRecurrent:     "url(#ssmGrad)",
+		arch.TypeFFN:           "url(#ffnGrad)",
 	}
 	var items []legendItem
-	items = append(items, legendItem{"Global", "url(#globalGrad)", pal[ModuleGlobal+".stroke"]})
-	items = append(items, legendItem{"RMSNorm", "url(#normGrad)", pal[TypeNorm+".stroke"]})
+	items = append(items, legendItem{"Global", "url(#globalGrad)", pal[arch.ModuleGlobal+".stroke"]})
+	items = append(items, legendItem{"RMSNorm", "url(#normGrad)", pal[arch.TypeNorm+".stroke"]})
 
 	// Check if model has recurrent blocks — if not, simplify attention label.
 	hasRecurrent := false
 	for _, blk := range def.Blocks {
-		if palPrefixBuilder(blk.Builder) == TypeRecurrent {
+		if palPrefix(blk.Builder) == arch.TypeRecurrent {
 			hasRecurrent = true
 			break
 		}
@@ -472,27 +464,20 @@ func emitLegend(w *bufio.Writer, def *ArchDef, cx int, ffnKey string) {
 	sort.Strings(blkNames)
 	for _, name := range blkNames {
 		blk := def.Blocks[name]
-		// Use palPrefix on block name for palette mapping. This correctly handles
-		// swa_* → "swa", *attention* → "full_attention", etc. For blocks whose name
-		// doesn't match any specific prefix (falls through to "recurrent"), use the
-		// builder-based mapping instead.
 		pp := palPrefix(name)
-		if pp == TypeRecurrent && palPrefixBuilder(blk.Builder) != TypeRecurrent {
-			pp = palPrefixBuilder(blk.Builder)
-		}
 		var label string
 		if builderCount[blk.Builder] > 1 {
 			// Multiple blocks share this builder — use block name to differentiate
 			label = formatBuilderName(name)
 		} else {
 			label = formatBuilderName(blk.Builder)
-			if pp == TypeFullAttention && !hasRecurrent {
+			if pp == arch.TypeFullAttention && !hasRecurrent {
 				label = "attention"
 			}
 		}
 		items = append(items, legendItem{label, gradID[pp], pal[pp+".stroke"]})
 	}
-	ffnPP := palPrefixBuilder(ffnKey)
+	ffnPP := palPrefix(ffnKey)
 	items = append(items, legendItem{formatBuilderName(ffnKey), gradID[ffnPP], pal[ffnPP+".stroke"]})
 
 	totalW := 0
@@ -515,8 +500,7 @@ func emitLegend(w *bufio.Writer, def *ArchDef, cx int, ffnKey string) {
 	fmt.Fprintf(w, "  <text x=\"%d\" y=\"78\" text-anchor=\"middle\" font-size=\"9\" fill=\"%s\" font-family=\"monospace\">@{name} = engine builtin, ${name} = GGUF-resolved param</text>\n", cx, pal["ui.text_hint"])
 }
 
-func emitLayerPattern(w *bufio.Writer, def *ArchDef, nLayers, x, y, width, height int) {
-	pal := diagramPalette()
+func emitLayerPattern(w *bufio.Writer, def *arch.ArchDef, nLayers, x, y, width, height int) {
 	fmt.Fprintf(w, "  <g transform=\"translate(%d, %d)\">\n", x, y)
 	fmt.Fprintf(w, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"%s\" stroke=\"%s\" stroke-width=\"1\" filter=\"url(#shadow)\"/>\n", width, height, pal["ui.box_bg"], pal["ui.box_border"])
 	interval := 0
@@ -572,62 +556,6 @@ func emitLayerPattern(w *bufio.Writer, def *ArchDef, nLayers, x, y, width, heigh
 	w.WriteString("  </g>\n")
 }
 
-// diagramFallbackParams builds ResolvedParams for diagram rendering without GGUF.
-// Covers both rule-based routing (Qwen3.5: full_attn_interval) and pattern-based
-// routing (Gemma4: swa_pattern as every-Nth-layer example).
-func diagramFallbackParams(def *ArchDef, nLayers int) *ResolvedParams {
-	rp := &ResolvedParams{
-		Ints:    map[string]int{},
-		Floats:  map[string]float32{},
-		Strings: map[string]string{},
-		IntArr:  map[string][]int{},
-	}
-
-	if def.Example.FullAttnEvery > 0 {
-		rp.Ints[ParamFullAttnInterval] = def.Example.FullAttnEvery
-	}
-
-	// For pattern routing (fully recorded bool pattern), generate a pattern
-	// at intervals
-	if def.Example.AttnPatternTrueEvery > 0 || def.Example.AttnPatternFalseEvery > 0 {
-		var interval int
-		var baseValue int
-		var intervalValue int
-		if def.Example.AttnPatternTrueEvery > 0 {
-			interval = def.Example.AttnPatternTrueEvery
-			intervalValue = 1
-			baseValue = 0
-		} else {
-			interval = def.Example.AttnPatternFalseEvery
-			intervalValue = 0
-			baseValue = 1
-		}
-		pattern := make([]int, nLayers)
-		for i := range pattern {
-			if (i+1)%interval == 0 {
-				pattern[i] = intervalValue
-			} else {
-				pattern[i] = baseValue
-			}
-		}
-		rp.IntArr[def.Layers.Routing.Pattern] = pattern
-	}
-	return rp
-}
-
-// resolveBlockForDiagram determines the block name for a layer in diagram context.
-// Uses resolveBlockName which handles both pattern and rule routing.
-func resolveBlockForDiagram(def *ArchDef, layerIdx int, rp *ResolvedParams) string {
-	blockName, err := resolveBlockName(def, layerIdx, rp)
-	if err != nil {
-		blockName = def.Layers.Routing.IfTrue
-		if blockName == "" {
-			blockName = def.Layers.Routing.IfFalse
-		}
-	}
-	return blockName
-}
-
 // --- Helpers ---
 
 func centerX(center, width int) int { return center - width/2 }
@@ -645,7 +573,6 @@ func computeLayerGroupHeight(normHeight, boxGap, arrowLen, blockH, ffnH int) int
 }
 
 func emitRMSNormBox(bw *bufio.Writer, x, y, width, height int, paramName string) {
-	pal := diagramPalette()
 	fmt.Fprintf(bw, "  <g transform=\"translate(%d, %d)\">\n", x, y)
 	fmt.Fprintf(bw, "    <rect width=\"%d\" height=\"%d\" rx=\"5\" fill=\"url(#normGrad)\" stroke=\"%s\" stroke-width=\"1\" filter=\"url(#shadow)\"/>\n", width, height, pal["norm.stroke"])
 	fmt.Fprintf(bw, "    <text x=\"%d\" y=\"14\" text-anchor=\"middle\" font-weight=\"600\" fill=\"%s\">RMSNorm</text>\n", width/2, pal["norm.text"])
@@ -654,7 +581,6 @@ func emitRMSNormBox(bw *bufio.Writer, x, y, width, height int, paramName string)
 }
 
 func emitGlobalBox(bw *bufio.Writer, x, y, width, height int, title, label string) {
-	pal := diagramPalette()
 	fmt.Fprintf(bw, "  <g transform=\"translate(%d, %d)\">\n", x, y)
 	fmt.Fprintf(bw, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"url(#globalGrad)\" stroke=\"%s\" stroke-width=\"1.2\" filter=\"url(#shadow)\"/>\n", width, height, pal["global.stroke"])
 	fmt.Fprintf(bw, "    <text x=\"%d\" y=\"17\" text-anchor=\"middle\" font-weight=\"600\" fill=\"%s\">%s</text>\n", width/2, pal["global.text"], title)
@@ -668,7 +594,7 @@ func formatBuilderName(name string) string {
 
 // isTrivialRouting returns true when all layers use the same block type,
 // making the routing rule pure noise in the diagram.
-func isTrivialRouting(def *ArchDef) bool {
+func isTrivialRouting(def *arch.ArchDef) bool {
 	r := def.Layers.Routing
 	return r.Uniform != "" || r.IfTrue == r.IfFalse || (r.IfTrue != "" && r.IfFalse == "") || (r.IfFalse != "" && r.IfTrue == "")
 }
