@@ -220,12 +220,16 @@ const (
 // MoEExpertWeights is the set of MoE weight names that are routed expert tensors
 // (as opposed to router, shared expert, or norm weights). Used by the diagram
 // renderer to partition MoE module weights into expert vs shared groups.
+//
+// Keyed on the stripped tensor names stored in Module.Weights (i.e. the
+// WeightFFN*Exps constants with the `ffn_` prefix), not the short logical
+// names from [ffn.weights] / [ffn_alt.weights] TOML keys.
 var MoEExpertWeights = map[string]bool{
-	MoEGateExps:   true,
-	MoEUpExps:     true,
-	MoEGateUpExps: true,
-	MoEDownExps:   true,
-	MoEDownExpsS:  true,
+	WeightFFNGateExps:   true,
+	WeightFFNUpExps:     true,
+	WeightFFNGateUpExps: true,
+	WeightFFNDownExps:   true,
+	WeightFFNDownExpsS:  true,
 }
 
 

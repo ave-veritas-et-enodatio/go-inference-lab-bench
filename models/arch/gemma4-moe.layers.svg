@@ -104,6 +104,12 @@
   <rect x="2" y="3" width="12" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
   <text class="tlbl" x="8" y="20" transform="rotate(-90,8,20)">norm</text>
   <line x1="15" y1="0" x2="15" y2="40" stroke="#DDDDDD" stroke-width="0.7"/>
+  <rect x="17" y="8" width="32" height="32" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5"/>
+  <polygon points="17,8 24,1 56,1 49,8" fill="#ffe8cc" stroke="#EF6C00" stroke-width="0.5"/>
+  <text class="tlbl" x="33" y="24">Dx</text>
+  <rect x="56" y="8" width="32" height="32" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5"/>
+  <polygon points="56,8 63,1 95,1 88,8" fill="#ffe8cc" stroke="#EF6C00" stroke-width="0.5"/>
+  <text class="tlbl" x="72" y="24">exps</text>
   <line x1="98" y1="20" x2="108" y2="20" stroke="#AAAAAA" stroke-width="0.8"/>
   <polygon points="104,18 108,20 104,22" fill="#AAAAAA"/>
   </symbol>

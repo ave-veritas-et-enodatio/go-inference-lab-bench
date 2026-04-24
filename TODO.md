@@ -20,4 +20,3 @@
 4. Multiple concurrent models
 5. Linux/CUDA support (rename GPU init, add CUDA backend)
 6. implement microbatching support for diffusion generation
-7. safetensor support
