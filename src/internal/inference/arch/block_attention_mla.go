@@ -16,9 +16,9 @@ func buildMLAQueryPath(ctx *ggml.GraphContext, cur ggml.Tensor, weights map[stri
 	rmsEps, freqBase float32) ggml.Tensor {
 	nopeDim := headKDim - ropeDim
 
-	qCompressed := ggml.MulMat(ctx, weights["attn_q_a"], cur)
-	qCompressed = rmsNormApply(ctx, qCompressed, weights["attn_q_a_norm"], rmsEps)
-	qExpanded := ggml.MulMat(ctx, weights["attn_q_b"], qCompressed)
+	qCompressed := ggml.MulMat(ctx, weights[WeightAttnQA], cur)
+	qCompressed = rmsNormApply(ctx, qCompressed, weights[WeightAttnQANorm], rmsEps)
+	qExpanded := ggml.MulMat(ctx, weights[WeightAttnQB], qCompressed)
 	q := ggml.Reshape3D(ctx, qExpanded, headKDim, nHeads, seqLen)
 
 	qNopeNb1 := q.Nb(1)
@@ -30,22 +30,39 @@ func buildMLAQueryPath(ctx *ggml.GraphContext, cur ggml.Tensor, weights map[stri
 	qPe = defaultRopeExt(ctx, qPe, pos, int(ropeDim), freqBase)
 
 	qNopePerm := ggml.Permute(ctx, qNope, 0, 2, 1, 3)
-	qAbsorbed := ggml.MulMat(ctx, weights["attn_k_b"], qNopePerm)
+	qAbsorbed := ggml.MulMat(ctx, weights[WeightAttnKB], qNopePerm)
 	qAbsorbed = ggml.Permute(ctx, qAbsorbed, 0, 2, 1, 3)
 	return ggml.Concat(ctx, qAbsorbed, qPe, 0)
 }
 
+// buildMLAOutputTail decompresses V (kqv x attn_v_b), merges heads, and applies
+// the output projection. Shared tail for MLA's stateless and cached paths.
+func buildMLAOutputTail(ctx *ggml.GraphContext, kqv ggml.Tensor, weights map[string]ggml.Tensor,
+	nHeads, seqLen int64) ggml.Tensor {
+	// V decompression: attn_v_b [kvLoraRank, headVDim, nHeads] @ kqv [kvLoraRank, seqLen, nHeads]
+	// Batched matmul on dim 2 (nHeads), contracts on dim 0 (kvLoraRank) -> [headVDim, seqLen, nHeads]
+	decompressed := ggml.MulMat(ctx, weights[WeightAttnVB], kqv)
+
+	// Merge heads: permute to [headVDim, nHeads, seqLen] then flatten
+	headVDim := decompressed.Ne(0)
+	merged := ggml.Permute(ctx, decompressed, 0, 2, 1, 3)
+	cur := ggml.Cont2D(ctx, merged, headVDim*nHeads, seqLen)
+	cur = ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
+	return cur
+}
+
 func (b *MLAAttentionBuilder) Contract() BuilderContract {
 	return BuilderContract{
+		Kind: KindAttention,
 		RequiredWeights: []string{
-			"attn_q_a", "attn_q_a_norm", "attn_q_b",
-			"attn_kv_a_mqa", "attn_kv_a_norm",
-			"attn_k_b", "attn_v_b",
+			WeightAttnQA, WeightAttnQANorm, WeightAttnQB,
+			WeightAttnKVAMQA, WeightAttnKVANorm,
+			WeightAttnKB, WeightAttnVB,
 			WeightAttnOutput,
 		},
 		RequiredParams: []string{
 			ParamNHeads, ParamRMSEps, ParamRoPENRot, ParamRoPEFreqBase,
-			"kv_lora_rank", "head_k_dim_mla",
+			ParamKVLoraRank, ParamHeadKDimMLA,
 		},
 	}
 }
@@ -58,8 +75,8 @@ func (b *MLAAttentionBuilder) BuildStateless(
 	nHeads := int64(params.Ints[ParamNHeads])
 	rmsEps := params.Floats[ParamRMSEps]
 	nTokens := inputs.NTokens
-	kvLoraRank := int64(params.Ints["kv_lora_rank"])
-	headKDim := int64(params.Ints["head_k_dim_mla"])
+	kvLoraRank := int64(params.Ints[ParamKVLoraRank])
+	headKDim := int64(params.Ints[ParamHeadKDimMLA])
 	ropeDim := int64(params.Ints[ParamRoPENRot])
 	freqBase := params.Floats[ParamRoPEFreqBase]
 
@@ -67,7 +84,7 @@ func (b *MLAAttentionBuilder) BuildStateless(
 		nHeads, headKDim, ropeDim, nTokens, rmsEps, freqBase)
 
 	// KV path: compress → split → norm + RoPE
-	kvFull := ggml.MulMat(ctx, weights["attn_kv_a_mqa"], cur) // [kvLoraRank+ropeDim, nTokens]
+	kvFull := ggml.MulMat(ctx, weights[WeightAttnKVAMQA], cur) // [kvLoraRank+ropeDim, nTokens]
 
 	// Split into compressed KV and positional K
 	kvCompressed := ggml.View2D(ctx, kvFull, kvLoraRank, nTokens,
@@ -77,7 +94,7 @@ func (b *MLAAttentionBuilder) BuildStateless(
 		int(kvLoraRank)*kvFull.ElementSize())
 
 	// Norm the compressed KV
-	kvCompressed = rmsNormApply(ctx, kvCompressed, weights["attn_kv_a_norm"], rmsEps)
+	kvCompressed = rmsNormApply(ctx, kvCompressed, weights[WeightAttnKVANorm], rmsEps)
 
 	// RoPE on positional K only
 	kPe = defaultRopeExt(ctx, kPe, inputs.InpPos, int(ropeDim), freqBase)
@@ -101,16 +118,7 @@ func (b *MLAAttentionBuilder) BuildStateless(
 	vT := ggml.Cont(ctx, ggml.Transpose(ctx, vPerm))
 	kqv := ggml.MulMat(ctx, vT, kq) // [kvLoraRank, nTokens, nHeads]
 
-	// V decompression: attn_v_b [kvLoraRank, headVDim, nHeads] @ kqv [kvLoraRank, nTokens, nHeads]
-	// Batched matmul on dim 2 (nHeads), contracts on dim 0 (kvLoraRank) → [headVDim, nTokens, nHeads]
-	decompressed := ggml.MulMat(ctx, weights["attn_v_b"], kqv)
-
-	// Merge heads: permute to [headVDim, nHeads, nTokens] then flatten
-	headVDim := decompressed.Ne(0)
-	merged := ggml.Permute(ctx, decompressed, 0, 2, 1, 3) // [headVDim, nHeads, nTokens]
-	cur = ggml.Cont2D(ctx, merged, headVDim*nHeads, nTokens)
-	cur = ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
-	return cur
+	return buildMLAOutputTail(ctx, kqv, weights, nHeads, nTokens)
 }
 
 func (b *MLAAttentionBuilder) BuildCached(
@@ -123,8 +131,8 @@ func (b *MLAAttentionBuilder) BuildCached(
 	nNew := inputs.NTokens
 	nKV := inputs.NKV
 	seqPos := inputs.SeqPos
-	kvLoraRank := int64(params.Ints["kv_lora_rank"])
-	headKDim := int64(params.Ints["head_k_dim_mla"])
+	kvLoraRank := int64(params.Ints[ParamKVLoraRank])
+	headKDim := int64(params.Ints[ParamHeadKDimMLA])
 	ropeDim := int64(params.Ints[ParamRoPENRot])
 	freqBase := params.Floats[ParamRoPEFreqBase]
 	kDim := kvLoraRank + ropeDim // total K cache dim per entry
@@ -133,13 +141,13 @@ func (b *MLAAttentionBuilder) BuildCached(
 		nHeads, headKDim, ropeDim, nNew, rmsEps, freqBase)
 
 	// KV path for new tokens
-	kvFull := ggml.MulMat(ctx, weights["attn_kv_a_mqa"], cur)
+	kvFull := ggml.MulMat(ctx, weights[WeightAttnKVAMQA], cur)
 	kvCompressed := ggml.View2D(ctx, kvFull, kvLoraRank, nNew, kvFull.Nb(1), 0)
 	kPeNew := ggml.View3D(ctx, kvFull, ropeDim, int64(1), nNew,
 		kvFull.Nb(1), kvFull.Nb(1),
 		int(kvLoraRank)*kvFull.ElementSize())
 
-	kvCompressed = rmsNormApply(ctx, kvCompressed, weights["attn_kv_a_norm"], rmsEps)
+	kvCompressed = rmsNormApply(ctx, kvCompressed, weights[WeightAttnKVANorm], rmsEps)
 	kPeNew = defaultRopeExt(ctx, kPeNew, inputs.InpPos, int(ropeDim), freqBase)
 
 	kvCompressed3d := ggml.Reshape3D(ctx, kvCompressed, kvLoraRank, int64(1), nNew)
@@ -177,14 +185,5 @@ func (b *MLAAttentionBuilder) BuildCached(
 	vT := ggml.Cont(ctx, ggml.Transpose(ctx, vAttn))
 	kqv := ggml.MulMat(ctx, vT, kq)
 
-	// V decompression: attn_v_b [kvLoraRank, headVDim, nHeads] @ kqv [kvLoraRank, nNew, nHeads]
-	// Batched matmul on dim 2 (nHeads), contracts on dim 0 (kvLoraRank) → [headVDim, nNew, nHeads]
-	decompressed := ggml.MulMat(ctx, weights["attn_v_b"], kqv)
-
-	// Merge heads: permute to [headVDim, nHeads, nNew] then flatten
-	headVDim := decompressed.Ne(0)
-	merged := ggml.Permute(ctx, decompressed, 0, 2, 1, 3) // [headVDim, nHeads, nNew]
-	cur = ggml.Cont2D(ctx, merged, headVDim*nHeads, nNew)
-	cur = ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
-	return cur
+	return buildMLAOutputTail(ctx, kqv, weights, nHeads, nNew)
 }

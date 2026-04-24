@@ -1,6 +1,6 @@
 # Inference Lab Bench
 
-From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-model API server, data-driven architecture definition via TOML DSL, KV-cached and stateless inference, weight culling infrastructure, and visualization tooling.
+From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-model API server, data-driven architecture definition via TOML DSL, KV-cached and stateless inference, and visualization tooling.
 
 ## Project Priorities
 
@@ -45,9 +45,9 @@ Known working models (links in README.md):
 - **Model definition**: TOML DSL (`models/arch/*.arch.toml`)
 - **Inference backend**: ggml (git submodule), gpu-accelerated
 - **Model format**: GGUF (`*.gguf`) and safetensors (`*.st/` directories), auto-detected at load time
-- **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"cull_method"`, `"enable_thinking"`, `"elide_thinking"`, `"logprobs"`, `"top_logprobs"`, `"model":"default"`, `"diffusion"` (nested object: `steps`, `block_length`; ignored with a warning on non-diffusion models). Legacy `/v1/*` also supported. Diagnostic browser at `/diag/`. Control endpoint at `/ctl/` (`?memstats` = memory stats; `?quit` = graceful shutdown; `?quit&now` = immediate). Request-level overrides of server config defaults logged as `[req] param overrides: ...`.
-- **Diagnostics**: `/diag/` serves files from `bin/diag/` — a useful location for dumping R&D diagnostic output (SVGs, culling maps, etc.) that can be viewed in-browser while the server is running.
-- **Config**: `config/api_config.toml` — `[server]` (host, port, auth_token), `[models]` (directory, default), `[inference]` (max_seq_len, enable_thinking_default, elide_thinking_default, log_thinking, cull_method_default, single_resident_model, max_request_seq_len, strict_mode)
+- **API**: OpenAI-compatible (`/api/v1/models`, `/api/v1/chat/completions`) with extensions: `"stateless"`, `"enable_thinking"`, `"elide_thinking"`, `"logprobs"`, `"top_logprobs"`, `"model":"default"`, `"diffusion"` (nested object: `steps`, `block_length`; ignored with a warning on non-diffusion models). Legacy `/v1/*` also supported. Diagnostic browser at `/diag/`. Control endpoint at `/ctl/` (`?memstats` = memory stats; `?quit` = graceful shutdown; `?quit&now` = immediate). Request-level overrides of server config defaults logged as `[req] param overrides: ...`.
+- **Diagnostics**: `/diag/` serves files from `bin/diag/` — a useful location for dumping R&D diagnostic output (SVGs, etc.) that can be viewed in-browser while the server is running.
+- **Config**: `config/api_config.toml` — `[server]` (host, port, auth_token), `[models]` (directory, default), `[inference]` (max_seq_len, enable_thinking_default, elide_thinking_default, log_thinking, single_resident_model, max_request_seq_len, strict_mode)
 - **Default listen**: `0.0.0.0:11116`
 
 ## Source Layout
@@ -72,7 +72,6 @@ src/
     serve_api.go                serve-api
     chat.go                     chat
     gen_arch_diagram.go         gen-arch-diagram: SVG from TOML
-    gen_cull_metadata.go        gen-cull-metadata: writes .cullmeta sidecar
   internal/
     log/                        Structured leveled logger (Debug/Info/Warn/Error/Fatal); see ### Internal Logging
     util/                       Project-wide utilities (LoadTOML, WriteJSON, BenchPaths, ResolvePaths, extension constants)
@@ -84,14 +83,13 @@ src/
       generate_cached.go        generateCached — KV/SSM-cached autoregressive loop
       generate_stateless.go     generateStateless — full-sequence recompute autoregressive loop
       generate_diffusion.go     generateDiffusion — block-based iterative masked denoising
-      metrics.go                InferenceMetrics (timing, throughput, cull ratio, FinishReason, optional Diagnostic)
-      diagnostic.go             Post-generation diagnostic runners (additional forward passes, analysis)
+      metrics.go                InferenceMetrics (timing, throughput, FinishReason)
       sampler.go                Greedy and top-p sampling, ComputeTopLogProbs (stable log-softmax)
       tokenizer.go              BPE tokenizer (GPT-2 byte-level + SentencePiece dual mode); chat template from GGUF via gonja; readGGUFTokensRaw direct GGUF binary reader
       arch/
         arch.go                 ArchDef, TOML parser, Validate() with builder contracts
         arch_util.go            Shared tensor-op helpers, cache key constants, configIntOr/configFloatOr/configStr, attentionScale
-        model_reader.go         ModelReader interface (GGUFReader + tensor loading), GGUF adapter
+        model_reader.go         ModelReader interface (metadata + tensor loading)
         safetensors_index.go    LoadSafetensorsIndex() — JSON index parser + shard header reader
         safetensors_reader.go   Safetensors ModelReader implementation; BF16→F32 conversion
         stmap.go                .arch.stmap.toml parser (LoadArchSTMap, FindSTMapByHFClass)
@@ -99,15 +97,12 @@ src/
         params.go               Param resolver + routing expression eval
         weights.go              Weight resolver (template expansion, layer routing)
         blocks.go               BlockBuilder/FFNBuilder interfaces, ForwardCaptures, SharedKVState, GraphInputs, LayerCache, registry
-        engagement.go           EngagementData: per-layer cosine similarity (block + FFN residual stream; populated by ForwardStateless)
-        block_attention.go      full_attention_gated (Qwen3.5)
-        block_attention_std.go  attention (Llama, Gemma4 SWA/global; supports sliding_window config, shared KV)
+        block_attention.go      attention — standard multi-head (Llama, Gemma4 SWA/global; sliding_window, shared KV)
+        block_attention_gated.go full_attention_gated — gated attention with QK-norm and MRoPE (Qwen3.5)
         block_attention_mla.go  mla_attention (DeepSeek2/GLM-4)
         block_ssm.go            gated_delta_net (Qwen3.5 SSM)
-        block_ffn.go            swiglu
-        block_ffn_geglu.go      geglu (GeGLU FFN: gelu(gate*x) * up * x → down)
+        block_ffn.go            swiglu + geglu (shared gluBuilder, activation-parameterized)
         block_ffn_moe.go        moe (MoE + shared expert + expert bias)
-        mask.go                 CullingMask (whole-tensor zeroing)
         modules.go              Module, ModuleMap
         module_map.go           BuildModuleMap, BuildTensorDimsMap
         weight_store.go         WeightStore: immutable GPU-resident tensor storage
@@ -115,15 +110,13 @@ src/
         cache.go                Cache allocation (NewCache, GenericCache)
         graph.go                Forward pass (ForwardStateless, ForwardStatelessAllLogits, ForwardCached, forwardStatelessCore, runLayers)
         validate_lines.go       ResolveErrorLines (TOML key path → source line)
-        diagram_util.go         Shared diagram palette (diagramPalette)
-        arch_diagram.go         Architecture overview SVG renderer
-        module_map_diagram.go   Module map SVG renderer (cull overlays)
-      culling/
-        culling.go              ApplyCulling dispatch
-        culling_meta.go         CullingMeta, LoadCullingMeta (auto-detects binary formats + TOML)
-        culling_util.go         WriteCullDiagnostics
-        method_inattention.go   Inattention culling: (empty shell) prompt meta, block engagement
-        method_random.go        Random test pattern culling
+        keys.go                 Canonical string constants for map keys, module identifiers, config keys
+        model_reader_safetensors_xform.go  Load-time safetensors tensor transform pipeline (reorder, permute)
+      archdiagram/              SVG diagram renderers (separate package)
+        arch_diagram.go         Architecture overview SVG renderer (RenderArchDiagram)
+        layers_diagram.go       Layers Diagram SVG renderer (RenderLayersDiagram)
+        palette.go              Shared diagram palette (Pal())
+        weights.go              Weight resolution for diagrams (ResolveWeightsForDiagram)
       ggml/                     Go wrappers for ggml ops (~43 functions)
   ggml_lib/                     C op wrappers + ggml build
   third_party/ggml/             ggml git submodule
@@ -131,7 +124,7 @@ test_inference.sh               Test harness (works with bench or llama-server v
 test_equiv.sh                   Logprob equivalence test: bench vs llama-server, stateless vs non-stateless, flash vs standard
 ```
 
-All SVG renderers share a single palette from `diagram_util.go:diagramPalette()`. To change any color, update that map only.
+All SVG renderers share a single palette from `archdiagram/palette.go:Pal()`. To change any color, update that map only.
 
 ## Build & Run
 
@@ -145,13 +138,11 @@ make arch-diagrams      # rebuild SVG diagrams from models/arch/*.arch.toml
 make st-tok-ggufs       # (re)generate tokenizer.gguf sidecar in every models/*.st/ dir
 make test               # run go unit tests
 make integration-test   # test inference end to end for all models
-make equiv-test         # test equivalence of inference across various pairs of cases
 
 # CLI subcommands
 ./bin/bench serve-api
 ./bin/bench chat
 ./bin/bench gen-arch-diagram [--layers] [--blocks] <input.toml> [output.svg]
-./bin/bench gen-cull-metadata --cull-method <method> [--cpu] <model.gguf>
 
 # Safetensors conversion tools
 tools/hf_to_gguf_setup.sh       One-time setup: Python venv + llama.cpp convert script
@@ -182,8 +173,9 @@ curl -X POST localhost:11116/api/v1/chat/completions \
 ```
 
 **Validating Changes**
-* `make test && make integration-test` must pass.
-* When adding new model architectures or changing inference code, `make equiv-test` must also pass — it compares top-1 logprobs against `llama-server` (Homebrew) and between the GGUF and safetensors loader paths to verify inference correctness within GPU floating-point variance. This is the authoritative gate for any change touching the load or inference path.
+* The acceptance gate for every change, without exception: `make test && make integration-test && make equiv-test`. No partial gates — this applies to mechanical fixes and refactors just as much as inference changes.
+* Only one instance of `make integration-test` or `make equiv-test` can run at a time — port and GPU resource contention prevent concurrent runs. All validation is strictly sequential.
+* `make equiv-test` compares top-1 logprobs against `llama-server` (Homebrew) and between the GGUF and safetensors loader paths to verify inference correctness within GPU floating-point variance. This is the authoritative correctness gate.
 * Run `ALL_MODELS=true bash test_inference.sh "..."` before declaring any inference change complete. Llama is easy mode — edge cases surface on Qwen3.5, Qwen3.5-MoE, DeepSeek2, and Gemma4.
 
 **Load-time defensive checks** — the loader runs three cheap sanity checks that turn silent numerical failures into loud load-time errors. Do not disable them without cause:
@@ -244,9 +236,6 @@ Optional GGUF params use `?` suffix (silently skipped if missing). Full spec: `m
 - **`MulMatSetPrecF32`**: forces F32 accumulation on a matmul op (required for correct Gemma4 attention scores)
 - Exact params: `models/arch/gemma4.arch.toml`
 
-### Culling Metadata Generation
-Hollow system for user exploration/implementation
-
 ### Internal Logging
 
 **Package**: `inference-lab-bench/internal/log` — replaces all prior `log.Printf` / `fmt.Fprintf(os.Stderr, ...)` usage.
@@ -279,7 +268,7 @@ On unrecognized input, `ParseLevel` returns `(LevelInfo, false)` — always chec
 - `--log-level <level>` — stderr level (`DEBUG|INFO|WARN|ERROR|NONE`), default `INFO`
 - --log-file-line — enables logging of source file names and line numbers 
 - `make serve` passes `--log bin/bench.log --log-level INFO`
-- Batch commands (`gen-arch-diagram`, `gen-cull-metadata`) do not expose these flags
+- Batch commands (`gen-arch-diagram`) do not expose these flags
 
 **ggml C library log routing** (`src/internal/inference/ggml/logging.go`):
 
@@ -295,14 +284,13 @@ On unrecognized input, `ParseLevel` returns `(LevelInfo, false)` — always chec
 - Think content must be capped at 500 chars before logging; request string fields at 64 chars.
 - `LOG_LEVEL` env var does not exist — level comes only from `--log-level`.
 - No slog dependency; no third-party logging dependency.
-- `ModuleMap.CullLog []string` in the culling package is a data structure, not a logger — do not confuse it with this package.
 
 ### Path Resolution and Injection
 
 `util.BenchPaths` carries the standard directory layout (`ExeDir`, `ConfigDir`, `ModelsDir`, `ArchDir`, `DiagDir`) derived from the running executable's location. Two rules:
 
-- **Resolution happens once, in `bench/`**. `util.ResolvePaths() (BenchPaths, error)` is called from each cobra entry point (`serve_api.go`, `chat.go`, `gen_arch_diagram.go`, `gen_cull_metadata.go`). The result is cached for the process lifetime via `sync.Once`. On error, the cobra entry calls `log.Fatal` itself.
-- **Injection downstream**. Library code never calls `ResolvePaths`. `BenchPaths` is passed into `apiserver.NewServer(paths, cfg, manager)`, then forwarded to `inference.NewEngine(...)` and culling helpers. `Server` stores `paths util.BenchPaths` and reads `paths.DiagDir` / `paths.ArchDir` from it. This keeps utility and library packages free of `os.Exit` and the executable-path dance.
+- **Resolution happens once, in `bench/`**. `util.ResolvePaths() (BenchPaths, error)` is called from each cobra entry point (`serve_api.go`, `chat.go`, `gen_arch_diagram.go`). The result is cached for the process lifetime via `sync.Once`. On error, the cobra entry calls `log.Fatal` itself.
+- **Injection downstream**. Library code never calls `ResolvePaths`. `BenchPaths` is passed into `apiserver.NewServer(paths, cfg, manager)`, then forwarded to `inference.NewEngine(...)`. `Server` stores `paths util.BenchPaths` and reads `paths.DiagDir` / `paths.ArchDir` from it. This keeps utility and library packages free of `os.Exit` and the executable-path dance.
 
 The `BENCH_EXE_DIR` env var is honored by `ResolvePaths` for debug/IDE configurations where source CWD and runtime CWD diverge.
 
@@ -422,7 +410,7 @@ To add a new builder:
 ### Phase 3: Extend the TOML DSL (if needed)
 
 If the architecture needs TOML/param features not yet supported:
-- **New param types**: `params.go` handles int, float, string, int arrays, bool arrays. Add new `Get*` methods to `GGUFReader` interface if needed. Note: safetensors models only provide scalar params from `config.json` — array types (`GetArrInts`, `GetArrBools`) are not available from that format.
+- **New param types**: `params.go` handles int, float, string, int arrays, bool arrays. Add new `Get*` methods to the `ModelReader` interface if needed (and to both GGUF and safetensors adapters). Note: safetensors models only provide scalar params from `config.json` — array types (`GetArrInts`, `GetArrBools`) are not available from that format.
 - **New routing patterns**: `weights.go:resolveBlockName()` supports expression-based (`rule`) and array-based (`pattern`) routing. Array routing uses `IntArr[pattern][layer_idx]` — nonzero → `if_true`, zero → `if_false`.
 - **New cache sharing**: `cache.go:NewCache()` supports param-driven sharing via `n_kv_shared_layers` (layers past `nLayers - nKVShared` reuse the last KV layer's cache per block type).
 - **Architecture-level flags**: `arch.go:ArchMeta` — add fields like `EmbedScale bool`, `TiedEmbeddings bool`, `NonCausal bool`.
@@ -438,6 +426,8 @@ If the architecture needs TOML/param features not yet supported:
 - **SWA mask** — second mask tensor built when `sliding_window` param exists
 
 The layer loop ordering in `runLayers` is: `attn_norm → attention block → post_attn_norm → residual → ffn_norm → FFN → post_ffn_norm → residual → per-layer embed → layer_output_scale`. Verify this matches the reference implementation — ordering differences cause silent numerical divergence.
+
+**Per-layer hook threshold**: `runLayers` implements optional per-layer behaviors as weight- or param-presence nil-checks (see its doc comment for the current list). Adding the (N+1)th hook at N ≥ 5 should trigger a design review: is this the right layer for the feature, or does it warrant an explicit per-layer hook registry? At that scale the readability cost of another nil-check outweighs the benefit of inlining another feature.
 
 ### Phase 5: Write the `.arch.toml` File
 
@@ -468,7 +458,7 @@ This is typically the hardest phase. The model will load and run before the outp
 
 **Debugging strategy** — isolate the first layer/component where values diverge from llama.cpp:
 
-1. Add temporary debug prints in `graph.go` and `block_attention_std.go` to dump first few float values of intermediate tensors at key checkpoints (after norm, after attention, after FFN, etc.)
+1. Add temporary debug prints in `graph.go` and `block_attention.go` to dump first few float values of intermediate tensors at key checkpoints (after norm, after attention, after FFN, etc.)
 2. Add matching debug prints to the llama.cpp reference model (at `cb()` callsites)
 3. Run both on the same prompt, compare values checkpoint by checkpoint
 4. The first checkpoint where values diverge identifies the buggy component

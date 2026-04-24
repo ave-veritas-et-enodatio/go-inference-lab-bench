@@ -2,7 +2,6 @@ package arch
 
 import (
 	ggml "inference-lab-bench/internal/ggml"
-	"inference-lab-bench/internal/log"
 )
 
 // newZeroFilledInput creates a tensor, marks it as input, and appends it to the zero-fill list.
@@ -25,6 +24,7 @@ type GatedDeltaNetBuilder struct{}
 
 func (b *GatedDeltaNetBuilder) Contract() BuilderContract {
 	return BuilderContract{
+		Kind:            KindRecurrent,
 		RequiredWeights: []string{WeightAttnQKV, WeightAttnGate, WeightSSMA, WeightSSMAlpha, WeightSSMBeta,
 			WeightSSMConv1D, WeightSSMDTBias, WeightSSMOut},
 		OptionalWeights: []string{WeightSSMNorm},
@@ -43,16 +43,6 @@ func (b *GatedDeltaNetBuilder) BuildStateless(
 	ctx *ggml.GraphContext, cur ggml.Tensor, weights map[string]ggml.Tensor,
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	zeroFill *[]ggml.Tensor) ggml.Tensor {
-
-	// Validate required weights are present before passing anything to C FFI.
-	requiredWeights := []string{WeightAttnQKV, WeightAttnGate, WeightSSMA, WeightSSMAlpha, WeightSSMBeta,
-		WeightSSMConv1D, WeightSSMDTBias, WeightSSMOut}
-	for _, w := range requiredWeights {
-		if weights[w].IsNil() {
-			log.Error("SSM builder: required weight %q is nil (model file missing weight)", w)
-			return ggml.NilTensor()
-		}
-	}
 
 	nTokens := inputs.NTokens
 	rmsEps := params.Floats[ParamRMSEps]
@@ -132,16 +122,6 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 	ctx *ggml.GraphContext, gf *ggml.Graph, cur ggml.Tensor, weights map[string]ggml.Tensor,
 	params *ResolvedParams, config map[string]any, inputs *GraphInputs,
 	cache *LayerCache) ggml.Tensor {
-
-	// Validate required weights are present before passing anything to C FFI.
-	requiredWeights := []string{WeightAttnQKV, WeightAttnGate, WeightSSMA, WeightSSMAlpha, WeightSSMBeta,
-		WeightSSMConv1D, WeightSSMDTBias, WeightSSMOut}
-	for _, w := range requiredWeights {
-		if weights[w].IsNil() {
-			log.Error("SSM builder: required weight %q is nil (model file missing weight)", w)
-			return ggml.NilTensor()
-		}
-	}
 
 	nNew := inputs.NTokens
 	rmsEps := params.Floats[ParamRMSEps]

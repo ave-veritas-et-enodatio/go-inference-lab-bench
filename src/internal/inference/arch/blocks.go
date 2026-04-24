@@ -61,9 +61,20 @@ type LayerCache struct {
 	SharedGroup string // shared group name (empty = not shared)
 }
 
+// BuilderKind categorizes a builder for palette routing and diagram rendering.
+// The zero value is intentionally invalid — an unset Kind is a programming error.
+type BuilderKind int
+
+const (
+	KindAttention BuilderKind = iota + 1
+	KindRecurrent
+	KindFFN
+)
+
 // BuilderContract declares the expected weights, params, and config for a builder.
 // Used by Validate() to catch mismatches at TOML load time.
 type BuilderContract struct {
+	Kind            BuilderKind         // block category — must be set by every builder
 	RequiredWeights []string            // weight keys that must be present
 	OptionalWeights []string            // weight keys that may be present
 	RequiredParams  []string            // param names read from ResolvedParams
@@ -101,8 +112,8 @@ func init() {
 	blockBuilders["mla_attention"] = &MLAAttentionBuilder{}
 	blockBuilders["full_attention_gated"] = &FullAttentionGatedBuilder{}
 	blockBuilders["gated_delta_net"] = &GatedDeltaNetBuilder{}
-	ffnBuilders["swiglu"] = &SwiGLUBuilder{}
-	ffnBuilders["geglu"] = &GeGLUBuilder{}
+	ffnBuilders["swiglu"] = &gluBuilder{activation: ActivationSiLU}
+	ffnBuilders["geglu"] = &gluBuilder{activation: ActivationGELU}
 	ffnBuilders[FFNSymMoE] = &MoEBuilder{}
 }
 

@@ -10,6 +10,7 @@ type FullAttentionGatedBuilder struct{}
 
 func (b *FullAttentionGatedBuilder) Contract() BuilderContract {
 	return BuilderContract{
+		Kind:            KindAttention,
 		RequiredWeights: []string{WeightAttnQ, WeightAttnK, WeightAttnV, WeightAttnOutput},
 		OptionalWeights: []string{WeightAttnQNorm, WeightAttnKNorm},
 		RequiredParams:  []string{ParamHeadDim, ParamNHeads, ParamNKVHeads, ParamRoPENRot, ParamRoPEFreqBase},

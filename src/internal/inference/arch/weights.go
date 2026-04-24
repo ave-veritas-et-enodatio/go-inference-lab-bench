@@ -41,10 +41,10 @@ func ResolveWeights(def *ArchDef, params *ResolvedParams) (*ResolvedWeights, err
 
 	// Per-layer weights
 	for i := range nLayers {
-		prefix := expandPrefix(def.Layers.Prefix, i)
+		prefix := ExpandPrefix(def.Layers.Prefix, i)
 
 		// Determine block assignment via routing
-		blockName, err := resolveBlockName(def, i, params)
+		blockName, err := ResolveBlockName(def, i, params)
 		if err != nil {
 			return nil, fmt.Errorf("layer %d routing: %w", i, err)
 		}
@@ -92,70 +92,6 @@ func ResolveWeights(def *ArchDef, params *ResolvedParams) (*ResolvedWeights, err
 	return rw, nil
 }
 
-// ResolveWeightsFromDef builds a ResolvedWeights from a parsed ArchDef and a known
-// layer count, without requiring a GGUF file. Only used for example diagram generation
-// (gen-arch-diagram), never for live model processing. Routing uses fallback param
-// values (e.g. full_attn_interval=4); if the rule still cannot be evaluated, all
-// layers use the if_true block type.
-func ResolveWeightsFromDef(def *ArchDef, nLayers int) *ResolvedWeights {
-	rw := &ResolvedWeights{
-		Global: make(map[string]string, len(def.Weights.Global)),
-		Layers: make([]ResolvedLayerWeights, nLayers),
-	}
-
-	for logicalName, tensorName := range def.Weights.Global {
-		rw.Global[logicalName] = tensorName
-	}
-
-	fallbackParams := diagramFallbackParams(def, nLayers)
-
-	for i := range nLayers {
-		prefix := expandPrefix(def.Layers.Prefix, i)
-
-		blockName, err := resolveBlockName(def, i, fallbackParams)
-		if err != nil {
-			blockName = def.Layers.Routing.Uniform
-			if blockName == "" {
-				blockName = def.Layers.Routing.IfTrue
-			}
-			if blockName == "" {
-				blockName = def.Layers.Routing.IfFalse
-			}
-		}
-
-		block := def.Blocks[blockName]
-
-		lw := ResolvedLayerWeights{
-			Index:     i,
-			BlockName: blockName,
-			Prefix:    prefix,
-			Common:    make(map[string]string, len(def.Layers.CommonWeights)),
-			Block:     make(map[string]string, len(block.Weights)),
-			FFN:       make(map[string]string, len(def.FFN.Weights)),
-		}
-
-		for logicalName, suffix := range def.Layers.CommonWeights {
-			lw.Common[logicalName] = prefix + suffix
-		}
-		for logicalName, suffix := range block.Weights {
-			lw.Block[logicalName] = prefix + suffix
-		}
-		for logicalName, suffix := range def.FFN.Weights {
-			lw.FFN[logicalName] = prefix + suffix
-		}
-		if def.FFNAlt != nil {
-			lw.FFNAlt = make(map[string]string, len(def.FFNAlt.Weights))
-			for logicalName, suffix := range def.FFNAlt.Weights {
-				lw.FFNAlt[logicalName] = prefix + suffix
-			}
-		}
-
-		rw.Layers[i] = lw
-	}
-
-	return rw
-}
-
 func resolveCountExpr(expr string, params *ResolvedParams) (int, error) {
 	// Simple case: just a param name
 	if v, ok := params.Ints[expr]; ok {
@@ -168,11 +104,13 @@ func resolveCountExpr(expr string, params *ResolvedParams) (int, error) {
 	return 0, fmt.Errorf("cannot resolve count %q", expr)
 }
 
-func expandPrefix(tmpl string, layerIdx int) string {
+// ExpandPrefix substitutes the layer-index sigil in a per-layer prefix template.
+func ExpandPrefix(tmpl string, layerIdx int) string {
 	return strings.ReplaceAll(tmpl, BuiltinLayerIdxRef, strconv.Itoa(layerIdx))
 }
 
-func resolveBlockName(def *ArchDef, layerIdx int, params *ResolvedParams) (string, error) {
+// ResolveBlockName picks the block type a given layer uses, per the routing config.
+func ResolveBlockName(def *ArchDef, layerIdx int, params *ResolvedParams) (string, error) {
 	r := &def.Layers.Routing
 
 	// Uniform routing: all layers use the same block type

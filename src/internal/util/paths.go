@@ -11,7 +11,6 @@ import (
 // Custom file extensions used across the project.
 const (
 	ExtArchToml       = ".arch.toml" // architecture definition
-	ExtCullMeta       = ".cullmeta"  // culling metadata sidecar
 	ExtSafetensorsDir = ".st"        // safetensors model directory
 )
 

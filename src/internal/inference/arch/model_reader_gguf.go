@@ -3,6 +3,7 @@ package arch
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	ggufparser "github.com/gpustack/gguf-parser-go"
@@ -16,7 +17,7 @@ import (
 
 // ggufModelReader adapts a GGUF file to the ModelReader interface.
 type ggufModelReader struct {
-	*goGGUFReader   // metadata access (inlines GGUFReader methods)
+	*goGGUFReader   // metadata access (inlines GetU32/F32/ArrInts/ArrBools/TensorDim)
 	f               *os.File
 	specs           map[string]tensorSpec // name → spec (Ne, Size, Type)
 	tensorOffsets   map[string]uint64     // name → offset relative to TensorDataStartOffset
@@ -59,6 +60,8 @@ func NewModelReaderGGUF(archDef *ArchDef, modelPath string, gf *ggufparser.GGUFF
 	if err != nil {
 		return nil, fmt.Errorf("opening model file: %w", err)
 	}
+
+	log.Info("ModelReader[gguf] created for %s", filepath.Base(modelPath))
 
 	return &ggufModelReader{
 		goGGUFReader:    reader,
@@ -157,11 +160,9 @@ func (r *ggufModelReader) estimateCacheVRAM(maxSeqLen int) uint64 {
 	perTokenPerLayer := 2 * (headDimK + headDimV) * nKVHeads * 4
 	cacheVRAM := uint64(maxSeqLen * nLayers * perTokenPerLayer)
 
-	_, hasSSM := r.archDef.Blocks["recurrent_ssm"]
-
-	// SSM state: models using SSM have per-layer conv state — estimate as similar footprint to KV.
-	// if arch == "qwen35" || arch == "llada" || arch == "llada-moe" {
-	if hasSSM {
+	// SSM state: models with blocks declaring conv/SSM cache have per-layer
+	// recurrent state — estimate as similar footprint to KV.
+	if r.archDef.HasRecurrentCache() {
 		cacheVRAM *= 2
 	}
 

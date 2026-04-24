@@ -9,6 +9,7 @@ import (
 
 	log "inference-lab-bench/internal/log"
 	"inference-lab-bench/internal/inference/arch"
+	"inference-lab-bench/internal/inference/archdiagram"
 )
 
 var defToSVGCmd = &cobra.Command{
@@ -62,8 +63,8 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 	}
 	defer f.Close()
 
-	opts := arch.ArchDiagramOptions{LayerCount: svgLayers}
-	if err := arch.RenderArchDiagram(def, svgBlockSVGDir, f, opts); err != nil {
+	opts := archdiagram.ArchDiagramOptions{LayerCount: svgLayers}
+	if err := archdiagram.RenderArchDiagram(def, svgBlockSVGDir, f, opts); err != nil {
 		os.Remove(outputPath)
 		log.Fatal("generating SVG: %v", err)
 	}
@@ -72,7 +73,7 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 
 	// Generate module-map layers diagram if layer count is known
 	if svgLayers > 0 {
-		weights := arch.ResolveWeightsFromDef(def, svgLayers)
+		weights := archdiagram.ResolveWeightsForDiagram(def, svgLayers)
 		// Strip FFNAlt so the standard layers diagram shows dense FFN only.
 		if def.FFNAlt != nil {
 			for i := range weights.Layers {
@@ -82,7 +83,7 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 		mm := arch.BuildModuleMap(def, weights)
 		layersPath := filepath.Join(filepath.Dir(outputPath), def.Architecture.Name+".layers.svg")
 		subtitle := " Layers"
-		if err := arch.RenderModuleMapDiagram(def, mm, layersPath, subtitle, nil, nil); err != nil {
+		if err := archdiagram.RenderLayersDiagram(def, mm, layersPath, subtitle, nil); err != nil {
 			log.Fatal("generating layers SVG: %v", err)
 		}
 		log.Info("wrote %s", layersPath)
@@ -100,8 +101,8 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 		}
 		defer af.Close()
 
-		altOpts := arch.ArchDiagramOptions{LayerCount: svgLayers, UseFFNAlt: true}
-		if err := arch.RenderArchDiagram(def, svgBlockSVGDir, af, altOpts); err != nil {
+		altOpts := archdiagram.ArchDiagramOptions{LayerCount: svgLayers, UseFFNAlt: true}
+		if err := archdiagram.RenderArchDiagram(def, svgBlockSVGDir, af, altOpts); err != nil {
 			os.Remove(altArchPath)
 			log.Fatal("generating alt FFN SVG: %v", err)
 		}
@@ -109,12 +110,12 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 
 		// Alt layers diagram (with FFNAlt → MoE modules)
 		if svgLayers > 0 {
-			altWeights := arch.ResolveWeightsFromDef(def, svgLayers)
+			altWeights := archdiagram.ResolveWeightsForDiagram(def, svgLayers)
 			altMM := arch.BuildModuleMap(def, altWeights)
 			altLayersPath := filepath.Join(filepath.Dir(outputPath),
 				def.Architecture.Name+altSuffix+".layers.svg")
 			subtitle := " Layers ("+def.FFNAlt.Builder+" variant)"
-			if err := arch.RenderModuleMapDiagram(def, altMM, altLayersPath, subtitle, nil, nil); err != nil {
+			if err := archdiagram.RenderLayersDiagram(def, altMM, altLayersPath, subtitle, nil); err != nil {
 				log.Fatal("generating alt layers SVG: %v", err)
 			}
 			log.Info("wrote %s", altLayersPath)

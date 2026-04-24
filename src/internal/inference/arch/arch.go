@@ -166,6 +166,21 @@ func Load(archDir, name string) (*ArchDef, error) {
 	return def, nil
 }
 
+// HasRecurrentCache reports whether any block type in this architecture
+// declares SSM-style cache state (conv or SSM dims), as opposed to purely
+// attention-style K/V cache. Probes the TOML-declared cache spec — the
+// authoritative source — rather than relying on block-name conventions.
+func (d *ArchDef) HasRecurrentCache() bool {
+	for _, blk := range d.Blocks {
+		for cn := range blk.Cache {
+			if cn == CacheConvState || cn == CacheSSMState {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Parse decodes a TOML architecture definition from raw bytes.
 func Parse(data []byte) (*ArchDef, error) {
 	def := &ArchDef{}

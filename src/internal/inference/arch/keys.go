@@ -52,9 +52,10 @@ const (
 // --------------- Engine builtins ---------------
 
 const (
-	BuiltinLayerIdx = "layer_idx"           // @{layer_idx} in DSL expressions
-	BuiltinLayerIdxRef = "@{layer_idx}"     // full sigil form used in prefix templates
-	CacheDimMaxSeqLen = "max_seq_len"       // special token in cache dim expressions
+	BuiltinLayerIdx    = "layer_idx"         // @{layer_idx} in DSL expressions
+	BuiltinLayerIdxRef = "@{layer_idx}"      // full sigil form used in prefix templates
+	BuiltinLayerPrefix = "blk.@{layer_idx}." // default GGUF per-layer prefix (stmap default)
+	CacheDimMaxSeqLen  = "max_seq_len"       // special token in cache dim expressions
 )
 
 // --------------- Parameter keys (ResolvedParams) ---------------
@@ -91,6 +92,12 @@ const (
 	ParamExpertWeightScale = "expert_weights_scale"
 )
 
+// MLA integer parameter keys.
+const (
+	ParamKVLoraRank  = "kv_lora_rank"   // KV low-rank compression dimension (DeepSeek2 MLA)
+	ParamHeadKDimMLA = "head_k_dim_mla" // total K cache dim per entry = kv_lora_rank + rope_n_rot (MLA)
+)
+
 // Array parameter keys (IntArr).
 const (
 	ParamRoPESections = "rope_sections"
@@ -110,16 +117,25 @@ const (
 
 // Global weights.
 const (
-	WeightTokenEmbd  = "token_embd"
-	WeightOutputNorm = "output_norm"
-	WeightOutput     = "output"
+	WeightTokenEmbd          = "token_embd"
+	WeightOutputNorm         = "output_norm"
+	WeightOutput             = "output"
+	WeightTokEmbdPerLayer    = "tok_embd_per_layer"    // stacked per-layer token embeddings (Gemma4)
+	WeightPerLayerModelProj  = "per_layer_model_proj"  // model embedding → per-layer space projection (Gemma4)
+	WeightPerLayerProjNorm   = "per_layer_proj_norm"   // per-layer projection norm (Gemma4)
 )
 
 // Common layer weights (shared across block types).
 const (
-	WeightAttnNorm     = "attn_norm"
-	WeightFFNNorm      = "ffn_norm"
-	WeightPostAttnNorm = "post_attention_norm"
+	WeightAttnNorm      = "attn_norm"
+	WeightFFNNorm       = "ffn_norm"
+	WeightPostAttnNorm  = "post_attention_norm"
+	WeightAttnPostNorm  = "attn_post_norm"      // post-attention norm (Gemma4)
+	WeightFFNPostNorm   = "ffn_post_norm"       // post-FFN norm (Gemma4)
+	WeightPEInpGate     = "pe_inp_gate"         // per-layer embedding input gate (Gemma4)
+	WeightPEProj        = "pe_proj"             // per-layer embedding projection (Gemma4)
+	WeightPEPostNorm    = "pe_post_norm"        // per-layer embedding post-projection norm (Gemma4)
+	WeightLayerOutputScale = "layer_output_scale" // per-layer residual scale (Gemma4)
 )
 
 // Block attention weights.
@@ -132,6 +148,17 @@ const (
 	WeightAttnKNorm  = "attn_k_norm"
 	WeightRoPEFreqs  = "rope_freqs"
 	WeightRoPE       = "rope" // synthetic — not stored; diagram placeholder
+)
+
+// MLA (Multi-head Latent Attention) weights — DeepSeek2 / GLM-4.
+const (
+	WeightAttnQA     = "attn_q_a"       // Q low-rank compress
+	WeightAttnQANorm = "attn_q_a_norm"  // Q compressed norm
+	WeightAttnQB     = "attn_q_b"       // Q low-rank expand
+	WeightAttnKVAMQA = "attn_kv_a_mqa"  // KV joint compress (MQA)
+	WeightAttnKVANorm = "attn_kv_a_norm" // KV compressed norm
+	WeightAttnKB     = "attn_k_b"       // K low-rank expand (absorbed into Q)
+	WeightAttnVB     = "attn_v_b"       // V decompression matrix
 )
 
 // Block SSM / delta-net weights.
@@ -229,4 +256,21 @@ const (
 const (
 	FFNSymDense = "dense"
 	FFNSymMoE   = "moe"
+)
+
+// --------------- Tokenizer GGUF metadata keys ---------------
+
+const (
+	GGUFKeyTokenizerTokens       = "tokenizer.ggml.tokens"
+	GGUFKeyTokenizerMerges       = "tokenizer.ggml.merges"
+	GGUFKeyTokenizerTokenType    = "tokenizer.ggml.token_type"
+	GGUFKeyTokenizerModel        = "tokenizer.ggml.model"
+	GGUFKeyTokenizerMaskTokenID  = "tokenizer.ggml.mask_token_id"
+	GGUFKeyTokenizerChatTemplate = "tokenizer.chat_template"
+)
+
+// Token type constants — values stored in the tokenizer.ggml.token_type array.
+const (
+	GGUFTokenTypeControl     = 3 // CONTROL tokens (special, e.g. <|im_start|>)
+	GGUFTokenTypeUserDefined = 4 // USER_DEFINED tokens
 )

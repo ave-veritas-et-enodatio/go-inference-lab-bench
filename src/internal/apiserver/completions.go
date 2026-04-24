@@ -12,6 +12,13 @@ import (
 	"inference-lab-bench/internal/util"
 )
 
+const (
+	// charsPerTokenEstimate is a rough BPE heuristic for request-size guardrails.
+	charsPerTokenEstimate = 4
+	// minPromptTokenEstimate is a floor so very-short prompts don't escape the guardrail check.
+	minPromptTokenEstimate = 10
+)
+
 // thinkFilter strips <think>...</think> sections from a token stream.
 // Handles tags split across token boundaries. Accumulates think content for logging.
 type thinkFilter struct {
@@ -129,14 +136,8 @@ type diffusionRequestParams struct {
 
 type benchCustomParams struct {
 	Stateless           *bool                   `json:"stateless,omitempty"`
-	CullMethod          string                  `json:"cull_method,omitempty"`
 	FlashAttention      *bool                   `json:"flash_attention,omitempty"`
 	ElideThinking       *bool                   `json:"elide_thinking,omitempty"`
-	EnableRLBOnPrefill  bool                    `json:"enable_rlb_on_prefill,omitempty"`
-	UseRLBGen           bool                    `json:"use_rlb_gen,omitempty"`
-	RLBAlpha            *float64                `json:"rlb_alpha,omitempty"`              // 0.0-1.0; nil = default (1.0, no blending)
-	RLBHaltRule         string                  `json:"rlb_halt_rule,omitempty"`          // halt rule name ("" = default fixed ceiling); see parseHaltRule in generate_rlb.go for menu
-	RLBTerminalHaltRule string                  `json:"rlb_terminal_halt_rule,omitempty"` // halt rule for the terminal block only ("" = reuse rlb_halt_rule); Tier 1 rules only have meaningful signal at the terminal block since upstream tops aren't yet projected through lm_head
 	Diffusion           *diffusionRequestParams `json:"diffusion,omitempty"`
 }
 
@@ -281,21 +282,16 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Guardrails: enforce context length limits to prevent system overload
 	if s.cfg.Inference.MaxRequestSeqLen > 0 && req.MaxTokens > 0 {
-		// Estimate prompt token count via tokenizer
-		// This will be re-encoded inside Generate(), but we need the estimate for guardrails
-		var promptText string
-		{
-			sb := strings.Builder{}
-			for _, m := range req.Messages {
-				if m.Role == "user" {
-					sb.WriteString(m.Content + "\n")
-				}
-			}
-			promptText = sb.String()
+		// Estimate prompt token count via tokenizer.
+		// This will be re-encoded inside Generate(), but we need the estimate for guardrails.
+		// Sum character counts across all message roles — user, system, and assistant all
+		// contribute to the prompt that the model must process.
+		var promptChars int
+		for _, m := range req.Messages {
+			promptChars += len(m.Content) + 1 // +1 for newline separator
 		}
 
-		// Rough estimate: assume ~1 token per 4 chars (English text)
-		estimatedPromptTokens := max(len(promptText) / 4, 10)
+		estimatedPromptTokens := max(promptChars/charsPerTokenEstimate, minPromptTokenEstimate)
 		totalEstimate := estimatedPromptTokens + req.MaxTokens
 		if totalEstimate > s.cfg.Inference.MaxRequestSeqLen {
 			if s.cfg.Inference.StrictMode {
@@ -318,12 +314,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Thinking mode is controlled via the enable_thinking template variable
 	// passed to gonja in EncodeChat — no prompt injection needed.
 
-	// Resolve cull method: request overrides server config; empty = use config; "none" = off.
-	if req.BenchCustom != nil && req.BenchCustom.CullMethod != "" {
-		params.CullMethod = req.BenchCustom.CullMethod
-	} else {
-		params.CullMethod = s.cfg.Inference.CullMethodDefault
-	}
 	// Resolve flash attention: request overrides server config; null = use config.
 	if req.BenchCustom != nil && req.BenchCustom.FlashAttention != nil {
 		params.FlashAttention = req.BenchCustom.FlashAttention
@@ -347,9 +337,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if req.BenchCustom != nil && req.BenchCustom.Stateless != nil && *req.BenchCustom.Stateless {
 			overrides = append(overrides, "stateless=true")
 		}
-		if req.BenchCustom != nil && req.BenchCustom.CullMethod != "" && req.BenchCustom.CullMethod != s.cfg.Inference.CullMethodDefault {
-			overrides = append(overrides, fmt.Sprintf("cull_method=%q (server: %q)", truncLogVal(req.BenchCustom.CullMethod), s.cfg.Inference.CullMethodDefault))
-		}
 		if raw, present := req.ChatTemplateKwargs[inference.KwEnableThinking]; present {
 			if b, ok := raw.(bool); ok && b != s.cfg.Inference.EnableThinkingDefault {
 				overrides = append(overrides, fmt.Sprintf("enable_thinking=%v (server: %v)", b, s.cfg.Inference.EnableThinkingDefault))
@@ -368,6 +355,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	chunkID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	created := time.Now().Unix()
+
+	elide := s.cfg.Inference.ShouldElideThink()
+	if req.BenchCustom != nil && req.BenchCustom.ElideThinking != nil {
+		elide = *req.BenchCustom.ElideThinking
+	}
+	filter := &thinkFilter{open: eng.ThinkOpen(), close: eng.ThinkClose(), inThink: params.ThinkingEnabled}
 
 	if req.Stream {
 		// --- Streaming (SSE) ---
@@ -394,12 +387,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		// Send role delta first
 		sendChunk(deltaContent{Role: "assistant"}, nil)
 
-		elide := s.cfg.Inference.ShouldElideThink()
-		if req.BenchCustom != nil && req.BenchCustom.ElideThinking != nil {
-			elide = *req.BenchCustom.ElideThinking
-		}
-
-		filter := &thinkFilter{open: eng.ThinkOpen(), close: eng.ThinkClose(), inThink: params.ThinkingEnabled}
 		metrics, genErr := eng.Generate(msgs, params, func(token string) bool {
 			if elide {
 				if out := filter.feed(token); out != "" {
@@ -410,22 +397,21 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			return true
 		})
-		if metrics != nil {
-			log.Info("[metrics] prompt=%d completion=%d think=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f cull=%.1f%%",
-				metrics.PromptTokens, metrics.CompletionTokens, filter.thinkTokens,
-				float64(metrics.PrefillDuration.Microseconds())/1000,
-				float64(metrics.DecodeDuration.Microseconds())/1000,
-				float64(metrics.TotalDuration.Microseconds())/1000,
-				metrics.TokensPerSec(), metrics.CullRatio()*100)
-		}
-		if elide {
-			if out := filter.flush(); out != "" {
-				sendChunk(deltaContent{Content: out}, nil)
-			}
-		}
-		if s.cfg.Inference.LogThinking {
-			filter.logThinking(req.Model)
-		}
+
+		result := s.finalizeGeneration(finalizeArgs{
+			model:     req.Model,
+			metrics:   metrics,
+			genErr:    genErr,
+			filter:    filter,
+			elide:     elide,
+			streaming: true,
+			logThink:  s.cfg.Inference.LogThinking,
+			onFlush: func(out string) {
+				if out != "" {
+					sendChunk(deltaContent{Content: out}, nil)
+				}
+			},
+		})
 
 		if genErr != nil && inference.IsComputeFailure(genErr) {
 			// GPU backend is permanently poisoned after a compute failure.
@@ -436,7 +422,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			s.evictEngine(req.Model)
 		}
 
-		stop := finishReason(metrics, genErr)
+		stop := result.finishReason
 		sendChunk(deltaContent{}, &stop)
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		if canFlush {
@@ -445,14 +431,8 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	} else {
 		// --- Non-streaming ---
-		elide := s.cfg.Inference.ShouldElideThink()
-		if req.BenchCustom != nil && req.BenchCustom.ElideThinking != nil {
-			elide = *req.BenchCustom.ElideThinking
-		}
-
 		// Always feed tokens through the filter for think-token counting;
 		// also collect visible output when eliding.
-		filter := &thinkFilter{open: eng.ThinkOpen(), close: eng.ThinkClose(), inThink: params.ThinkingEnabled}
 		var visible strings.Builder
 		var raw []byte
 
@@ -474,23 +454,25 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		var flushedTail string
+		result := s.finalizeGeneration(finalizeArgs{
+			model:     req.Model,
+			metrics:   metrics,
+			genErr:    genErr,
+			filter:    filter,
+			elide:     elide,
+			streaming: false,
+			logThink:  s.cfg.Inference.LogThinking,
+			onFlush: func(out string) {
+				flushedTail = out
+			},
+		})
+
 		var content string
 		if elide {
-			content = strings.TrimSpace(visible.String() + filter.flush())
-			if s.cfg.Inference.LogThinking {
-				filter.logThinking(req.Model)
-			}
+			content = strings.TrimSpace(visible.String() + flushedTail)
 		} else {
 			content = strings.TrimSpace(string(raw))
-		}
-
-		if metrics != nil {
-			log.Info("[metrics] prompt=%d completion=%d think=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f cull=%.1f%%",
-				metrics.PromptTokens, metrics.CompletionTokens, filter.thinkTokens,
-				float64(metrics.PrefillDuration.Microseconds())/1000,
-				float64(metrics.DecodeDuration.Microseconds())/1000,
-				float64(metrics.TotalDuration.Microseconds())/1000,
-				metrics.TokensPerSec(), metrics.CullRatio()*100)
 		}
 
 		var logProbs *choiceLogProbs
@@ -510,7 +492,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			Choices: []choice{{
 				Index:        0,
 				Message:      choiceMessage{Role: "assistant", Content: content},
-				FinishReason: finishReason(metrics, genErr),
+				FinishReason: result.finishReason,
 				LogProbs:     logProbs,
 			}},
 			Usage: usage{
@@ -530,17 +512,91 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// finalizeArgs carries the inputs to finalizeGeneration. A struct keeps
+// the parameter list readable as it exceeds what a positional signature
+// would reasonably hold.
+type finalizeArgs struct {
+	model     string
+	metrics   *inference.InferenceMetrics
+	genErr    error
+	filter    *thinkFilter
+	elide     bool
+	streaming bool // selects per-branch log ordering (metrics-first for SSE, metrics-last for JSON)
+	logThink  bool // s.cfg.Inference.LogThinking
+	// onFlush receives the thinkFilter tail content when elide is true.
+	// For streaming, the callback writes an SSE chunk (preserving the
+	// pre-refactor interleaving between [metrics] and [think] log lines).
+	// For non-streaming, the callback stashes the tail for appending to
+	// the response body.
+	onFlush func(string)
+}
+
+// finalizeResult carries outputs needed by each response-shape branch.
+type finalizeResult struct {
+	finishReason string // OpenAI-compatible finish_reason string
+}
+
+// finalizeGeneration runs the end-of-generation work shared between the
+// streaming and non-streaming branches: flushing the thinkFilter tail,
+// logging think content, emitting the [metrics] log line, and computing
+// the OpenAI-compatible finish_reason.
+//
+// Log ordering matches the pre-refactor sources:
+//   - streaming: [metrics] first, then flush (onFlush sendChunks the tail),
+//     then [think]
+//   - non-streaming: flush first (onFlush stashes the tail for the body),
+//     then [think] (gated on elide), then [metrics]
+//
+// Compute-failure eviction and the HTTP response shape stay at the call
+// site — the two branches diverge too much on errors for a single helper
+// to cover cleanly. feed()/flush() ordering is preserved: feed() is only
+// called from inside eng.Generate's callback, and flush() runs here before
+// any content is written out.
+func (s *Server) finalizeGeneration(a finalizeArgs) finalizeResult {
+	logMetrics := func() {
+		if a.metrics == nil {
+			return
+		}
+		log.Info("[metrics] prompt=%d completion=%d think=%d prefill=%.1fms decode=%.1fms total=%.1fms tok/s=%.1f",
+			a.metrics.PromptTokens, a.metrics.CompletionTokens, a.filter.thinkTokens,
+			float64(a.metrics.PrefillDuration.Microseconds())/1000,
+			float64(a.metrics.DecodeDuration.Microseconds())/1000,
+			float64(a.metrics.TotalDuration.Microseconds())/1000,
+			a.metrics.TokensPerSec())
+	}
+
+	if a.streaming {
+		logMetrics()
+		if a.elide {
+			a.onFlush(a.filter.flush())
+		}
+		if a.logThink {
+			a.filter.logThinking(a.model)
+		}
+	} else {
+		if a.elide {
+			a.onFlush(a.filter.flush())
+			if a.logThink {
+				a.filter.logThinking(a.model)
+			}
+		}
+		logMetrics()
+	}
+
+	return finalizeResult{finishReason: finishReason(a.metrics, a.genErr)}
+}
+
 // finishReason maps generation outcome to an OpenAI-compatible finish_reason string.
-// Returns "error" on any error, "length" if the token budget was exhausted, and
-// "stop" otherwise (stop token hit or metrics unavailable).
+// Returns FinishReasonError on any error, FinishReasonLength if the token budget was
+// exhausted, and FinishReasonStop otherwise (stop token hit or metrics unavailable).
 func finishReason(m *inference.InferenceMetrics, err error) string {
 	if err != nil {
-		return "error"
+		return inference.FinishReasonError
 	}
-	if m != nil && m.FinishReason == "length" {
-		return "length"
+	if m != nil && m.FinishReason == inference.FinishReasonLength {
+		return inference.FinishReasonLength
 	}
-	return "stop"
+	return inference.FinishReasonStop
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

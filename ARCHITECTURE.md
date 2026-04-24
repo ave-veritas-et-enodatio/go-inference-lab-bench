@@ -30,12 +30,11 @@ apiserver/server.go (Engine())    look up loaded model → *inference.Engine
     ▼
 inference/engine.go (Generate())
     ├─ tokenizer.go               EncodeChat (Jinja2 chat template from GGUF, via gonja)
-    ├─ culling/culling.go         ApplyCulling(tokenIDs, prompt) → clone ModuleMap → method → CullingMask
     ├─ generateCached / generateStateless / generateDiffusion
     │       │
     │       ▼
     │   arch/graph.go             ForwardCached / ForwardStateless / ForwardStatelessAllLogits → build ggml graph per-layer
-    │       ├─ MaskedLayer()      apply CullingMask (nil tensors for culled weights)
+    │       ├─ Store.Layer()      resolve per-layer tensors from WeightStore
     │       ├─ BlockBuilders[il]  BuildStateless / BuildCached per layer
     │       └─ FFNBuilders[il]    BuildFFN per layer
     │           │
@@ -51,19 +50,18 @@ inference/engine.go (Generate())
 ## Package Map
 
 ### `bench/` — CLI entry point
-Thin cobra command wrappers delegating to `internal/`. `serve-api`, `chat` expose `--log`/`--log-level` flags; batch commands (`gen-arch-diagram`, `gen-cull-metadata`) use default INFO-to-stderr logger.
+Thin cobra command wrappers delegating to `internal/`. `serve-api`, `chat` expose `--log`/`--log-level` flags; batch commands (`gen-arch-diagram`) use default INFO-to-stderr logger.
 
 ### `internal/log/` — structured logging (leaf package)
 Zero-external-dependency. Imports stdlib only — no project package may be imported by it. See **Logging** section.
 
 ### `internal/config/`
-Loads `config/api_config.toml` into `Config`: `[server]`, `[models]`, `[inference]` subsections. Per-request JSON fields override server defaults for `cull_method`, `enable_thinking`, `elide_thinking`.
+Loads `config/api_config.toml` into `Config`: `[server]`, `[models]`, `[inference]` subsections. Per-request JSON fields override server defaults for `enable_thinking`, `elide_thinking`.
 
 ### `internal/model/`
 - `manager.go` — `ModelManager`: two-pass directory scan — `*.gguf` glob first, then `*.st/` directory enumeration via `os.ReadDir`; `ModelFormat` type (`FormatGGUF` / `FormatSafetensors`); `ModelInfo.Format` field; `List()` rescans for new files and `.st/` dirs; `Get()`/`tryLoadOne()` checks `.gguf` before falling back to `.st/`; filters architectures without matching `.arch.toml`
 - `gguf.go` — GGUF header scanning → `GGUFMetadata`
 - `safetensors.go` — `ParseSafetensorsDir()`: reads safetensors index for tensor inventory, `config.json` for architecture class and numeric params, resolves architecture via `arch.FindSTMapByHFClass()`; returns "unknown" architecture and zeroed numeric fields if `config.json` is absent; corrupt `config.json` logs debug warning and continues with partial data
-- `culling.go` — `CullingMap` (`[layer][head]float32` weight relevance; currently all-ones stub)
 
 ### `internal/apiserver/`
 - `server.go` — `Server` holds `engines` map (`modelName → *inference.Engine`) guarded by `enginesMu sync.Mutex`, `httpServer`, `pending` WaitGroup, and an injected `util.BenchPaths`. The mutex is held while looking up, evicting, or creating an engine — single-client R&D, but the lock keeps the eviction/creation race honest. `NewServer(paths, cfg, manager)` takes `BenchPaths` from the cobra entry point — `apiserver` never calls `util.ResolvePaths()` itself.
@@ -85,7 +83,6 @@ type GenerateParams struct {
     Temperature     float32
     TopP            float32
     Stateless       bool             // bypass KV cache (for testing/comparison)
-    CullMethod      string           // "" or "none" = no culling; "random" = random test pattern
     ThinkingEnabled bool             // passed to template as enable_thinking variable
     LogProbs        bool             // include log-probabilities in response
     TopLogProbs     int              // number of top log-probabilities per token
@@ -96,13 +93,10 @@ type GenerateParams struct {
 
 `Generate()` flow:
 1. `EncodeChat` → token IDs (template handles thinking mode natively via `enable_thinking`)
-2. If culling active: `ApplyCulling` → `CullingMask` + `ModuleMap`
-3. Dispatch on generation strategy:
+2. Dispatch on generation strategy:
    - `e.IsDiffusion()` → `generateDiffusion` (block-based iterative masked denoising)
    - `params.Stateless` → `generateStateless` (full-sequence recompute per token)
    - default → `generateCached` (KV/SSM-cached autoregressive decode)
-4. Post-generation diagnostics if applicable (see `diagnostic.go`)
-5. Write cull diagnostics if a cull map was produced
 
 ### Generation strategies
 
@@ -125,12 +119,8 @@ Three generation paths live in separate files under `internal/inference/`:
 Streaming requests on diffusion models produce a single burst response after all denoising steps complete (not token-by-token); a warning is logged.
 
 ### `internal/inference/arch/`
-Structural types (`ModuleMap`, `CullingMask`), TOML DSL parsing, graph
-construction, forward pass, masking. See subsections below.
-
-### `internal/inference/culling/`
-Culling method dispatch, metadata loading, and per-method implementations. Imports `arch`
-for structural types; `engine.go` calls `ApplyCulling` as the entry point.
+Structural types (`ModuleMap`), TOML DSL parsing, graph construction, forward pass.
+See subsections below.
 
 ### `internal/inference/ggml/`
 Go wrappers for ggml C ops (~43 functions). All CGo for graph ops is isolated here.
@@ -234,9 +224,8 @@ primary protection against stale definitions.
 2. Register in `init()` in `blocks.go`
 3. Reference by name in TOML: `[blocks.<name>] builder = "my_builder"`
 
-**NilTensor sentinel:** Culled weights are absent from the map `MaskedLayer()` returns.
-Absent keys yield the zero-value `ggml.Tensor`, which satisfies `IsNil()`. Every builder
-checks `IsNil()` and skips the op — culling is transparent to graph construction.
+**NilTensor sentinel:** Optional weights absent from the model yield the zero-value
+`ggml.Tensor`, which satisfies `IsNil()`. Every builder checks `IsNil()` and skips the op.
 
 ---
 
@@ -246,7 +235,7 @@ checks `IsNil()` and skips the op — culling is transparent to graph constructi
 
 ```go
 type ModelReader interface {
-    GetU32, GetF32, GetArrInts, GetArrBools  // GGUFReader metadata access
+    GetU32, GetF32, GetArrInts, GetArrBools  // metadata access (GGUF KV or safetensors config.json)
     GetTensorDim(tensorName, dim)            // shape query
     TensorCount() int                         // total tensor count
     TensorNames() []string                    // all tensor names
@@ -352,9 +341,9 @@ a per-layer buffer.
 ## Forward Pass (`arch/graph.go`)
 
 Entry points:
-- `ForwardStateless(tokenIDs, mask, caps) ([]float32, *EngagementData, error)` — full recompute; returns logits for the last token position, per-layer engagement data, and error
-- `ForwardStatelessAllLogits(tokenIDs, mask, flashAttn) ([]float32, error)` — full recompute; returns logits for **all** token positions, row-major by position: position `p` occupies `allLogits[p*nVocab:(p+1)*nVocab]`. Used exclusively by `generateDiffusion` — no engagement data or captures are collected.
-- `ForwardCached(gc, tokenIDs, mask) ([]float32, error)` — KV-cached; returns logits and error
+- `ForwardStateless(tokenIDs, caps, flashAttn) ([]float32, error)` — full recompute; returns logits for the last token position
+- `ForwardStatelessAllLogits(tokenIDs, flashAttn) ([]float32, error)` — full recompute; returns logits for **all** token positions, row-major by position: position `p` occupies `allLogits[p*nVocab:(p+1)*nVocab]`. Used exclusively by `generateDiffusion`.
+- `ForwardCached(gc, tokenIDs, flashAttn) ([]float32, error)` — KV-cached; returns logits for the last token
 
 Both stateless entry points share a private `forwardStatelessCore` helper that builds the graph context, scheduler, inputs, and runs all layers. The two stateless entry points differ only in how they extract logits after `sched.Compute`.
 
@@ -364,8 +353,8 @@ All three entry points follow the same layer-execution frame:
 3. Embedding scaling: if `ArchMeta.EmbedScale`, multiply token embeddings by `sqrt(n_embd)`
 4. SWA mask: if `sliding_window` param present and nonzero, allocate `inpMaskSWA` and set it on `GraphInputs`
 5. Per-layer embedding setup: `buildPerLayerEmbedSetup` prepares the combined per-layer embedding tensor (returns NilTensor if unused)
-6. `runLayers`: for each layer, `MaskedLayer()` → `BlockBuilders[il].Build*()` → optional `attn_post_norm` → residual add → `buildFFNBlock()` (includes optional `ffn_post_norm`) → optional per-layer embedding injection → optional `layer_output_scale` multiply; engagement cosine similarities computed at each step when not nil
-7. Final norm + LM head (`buildLogits`); execute (`sched.Compute`); read back logits + any captures + engagement scalars
+6. `runLayers`: for each layer, `Store.Layer(il)` → `BlockBuilders[il].Build*()` → optional `attn_post_norm` → residual add → `buildFFNBlock()` (includes optional `ffn_post_norm`) → optional per-layer embedding injection → optional `layer_output_scale` multiply
+7. Final norm + LM head (`buildLogits`); execute (`sched.Compute`); read back logits + any captures
 
 Stateless vs cached diverge in input setup, KV cache writeback strategy, and position tracking.
 
@@ -375,16 +364,12 @@ Stateless vs cached diverge in input setup, KV cache writeback strategy, and pos
 
 ```
 for each layer il:
-    lt = MaskedLayer(il)
+    lt = Store.Layer(il)
     if !attn_norm.IsNil():
-        xPreBlock = x
         cur = rmsNormApply(attn_norm) → BlockBuilder.Build*()
         if !attn_post_norm.IsNil(): cur = rmsNormApply(attn_post_norm)
         x += cur
-        if engagement != nil: engagement.blockTensors[il] = cosineSim(xPreBlock, x)
-    xPreFFN = x
     x = buildFFNBlock(x)     // includes ffn_post_norm if present
-    if engagement != nil && x != xPreFFN: engagement.ffnTensors[il] = cosineSim(xPreFFN, x)
     if perLayerEmbd present and !pe_inp_gate.IsNil():
         x = perLayerEmbedInject(x)
     if !layer_output_scale.IsNil():
@@ -458,60 +443,12 @@ Data collection and KV-cache optimization must not be entangled. Any research qu
 answerable via a stateless pass should use that path. Do not add capture to
 `ForwardCached` without explicit research into cached-mode mechanics as a dedicated goal.
 
-### `engagement.go` — residual stream cosine similarity
-
-`EngagementData` records per-layer cosine similarity of the residual stream before and after the attention block (`BlockCosSim`) and FFN (`FFNCosSim`). Unconditionally populated by `ForwardStateless` — overhead is ~10 scalar ggml ops per layer with ~200 scalar GPU→CPU readbacks after compute. Culled/skipped layers get NaN. Results are returned alongside logits from `ForwardStateless`.
-
-```go
-type EngagementData struct {
-    BlockCosSim []float32   // [nLayers]; NaN if block culled/skipped
-    FFNCosSim   []float32   // [nLayers]; NaN if FFN culled/skipped
-}
-```
 
 ### `diagnostic.go` — post-generation analysis
 
 Contains runners that execute additional forward passes after generation and populate
 `InferenceMetrics.Diagnostic`. Triggered conditionally from `engine.Generate()`.
 Add new analysis routines here rather than to `engine.go`.
-
----
-
-## Culling Architecture
-
-Two packages: `culling/` (algorithms, dispatch, metadata) and `arch/` (structural types,
-mask compilation, forward-pass masking).
-
-### Structural types (`arch/`)
-- `ModuleMap` — canonical map built at load; cloned per-request
-- `CullingMask` — compiled mask: `ZeroTensors` (whole-tensor zeroing)
-- `Compile()` — annotated `ModuleMap` → `CullingMask`
-- `MaskedLayer()` — applies mask at graph-build time: culled tensors absent from map → NilTensor
-
-### Culling algorithms (`culling/`)
-```
-culling.ApplyCulling(canonical, method, tokenIDs, prompt, meta)
-    ├─ Clone() → mutable ModuleMap
-    ├─ apply method (random, inattention)
-    └─ Compile() → CullingMask
-```
-
-Methods annotate the cloned map (mark modules culled, append to
-`mm.CullLog`). `Compile()` converts to `CullingMask` for the forward pass.
-
-`CullingMeta` is loaded at engine startup from `.cullmeta` sidecars next to the GGUF.
-`LoadCullingMeta` tries each format loader in turn. Returns `(nil, nil)` if absent — callers must handle nil.
-
-### Culling metadata generation
-`bench gen-cull-metadata --cull-method <method> <model.gguf>` writes a `.cullmeta`
-sidecar. CPU and GPU paths are both implemented (GPU primary, `--cpu` fallback).
-See AGENTS.md: CPU path first, GPU second, never GPU-only.
-
-### Culling diagnostics
-`WriteCullDiagnostics()` writes to `<exeDir>/diag/`:
-- `<model>.<timestamp>.cullmap.toml` — serialized ModuleMap
-- `<model>.<timestamp>.cullmap.svg` — visual diagram (`RenderModuleMapDiagram`)
-- `<model>.cullmap.toml` / `.svg` — "latest" symlinks for browser refresh
 
 ---
 
@@ -548,7 +485,7 @@ the rest of the package has no dependency on it.
 **Go wrappers for load-time validation (in `ggml/`):**
 - `ValidateRowData(typ int, data []byte) bool` — thunks to upstream `ggml_validate_row_data`. Full element scan for float types; per-block scale/delta scan for quantized types. Returns true on empty input. Called by `newGenericModelFromReader` before every `TensorSetBytes`. Unit tested in `ggml/validate_test.go` (F32 NaN/Inf, I32 pass-through, Q4_K block-scale NaN).
 
-**GGUF metadata reading**: `arch/model.go` uses pure-Go `gguf-parser-go` — no CGo. The `goGGUFReader` adapter implements the `GGUFReader` interface with type-checked KV access (guards against gguf-parser-go's panic-on-wrong-type behavior). Split GGUF files are rejected at parse time.
+**GGUF metadata reading**: `arch/model.go` uses pure-Go `gguf-parser-go` — no CGo. The `goGGUFReader` adapter provides the metadata-access portion of `ModelReader` (GetU32/F32/ArrInts/ArrBools/TensorDim) with type-checked KV access (guards against gguf-parser-go's panic-on-wrong-type behavior). Split GGUF files are rejected at parse time.
 
 **Safetensors parsing**: `arch/safetensors_index.go` and `arch/safetensors_reader.go` are pure Go — JSON index parsing, shard header reading, and BF16→F32 conversion are all done without CGo. The `stReaderAdapter` implements `ModelReader` using `os.ReadAt` on shard files.
 
@@ -606,7 +543,7 @@ I32 pass-through, Q4_K well-formed block passes, Q4_K F16 NaN d-scale fails.
 
 **Logit validation (sample time, `inference/sampler.go`)**  
 `ValidateLogits` runs at every sampler chokepoint. Autoregressive paths
-(`generate_cached`, `generate_stateless`, `generate_rlb`) hit it transitively
+(`generate_cached`, `generate_stateless`) hit it transitively
 via `Engine.sample()` in `engine.go`, which validates before any sampling
 math. The diffusion path (`generate_diffusion`) calls it explicitly after
 each `ForwardStatelessAllLogits`, wrapped with `blockNum` / `step` context.
@@ -641,11 +578,11 @@ See **Internal Logging** section in `AGENTS.md` — authoritative for format, in
 
 ## Visualization System
 
-Two SVG renderers share a unified palette (`diagramPalette()` in `arch/diagram_util.go`).
+Two SVG renderers share a unified palette (`Pal()` in `archdiagram/palette.go`).
 To change any color, update the palette map — both renderers reflect it. No inline hex strings.
 
 - `RenderArchDiagram(def, outPath)` — `*.arch.svg` from `ArchDef`; invoked by `bench gen-arch-diagram`
-- `RenderModuleMapDiagram(mm, svgPath, tensorDims)` — per-layer tensor detail with cull overlays; called from `WriteCullDiagnostics`
+- `RenderLayersDiagram(def, mm, svgPath, subtitle, dims)` — per-layer tensor detail; invoked by `bench gen-arch-diagram`
 
 ---
 
@@ -762,9 +699,9 @@ The manager (`manager.go`) scans both `*.gguf` files and `*.st/` directories dur
 ## Key Invariants
 
 1. **No model-specific Go code.** Architecture branches belong in TOML.
-2. **`CanonicalModuleMap` is never mutated.** Always `Clone()` before modification.
-3. **NilTensor means culled.** Absent map keys return zero-value `ggml.Tensor`. Every builder checks `IsNil()`.
-4. **`os.Exit` never below CLI entry point.** Return errors up the chain. `log.Fatal` is permitted only in `bench/` cobra entry points; utility and library packages (including `util/paths.go`) return errors. `util.ResolvePaths()` returns `(BenchPaths, error)`; `BenchPaths` is injected from the cobra entry into `Server`, `Engine`, and culling helpers — no library code calls `ResolvePaths` itself.
+2. **`ModuleMap` is structural-only.** Built once from resolved weights in `BuildModuleMap`; consumed by `gen-arch-diagram`. Never mutated post-construction.
+3. **NilTensor means absent.** Optional weights not present in the model return zero-value `ggml.Tensor`. Every builder checks `IsNil()`.
+4. **`os.Exit` never below CLI entry point.** Return errors up the chain. `log.Fatal` is permitted only in `bench/` cobra entry points; utility and library packages (including `util/paths.go`) return errors. `util.ResolvePaths()` returns `(BenchPaths, error)`; `BenchPaths` is injected from the cobra entry into `Server` and `Engine` — no library code calls `ResolvePaths` itself.
 5. **CGo stays in `ggml/`.** No other package imports `"C"`. GGUF metadata is read via pure-Go `gguf-parser-go`; safetensors index and tensor data are parsed in pure Go.
 6. **Builder contracts enforced at parse time.** Adding a required weight to `Contract()` requires updating all `.arch.toml` files using that builder.
 7. **Palette is single-source.** All diagram colors from `diagramPalette()`.
@@ -795,15 +732,11 @@ type InferenceMetrics struct {
     PrefillDuration  time.Duration        // prefill wall-clock
     DecodeDuration   time.Duration        // all decode steps wall-clock
     TotalDuration    time.Duration        // total generation wall-clock
-    ZeroedTensors    int                  // tensors zeroed by culling
-    TotalTensors     int                  // total weight tensors
-    Diagnostic       *InferenceDiagnostic // nil unless inattention culling active
     TokenLogProbs    []TokenLogProb       // nil if not requested
-    Engagement       *arch.EngagementData  // stateless only
 }
 ```
 
-Throughput methods: `TokensPerSec()` (decode), `PrefillTokensPerSec()`, `TotalTokensPerSec()`, `CullRatio()`. All return 0 when denominator ≤ 0.
+Throughput methods: `TokensPerSec()` (decode), `PrefillTokensPerSec()`, `TotalTokensPerSec()`. All return 0 when denominator ≤ 0.
 
 Non-streaming response `usage` object (all timing fields `omitempty`):
 ```json

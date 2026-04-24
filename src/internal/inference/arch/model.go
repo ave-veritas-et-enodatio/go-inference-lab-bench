@@ -20,7 +20,7 @@ type GenericModel struct {
 	FFNBuilders     []FFNBuilder     // per-layer FFN builder
 	FFNConfigs      []map[string]any // per-layer FFN config (from [ffn.config] / [ffn_alt.config])
 
-	// Canonical module map and supporting data for per-query culling.
+	// Canonical module map and supporting data for diagram rendering.
 	CanonicalModuleMap *ModuleMap
 	HeadDim            int // elements per attention head (for flash attention geometry check)
 	TensorDims         TensorDimsMap
@@ -204,7 +204,7 @@ func (b *genericModelBuilder) checkMemory() error {
 }
 
 // resolveArch resolves params, weights, and builds the canonical module map
-// and tensor dims (used by per-query culling).
+// and tensor dims (consumed by gen-arch-diagram).
 func (b *genericModelBuilder) resolveArch() error {
 	params, err := ResolveParams(b.def, b.reader)
 	if err != nil {
@@ -563,7 +563,9 @@ type tensorSpec struct {
 	Size int           // total bytes
 }
 
-// goGGUFReader implements GGUFReader using gguf-parser-go metadata.
+// goGGUFReader provides GGUF metadata access using gguf-parser-go.
+// Embedded in ggufModelReader to supply the metadata-reading methods of
+// ModelReader (GetU32, GetF32, GetArrInts, GetArrBools, GetTensorDim).
 type goGGUFReader struct {
 	kvs         ggufparser.GGUFMetadataKVs
 	tensorSpecs map[string]tensorSpec

@@ -13,6 +13,8 @@ LOOP_MODE=false
 ALL_MODELS_NO_DIFFUSION=${ALL_MODELS_NO_DIFFUSION:-false}
 ${ALL_MODELS_NO_DIFFUSION} && ALL_MODELS=true || ALL_MODELS=${ALL_MODELS:-false}
 USE_LLAMA=${USE_LLAMA:-false}
+# prefer safetensors over gguf
+PREFER_ST=${PREFER_ST:-false}
 
 TOP_LOGPROBS=${TOP_LOGPROBS:-0}
 if [[ "${TOP_LOGPROBS}" -gt 0 ]]; then
@@ -50,8 +52,6 @@ LLAMA_API_BASE_URL=${LLAMA_BASE_URL}/v1
 
 
 STATELESS=${STATELESS:-null}
-# CULL_METHOD: null (no culling, use server config), "none", or "random".
-CULL_METHOD=${CULL_METHOD:-null}
 THINK=${THINK:-null}
 ELIDE_THINK=${ELIDE_THINK:-null}
 FLASH=${FLASH:-null}
@@ -70,7 +70,6 @@ LLAMA_DIFFUSION_NGL=${LLAMA_DIFUSE_NGL:-99}
 # llama-diffusion-cli microbatch size (we don't implement microbatching yet)
 LLAMA_DIFFUSION_UB=${LLAMA_DIFUSE_UB:-512}
 FORCE_DIFFUSION_CLI=${FORCE_DIFFUSION_CLI:-false}
-
 # Collect arch names that declare generation = "diffusion" from the arch TOMLs.
 DIFFUSION_ARCH_NAMES=$(grep -rl 'generation\s*=\s*"diffusion"' models/arch/*.arch.toml 2>/dev/null \
   | sed 's|.*/||; s|\.arch\.toml||' | tr '\n' ' ')
@@ -93,8 +92,9 @@ print("\n".join(models))
 ' 2> /dev/null
 }
 
-MODEL_LIST=
-
+MODEL_LIST=()
+FORCE_MODEL_LIST=${FORCE_MODEL_LIST:-}
+FORCE_MODEL_LIST=(${FORCE_MODEL_LIST//,/ })
 
 function parse_response() {
   # maybe fall back to a more brittle awk-based extractor ?
@@ -215,7 +215,6 @@ function query_one() {
     local bench_params
 
     [[ -n "${STATELESS}" && "${STATELESS}" != "null" ]] && bench_params+="\"stateless\": ${STATELESS},"
-    [[ -n "${CULL_METHOD}" && "${CULL_METHOD}" != "null" ]] && bench_params+="\"cull_method\": \"${CULL_METHOD}\","
     [[ -n "${ELIDE_THINK}" && "${ELIDE_THINK}" != "null" ]] && bench_params+="\"elide_thinking\": ${ELIDE_THINK},"
     [[ -n "${FLASH}" && "${FLASH}" != "null" ]] && bench_params+="\"flash_attention\": ${FLASH},"
 
@@ -273,7 +272,7 @@ function query_one() {
 function query() {
   local model
   if ${ALL_MODELS}; then
-    for model in ${MODEL_LIST}; do
+    for model in "${MODEL_LIST[@]}"; do
       echo "${model} <-- \"${*}\""
       MODEL=${model} query_one "${@}"
       # llama server tries to hold all models in memory and fails
@@ -293,24 +292,24 @@ function loop_help() {
   cat << __EOF
 Acontextual Loop Mode
 =====================
-/help: show this help message
 /all-models: toggle all-models mode (currently: ${ALL_MODELS})
+/cls: clear the screen
 /debug-post: toggle display of post json (currently: ${DEBUG_POST})
 /debug-response: toggle display of response json (currently: ${DEBUG_RESPONSE})
-/flash: toggle flash attention mode (currently: ${FLASH})
-/stateless: toggle stateless mode (currently: ${STATELESS})
-/cull [method]: set cull method (currently: ${CULL_METHOD}); "random", "none", or null
-/think: toggle think mode (currently: ${THINK})
-/elide-think: toggle elision of thinking output (currently: ${ELIDE_THINK})
-/max-tokens [token_count]: show or set MAX_TOKENS (currently: ${MAX_TOKENS})
-/diffusion-steps [steps]: show or set DIFFUSION_STEPS (currently: ${DIFFUSION_STEPS})
 /diffusion-block-length [length]: show or set DIFFUSION_BLOCK_LENGTH (currently: ${DIFFUSION_BLOCK_LENGTH})
+/diffusion-steps [steps]: show or set DIFFUSION_STEPS (currently: ${DIFFUSION_STEPS})
 /diffusion-tokens [count]: show or set DIFFUSION_TOKENS (currently: ${DIFFUSION_TOKENS})
-/model [index]: show or set current model (currently: ${MODEL})
-/temperature [temperature]: show or set TEMPERATURE (currently: ${TEMPERATURE})
-/cls: clear the screen
-/new-server: shuts down old server and starts a new one.
+/elide-think: toggle elision of thinking output (currently: ${ELIDE_THINK})
+/flash: toggle flash attention mode (currently: ${FLASH})
+/help: show this help message
 /llama: toggle between using llama-server and bench serve-api. (currently: USE_LLAMA=${USE_LLAMA})
+/max-tokens [token_count]: show or set MAX_TOKENS (currently: ${MAX_TOKENS})
+/model [index]: show or set current model (currently: ${MODEL})
+/new-server: shuts down old server and starts a new one.
+/prefer-st: toggle prefer safetensors mode (currently: ${PREFER_ST})
+/stateless: toggle stateless mode (currently: ${STATELESS})
+/temperature [temperature]: show or set TEMPERATURE (currently: ${TEMPERATURE})
+/think: toggle think mode (currently: ${THINK})
 /quit: exit loop mode
 
 __EOF
@@ -357,8 +356,13 @@ function loop_mode() {
     line=${line% }
     [[ -n "${line}" ]] && history -s "${line}"
     case "${line}" in
-      quit|exit)
-        break;;
+      /all-models)
+        ALL_MODELS=$(toggle "${ALL_MODELS}")
+        echo "ALL_MODELS=${ALL_MODELS}"
+        continue;;
+      /cls)
+        clear
+        continue;;
       /new-server)
         force_cycle_server
         continue;;
@@ -367,22 +371,23 @@ function loop_mode() {
         echo "USE_LLAMA=${USE_LLAMA}"
         force_cycle_server
         continue;;
-      /help|/)
+      /help|/h|/|/\?)
         loop_help
         continue;;
-      /model*)
+      /model*|/m)
         local MI=$(set ${line}; echo ${2})
         if [[ "${MI:-0}" -gt 0 ]]; then
-          MODEL=$(set ${MODEL_LIST}; eval "echo \$${MI}")
+          MODEL=${MODEL_LIST[$((MI - 1))]}
         else
           update_model_list
           show_models
         fi
         echo "MODEL=${MODEL}"
         continue;;
-      /all-models)
-        ALL_MODELS=$(toggle "${ALL_MODELS}")
-        echo "ALL_MODELS=${ALL_MODELS}"
+      /prefer-st)
+        PREFER_ST=$(toggle "${PREFER_ST}")
+        echo "PREFER_ST=${PREFER_ST}"
+        force_cycle_server
         continue;;
       /flash)
         FLASH=$(rotate "${FLASH}")
@@ -391,20 +396,6 @@ function loop_mode() {
       /stateless)
         STATELESS=$(rotate "${STATELESS}")
         echo "STATELESS=${STATELESS}"
-        continue;;
-      /cls)
-        clear
-        continue;;
-      /cull*)
-        local CM=$(set ${line}; echo ${2})
-        if [[ -n "${CM}" ]]; then
-          if [[ "${CM}" == "null" || "${CM}" == "none" ]]; then
-            CULL_METHOD=null
-          else
-            CULL_METHOD="\"${CM}\""
-          fi
-        fi
-        echo "CULL_METHOD=${CULL_METHOD}"
         continue;;
       /debug-post)
         DEBUG_POST=$(toggle "${DEBUG_POST}")
@@ -461,6 +452,8 @@ function loop_mode() {
         fi
         echo "TEMPERATURE=${TEMPERATURE}"
         continue;;
+      quit|exit)
+        break;;
       /*)
         echo "unknown / command ${line}" 1>&2
         loop_help
@@ -497,17 +490,19 @@ function update_model_list() {
   models=${models//\.st/}
   models=$(sort -u <<< "${models}")
 
+  MODEL_LIST=()
+
   if ${ALL_MODELS_NO_DIFFUSION}; then
     for model in ${models}; do
-      is_diffusion_model "${model}" || MODEL_LIST+="${model} "
+      is_diffusion_model "${model}" || MODEL_LIST+=("${model}")
     done
   else
     for model in ${models}; do
-      MODEL_LIST+="${model} "
+      MODEL_LIST+=("${model}")
     done
   fi
-  MODEL_LIST=${MODEL_LIST% }
-  [[ ${MODEL} == "default" ]] && MODEL=$(set ${MODEL_LIST}; echo $1)
+  [[ -n "${FORCE_MODEL_LIST[*]}" ]] && MODEL_LIST=("${FORCE_MODEL_LIST[@]}")
+  [[ ${MODEL} == "default" ]] && MODEL=${MODEL_LIST[0]}
 }
 
 function show_models() {
@@ -516,8 +511,8 @@ function show_models() {
   echo "models"
   echo "======"
   i=1
-  for model in ${MODEL_LIST}; do
-    [[ ${model} == ${MODEL} ]] && echo "${i}) ${model}*" || echo "${i}) ${model}"
+  for model in "${MODEL_LIST[@]}"; do
+    [[ "${model}" == "${MODEL}" ]] && echo "${i}) ${model}*" || echo "${i}) ${model}"
     i=$((i + 1))
   done
   echo ""
@@ -538,8 +533,10 @@ function wait_for_starting_server() {
 
 function start_api_server() {
   [[ -x "./bin/bench" ]] || { echo "./bin/bench binary missing. 'make all' first." 1>&2; return 1; }
+  local prefer_st_arg=""
+  [[ ${PREFER_ST} == true ]] && prefer_st_arg="--prefer-st"
   API_BASE_URL=${BENCH_API_BASE_URL}
-  ./bin/bench serve-api --log ${LOG:-"bin/test_inference.log"} --log-level NONE &
+  ./bin/bench serve-api --log ${LOG:-"bin/test_inference.log"} --log-level NONE ${prefer_st_arg} &
   SERVER_PID=$!
   wait_for_starting_server
 }

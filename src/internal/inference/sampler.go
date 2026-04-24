@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync/atomic"
 )
 
 // ValidateLogits scans a logits slice for NaN or Inf values and returns an
@@ -180,9 +181,23 @@ func ComputeTopLogProbs(logits []float32, chosenID int32, topN int, tokenString 
 }
 
 // Simple LCG PRNG (not crypto-safe; fine for sampling).
-var lcgState uint64 = 12345678901234567
+//
+// lcgState is an atomic so concurrent requests do not produce torn reads or
+// writes. Load/Store (not CAS) is intentional: two concurrent samplers
+// colliding on the same LCG value produce the same random float, but each
+// request has different logits so the collision is statistically invisible in
+// output behavior. The goal is memory-model correctness (-race clean), not
+// strict per-goroutine sequence uniqueness.
+const lcgSeed uint64 = 12345678901234567
+
+var lcgState atomic.Uint64
+
+func init() {
+	lcgState.Store(lcgSeed)
+}
 
 func pseudoRand() float64 {
-	lcgState = lcgState*6364136223846793005 + 1442695040888963407
-	return float64(lcgState>>11) / float64(1<<53)
+	next := lcgState.Load()*6364136223846793005 + 1442695040888963407
+	lcgState.Store(next)
+	return float64(next>>11) / float64(1<<53)
 }

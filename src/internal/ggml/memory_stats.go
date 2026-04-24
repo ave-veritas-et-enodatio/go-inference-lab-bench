@@ -71,6 +71,10 @@ func BackendBufferStats(sched *Sched, backend *Backend) int64 {
 	return int64(C.ggml_go_backend_sched_get_buffer_size(sched.c(), backendPtr(backend)))
 }
 
+// IsUMA reports whether the backend uses unified memory (CPU and GPU share the same physical RAM).
+// Currently implemented as a Metal check — on Apple Silicon, Metal implies UMA.
+// TODO(portability): when non-Metal GPU backends (CUDA, ROCm, Vulkan) are added, replace with
+// a backend-capability query rather than a Metal-specific probe.
 func IsUMA(backend *Backend) bool {
 	if backend == nil || backend.ptr == nil {
 		log.Error("IsUMA(): invalid Backend")

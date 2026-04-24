@@ -13,9 +13,9 @@ import (
 )
 
 // WriteJSON writes a JSON response with the appropriate Content-Type header.
-func WriteJSON(w http.ResponseWriter, v any) {
+func WriteJSON(w http.ResponseWriter, v any) error {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	return json.NewEncoder(w).Encode(v)
 }
 
 // LoadTOML reads a TOML file and decodes it into the provided value.
@@ -39,18 +39,22 @@ func WriteTOML(path string, v any) error {
 	return toml.NewEncoder(f).Encode(v)
 }
 
-func CopyFile(src, dst string) {
+func CopyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
-		return
+		log.Warn("copyFile open %s: %v", src, err)
+		return err
 	}
 	defer in.Close()
 	out, err := os.Create(dst)
 	if err != nil {
-		return
+		log.Warn("copyFile create %s: %v", dst, err)
+		return err
 	}
 	defer out.Close()
 	if _, err := io.Copy(out, in); err != nil {
 		log.Warn("copyFile %s → %s: %v", src, dst, err)
+		return err
 	}
+	return nil
 }

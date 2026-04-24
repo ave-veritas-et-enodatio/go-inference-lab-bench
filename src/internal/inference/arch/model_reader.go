@@ -8,7 +8,7 @@ import (
 // Everything above this boundary (NewGenericModel, ResolveParams, ResolveWeights)
 // works only through this interface.
 type ModelReader interface {
-	// GGUFReader interface (metadata access)
+	// Metadata access (GGUF KV or safetensors config.json).
 	GetU32(key string) (uint32, bool)
 	GetF32(key string) (float32, bool)
 	GetArrInts(key string) ([]int, bool)

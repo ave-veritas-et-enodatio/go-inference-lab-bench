@@ -1,12 +1,8 @@
 # Inference Lab Bench
 
-From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-model API server, data-driven architecture definition via TOML DSL, KV-cached and stateless inference, weight culling infrastructure, and visualization tooling.
+From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-model API server, data-driven architecture definition via TOML DSL, KV-cached and stateless inference, and visualization tooling.
 
-<a href="models/arch/gemma4.arch.svg"><image src="models/arch/gemma4.arch.svg" height="600" alt="Gemma4 Architecture"></a><a href="models/arch/gemma4.layers.svg"><image src="models/arch/gemma4.layers.svg" height="600" alt="Gemma4 Layers"></a>
-
-[Write-up 1/2](https://bennherrera.dev/writing/go-inference-lab-bench/) 
-
-[Write-up 2/2](https://bennherrera.dev/writing/inference-lab-bench-part-2/)
+<a href="models/arch/qwen35.arch.svg"><image src="models/arch/qwen35.arch.svg" height="600" alt="Qwen 3.5 Architecture"></a><a href="models/arch/qwen35.layers.svg"><image src="models/arch/qwen35.layers.svg" height="600" alt="Qwen 3.5 Layers"></a>
 
 ## Features
 
@@ -14,7 +10,7 @@ From-scratch Go LLM inference engine for R&D into inference mechanics. Multi-mod
 - Data-driven architecture definition via TOML DSL — adding architectures is primarily a data-writing operation
 - Zero model-specific Go code — chat templates from GGUF `tokenizer.chat_template` via gonja; BOS/EOS from GGUF metadata
 - KV-cached and stateless inference
-- OpenAI-compatible API (`/api/v1/chat/completions`) with extensions: `stateless`, `cull_method`, `enable_thinking`, `elide_thinking`, `logprobs`
+- OpenAI-compatible API (`/api/v1/chat/completions`) with extensions: `stateless`, `enable_thinking`, `elide_thinking`, `logprobs`
 - Non-streaming responses include `usage` with token counts, throughput (tokens/sec), and timing
 - 7 working architectures: Llama 3B, Qwen3.5 4B/9B, Qwen3.5-MoE 30B-A3B, DeepSeek-V2-Lite, Gemma4 4B/26B, LLaDA-MoE 7B; LLaDA 8B built but not yet tested against a live model
 - Diffusion generation for LLaDA models — iterative masked denoising with configurable steps and block length
@@ -104,7 +100,6 @@ Control endpoint: `/ctl/` (`?memstats` = memory stats; `?quit` = graceful shutdo
 bench serve-api              Run inference API server
 bench chat                   Interactive chat client
 bench gen-arch-diagram       Generate SVG diagrams from TOML
-bench gen-cull-metadata      Generate culling sidecar (GPU default, --cpu fallback, hollow system for exploration)
 ```
 
 See `bin/bench` without arguments for complete help. For detailed config options, see `config/api_config.toml`.

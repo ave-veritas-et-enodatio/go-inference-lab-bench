@@ -132,7 +132,7 @@ func LoadArchSTMap(archDir, archName string) (*ArchSTMap, error) {
 	// Use default GGUF prefix if not overridden (matches all arch TOML prefix conventions).
 	ggufPrefix := raw.LayerPrefix.GGUF
 	if ggufPrefix == "" {
-		ggufPrefix = "blk.@{layer_idx}."
+		ggufPrefix = BuiltinLayerPrefix
 	}
 
 	transforms, err := parseTransformSpecs(archName, raw.Transforms)

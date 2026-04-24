@@ -26,6 +26,7 @@ type MoEBuilder struct{}
 
 func (b *MoEBuilder) Contract() BuilderContract {
 	return BuilderContract{
+		Kind:            KindFFN,
 		ExpertRouted:    true,
 		RequiredWeights: []string{MoEGateInp, MoEDownExps},
 		OptionalWeights: []string{

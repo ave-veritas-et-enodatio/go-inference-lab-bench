@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	log "inference-lab-bench/internal/log"
+	"inference-lab-bench/internal/apiserver"
 	"inference-lab-bench/internal/util"
 
 	"github.com/tmc/langchaingo/chains"
@@ -23,6 +24,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+const sessionTableName = "langchaingo_messages"
+const sessionName = "bench-chat"
 
 // Config holds chat client configuration from chat_config.toml.
 type Config struct {
@@ -67,8 +71,8 @@ func (t *thinkingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 func insertChatMessage(ctx context.Context, db *sql.DB, content string, msgType llms.ChatMessageType) {
 	db.ExecContext(ctx,
-		"INSERT INTO langchaingo_messages(session, content, type) VALUES (?, ?, ?)",
-		"example", content, msgType)
+		"INSERT INTO "+sessionTableName+"(session, content, type) VALUES (?, ?, ?)",
+		sessionName, content, msgType)
 }
 
 // ResolveAutoBaseURL reads api_config.toml to construct the API base URL.
@@ -84,7 +88,7 @@ func ResolveAutoBaseURL(apiConfigPath string) (string, error) {
 	}
 	port := ac.Server.Port
 	if port == 0 {
-		port = 11116
+		port = apiserver.DefaultAPIServerPort
 	}
 	return fmt.Sprintf("http://localhost:%d/api/v1", port), nil
 }
@@ -129,7 +133,7 @@ func Run(opts Options) error {
 	}
 
 	chatHistory := sqlite3.NewSqliteChatMessageHistory(
-		sqlite3.WithSession("example"),
+		sqlite3.WithSession(sessionName),
 		sqlite3.WithDB(db),
 	)
 	conversationBuffer := memory.NewConversationBuffer(memory.WithChatHistory(chatHistory))
@@ -138,7 +142,7 @@ func Run(opts Options) error {
 
 	// Seed system prompt if DB is empty
 	var count int
-	if err := db.QueryRowContext(ctx, "SELECT count(id) FROM langchaingo_messages").Scan(&count); err == nil && count == 0 {
+	if err := db.QueryRowContext(ctx, "SELECT count(id) FROM "+sessionTableName).Scan(&count); err == nil && count == 0 {
 		if len(cfg.SystemPrompt) > 0 {
 			insertChatMessage(ctx, db, strings.Join(cfg.SystemPrompt, "\n"), llms.ChatMessageTypeSystem)
 		}

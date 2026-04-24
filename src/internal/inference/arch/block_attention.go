@@ -12,6 +12,7 @@ type AttentionBuilder struct{}
 
 func (b *AttentionBuilder) Contract() BuilderContract {
 	return BuilderContract{
+		Kind:            KindAttention,
 		RequiredWeights: []string{WeightAttnQ, WeightAttnOutput},
 		OptionalWeights: []string{WeightAttnK, WeightAttnV, WeightAttnQNorm, WeightAttnKNorm, WeightRoPEFreqs},
 		RequiredParams:  []string{ParamHeadDim, ParamNHeads, ParamNKVHeads, ParamRoPENRot, ParamRoPEFreqBase},
@@ -42,7 +43,7 @@ func attnParams(params *ResolvedParams, config map[string]any) (headDim, nHeads,
 		kqScale = attentionScale(headDim)
 	}
 	if configStrOr(config, ConfigRope, "") == RopeNeox {
-		ropeMode = ggml.RopeNeoX
+		ropeMode = ggml.RopeTypeNeoX
 	}
 	return
 }
@@ -128,6 +129,10 @@ func (b *AttentionBuilder) prepareQKV(
 }
 
 // selectMask returns the SWA mask if sliding_window is configured, else the standard mask.
+// Both guards are required: the bool config (per-block TOML override, e.g. `sliding_window = true`)
+// marks this block as SWA, while InpMaskSWA is only allocated when the global ParamSlidingWindow
+// integer param (window size) is > 0. Together they handle all three cases correctly: SWA block on
+// a SWA-enabled model, non-SWA block on any model, and SWA block config on a non-SWA model.
 func selectMask(config map[string]any, inputs *GraphInputs) ggml.Tensor {
 	if configBoolOr(config, ParamSlidingWindow, false) && !inputs.InpMaskSWA.IsNil() {
 		return inputs.InpMaskSWA

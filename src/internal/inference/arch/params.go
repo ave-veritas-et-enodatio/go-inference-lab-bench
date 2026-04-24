@@ -11,15 +11,6 @@ import (
 	"strings"
 )
 
-// GGUFReader abstracts reading metadata from a GGUF file.
-type GGUFReader interface {
-	GetU32(key string) (uint32, bool)
-	GetF32(key string) (float32, bool)
-	GetArrInts(key string) ([]int, bool)
-	GetArrBools(key string) ([]bool, bool)
-	GetTensorDim(tensorName string, dim int) (int64, bool)
-}
-
 // ResolvedParams holds the fully resolved parameter values.
 type ResolvedParams struct {
 	Ints    map[string]int
@@ -29,7 +20,7 @@ type ResolvedParams struct {
 }
 
 // ResolveParams reads GGUF keys and evaluates derived expressions.
-func ResolveParams(def *ArchDef, reader GGUFReader) (*ResolvedParams, error) {
+func ResolveParams(def *ArchDef, reader ModelReader) (*ResolvedParams, error) {
 	rp := &ResolvedParams{
 		Ints:    make(map[string]int),
 		Floats:  make(map[string]float32),
@@ -105,7 +96,7 @@ func ResolveParams(def *ArchDef, reader GGUFReader) (*ResolvedParams, error) {
 	return rp, nil
 }
 
-func resolveParam(name, ggufKey string, reader GGUFReader, rp *ResolvedParams) error {
+func resolveParam(name, ggufKey string, reader ModelReader, rp *ResolvedParams) error {
 	// Heuristic: if key doesn't look like a dotted GGUF path, treat as literal
 	if !strings.Contains(ggufKey, ".") {
 		rp.Strings[name] = ggufKey
@@ -172,7 +163,7 @@ func resolveParam(name, ggufKey string, reader GGUFReader, rp *ResolvedParams) e
 }
 
 // resolveDerived evaluates a simple arithmetic expression or tensor dimension lookup.
-func resolveDerived(name, expr string, reader GGUFReader, rp *ResolvedParams) error {
+func resolveDerived(name, expr string, reader ModelReader, rp *ResolvedParams) error {
 	// Special form: "tensor_name.ne[dim]"
 	if strings.Contains(expr, ".ne[") {
 		return resolveTensorDim(name, expr, reader, rp)
@@ -187,7 +178,7 @@ func resolveDerived(name, expr string, reader GGUFReader, rp *ResolvedParams) er
 	return nil
 }
 
-func resolveTensorDim(name, expr string, reader GGUFReader, rp *ResolvedParams) error {
+func resolveTensorDim(name, expr string, reader ModelReader, rp *ResolvedParams) error {
 	// Parse "tensor_name.ne[dim]"
 	neIdx := strings.Index(expr, ".ne[")
 	if neIdx < 0 {
@@ -297,7 +288,7 @@ func boolInt(b bool) int {
 
 // Builtin variables available in routing rule expressions via @{name} syntax.
 var routingBuiltins = map[string]bool{
-	"layer_idx": true,
+	BuiltinLayerIdx: true,
 }
 
 // EvalRoutingRule evaluates a layer routing expression for a given layer index.
@@ -307,7 +298,7 @@ var routingBuiltins = map[string]bool{
 // Returns true if the expression evaluates to non-zero (truthy).
 func EvalRoutingRule(rule string, layerIdx int, rp *ResolvedParams) (bool, error) {
 	// Expand @{builtin} references
-	builtinValues := map[string]int{"layer_idx": layerIdx}
+	builtinValues := map[string]int{BuiltinLayerIdx: layerIdx}
 	expanded := expandRefs(rule, '@', builtinValues)
 	// Expand ${param} references
 	expanded = expandRefs(expanded, '$', rp.Ints)
