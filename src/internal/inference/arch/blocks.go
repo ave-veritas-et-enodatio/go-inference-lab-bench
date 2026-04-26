@@ -66,7 +66,8 @@ type LayerCache struct {
 type BuilderKind int
 
 const (
-	KindAttention BuilderKind = iota + 1
+	KindAttention    BuilderKind = iota + 1
+	KindSWAAttention             // sliding-window / gated attention (palette: swa green)
 	KindRecurrent
 	KindFFN
 )

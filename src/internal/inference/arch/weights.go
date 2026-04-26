@@ -2,6 +2,7 @@ package arch
 
 import (
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 )
@@ -35,9 +36,7 @@ func ResolveWeights(def *ArchDef, params *ResolvedParams) (*ResolvedWeights, err
 	}
 
 	// Global weights
-	for logicalName, tensorName := range def.Weights.Global {
-		rw.Global[logicalName] = tensorName
-	}
+	maps.Copy(rw.Global, def.Weights.Global)
 
 	// Per-layer weights
 	for i := range nLayers {
@@ -49,47 +48,71 @@ func ResolveWeights(def *ArchDef, params *ResolvedParams) (*ResolvedWeights, err
 			return nil, fmt.Errorf("layer %d routing: %w", i, err)
 		}
 
-		block, ok := def.Blocks[blockName]
-		if !ok {
+		if _, ok := def.Blocks[blockName]; !ok {
 			return nil, fmt.Errorf("layer %d: block %q not defined", i, blockName)
 		}
 
-		lw := ResolvedLayerWeights{
-			Index:     i,
-			BlockName: blockName,
-			Prefix:    prefix,
-			Common:    make(map[string]string, len(def.Layers.CommonWeights)),
-			Block:     make(map[string]string, len(block.Weights)),
-			FFN:       make(map[string]string, len(def.FFN.Weights)),
-		}
-
-		// Common weights
-		for logicalName, suffix := range def.Layers.CommonWeights {
-			lw.Common[logicalName] = prefix + suffix
-		}
-
-		// Block-specific weights
-		for logicalName, suffix := range block.Weights {
-			lw.Block[logicalName] = prefix + suffix
-		}
-
-		// FFN weights
-		for logicalName, suffix := range def.FFN.Weights {
-			lw.FFN[logicalName] = prefix + suffix
-		}
-
-		// FFN alt weights (optional, for per-layer FFN routing)
-		if def.FFNAlt != nil {
-			lw.FFNAlt = make(map[string]string, len(def.FFNAlt.Weights))
-			for logicalName, suffix := range def.FFNAlt.Weights {
-				lw.FFNAlt[logicalName] = prefix + suffix
-			}
-		}
-
-		rw.Layers[i] = lw
+		rw.Layers[i] = fillLayerWeights(def, i, prefix, blockName)
 	}
 
 	return rw, nil
+}
+
+// fillLayerWeights builds one ResolvedLayerWeights by expanding weight suffixes
+// through the per-layer prefix. Shared between strict (ResolveWeights) and
+// lenient (ResolveWeightsLenient) paths.
+func fillLayerWeights(def *ArchDef, i int, prefix, blockName string) ResolvedLayerWeights {
+	block := def.Blocks[blockName]
+	lw := ResolvedLayerWeights{
+		Index:     i,
+		BlockName: blockName,
+		Prefix:    prefix,
+		Common:    make(map[string]string, len(def.Layers.CommonWeights)),
+		Block:     make(map[string]string, len(block.Weights)),
+		FFN:       make(map[string]string, len(def.FFN.Weights)),
+	}
+	for logicalName, suffix := range def.Layers.CommonWeights {
+		lw.Common[logicalName] = prefix + suffix
+	}
+	for logicalName, suffix := range block.Weights {
+		lw.Block[logicalName] = prefix + suffix
+	}
+	for logicalName, suffix := range def.FFN.Weights {
+		lw.FFN[logicalName] = prefix + suffix
+	}
+	if def.FFNAlt != nil {
+		lw.FFNAlt = make(map[string]string, len(def.FFNAlt.Weights))
+		for logicalName, suffix := range def.FFNAlt.Weights {
+			lw.FFNAlt[logicalName] = prefix + suffix
+		}
+	}
+	return lw
+}
+
+// ResolveWeightsLenient resolves weights using an explicit layer count and pre-built params.
+// On routing error, falls back to the first available block name rather than returning an error.
+// Used by diagram generation, which does not have a live GGUF file.
+func ResolveWeightsLenient(def *ArchDef, nLayers int, params *ResolvedParams) *ResolvedWeights {
+	rw := &ResolvedWeights{
+		Global: make(map[string]string, len(def.Weights.Global)),
+		Layers: make([]ResolvedLayerWeights, nLayers),
+	}
+	maps.Copy(rw.Global, def.Weights.Global)
+	for i := range nLayers {
+		prefix := ExpandPrefix(def.Layers.Prefix, i)
+		blockName, err := ResolveBlockName(def, i, params)
+		if err != nil {
+			blockName = def.Layers.Routing.Uniform
+			if blockName == "" {
+				blockName = def.Layers.Routing.IfTrue
+			}
+			if blockName == "" {
+				blockName = def.Layers.Routing.IfFalse
+			}
+		}
+		rw.Layers[i] = fillLayerWeights(def, i, prefix, blockName)
+	}
+	return rw
 }
 
 func resolveCountExpr(expr string, params *ResolvedParams) (int, error) {

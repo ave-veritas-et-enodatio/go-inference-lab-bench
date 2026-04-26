@@ -1,32 +1,34 @@
-<svg viewBox="0 0 588 1214" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 844 1081" xmlns="http://www.w3.org/2000/svg">
 <style>
   text { font-family: 'Courier New', monospace; }
   .title { font-size: 20px; font-weight: bold; fill: #333333; font-family: system-ui, -apple-system, sans-serif; }
-  .hdr   { font-size: 9px; font-weight: bold; fill: #333333; text-anchor: middle; dominant-baseline: middle; }
   .lbl   { font-size: 9px; fill: #888888; text-anchor: end; dominant-baseline: middle; }
   .tlbl  { font-size: 7px; fill: #000000; text-anchor: middle; dominant-baseline: middle; }
   .io    { font-size: 8px; font-weight: bold; fill: #888888; text-anchor: middle; dominant-baseline: middle; }
-  .gtxt  { font-size: 9px; text-anchor: middle; dominant-baseline: middle; }
   .ltxt  { font-size: 8px; fill: #555555; dominant-baseline: middle; }
   .shdr  { font-size: 8px; font-weight: bold; fill: #333333; dominant-baseline: middle; }
-  .etxt  { font-size: 6px; fill: #999999; text-anchor: middle; dominant-baseline: hanging; }
 </style>
+  <defs>
+    <linearGradient id="zm_recurrent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
+    </linearGradient>
+    <linearGradient id="zm_full_attention" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e3f2fd"/><stop offset="100%" stop-color="#bbdefb"/>
+    </linearGradient>
+    <linearGradient id="zm_swa" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
+    </linearGradient>
+    <linearGradient id="zm_ffn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff3e0"/><stop offset="100%" stop-color="#ffe0b2"/>
+    </linearGradient>
+    <linearGradient id="zm_norm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f3e5f5"/><stop offset="100%" stop-color="#e1bee7"/>
+    </linearGradient>
+    <linearGradient id="zm_global" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fce4ec"/><stop offset="100%" stop-color="#f8bbd0"/>
+    </linearGradient>
+  </defs>
 <defs>
-  <linearGradient id="zm_full_attention" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%%" stop-color="#e3f2fd"/><stop offset="100%%" stop-color="#bbdefb"/>
-  </linearGradient>
-  <linearGradient id="zm_swa" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%%" stop-color="#e8f5e9"/><stop offset="100%%" stop-color="#c8e6c9"/>
-  </linearGradient>
-  <linearGradient id="zm_recurrent" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%%" stop-color="#e8f5e9"/><stop offset="100%%" stop-color="#c8e6c9"/>
-  </linearGradient>
-  <linearGradient id="zm_ffn" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%%" stop-color="#fff3e0"/><stop offset="100%%" stop-color="#ffe0b2"/>
-  </linearGradient>
-  <linearGradient id="zm_global" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%%" stop-color="#fce4ec"/><stop offset="100%%" stop-color="#f8bbd0"/>
-  </linearGradient>
   <symbol id="blk-attention" overflow="visible">
   <rect x="0" y="0" width="110" height="40" fill="url(#zm_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="2"/>
   <rect x="2" y="3" width="12" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
@@ -49,20 +51,6 @@
   <rect x="91" y="3" width="17" height="34" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
   <text class="tlbl" x="99" y="20">out</text>
   </symbol>
-  <symbol id="blk-attention-desc" overflow="visible">
-  <use href="#blk-attention"/>
-  <line x1="117" y1="20" x2="117" y2="44" stroke="#1976D2" stroke-width="0.8"/>
-  <path d="M 117,44 L -10,44" fill="none" stroke="#1976D2" stroke-width="1.0" stroke-dasharray="2,3"/>
-  <circle cx="-10" cy="44" r="4" fill="#AAAAAA"/>
-  <text x="-10" y="44" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="bold" fill="#1976D2">+</text>
-  </symbol>
-  <symbol id="blk-attention-asc" overflow="visible">
-  <use href="#blk-attention"/>
-  <line x1="117" y1="20" x2="117" y2="-4" stroke="#1976D2" stroke-width="0.8"/>
-  <path d="M 117,-4 L -10,-4" fill="none" stroke="#1976D2" stroke-width="1.0" stroke-dasharray="2,3"/>
-  <circle cx="-10" cy="-4" r="4" fill="#AAAAAA"/>
-  <text x="-10" y="-4" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="bold" fill="#1976D2">+</text>
-  </symbol>
   <symbol id="ffn-moe" overflow="visible">
   <rect x="0" y="0" width="98" height="40" fill="url(#zm_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="2"/>
   <rect x="2" y="3" width="12" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
@@ -77,273 +65,626 @@
   <rect x="69" y="12" width="21" height="21" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5"/>
   <polygon points="69,12 74,7 95,7 90,12" fill="#ffe8cc" stroke="#EF6C00" stroke-width="0.5"/>
   <text class="tlbl" x="79" y="22">Ux</text>
-  <line x1="98" y1="20" x2="108" y2="20" stroke="#AAAAAA" stroke-width="0.8"/>
-  <polygon points="104,18 108,20 104,22" fill="#AAAAAA"/>
-  </symbol>
-  <symbol id="ffn-moe-desc" overflow="visible">
-  <use href="#ffn-moe"/>
-  <line x1="108" y1="20" x2="108" y2="52" stroke="#EF6C00" stroke-width="1.0"/>
-  <path d="M 108,52 L -134,52" fill="none" stroke="#EF6C00" stroke-width="1.0" stroke-dasharray="2,3"/>
-  <circle cx="-134" cy="52" r="4" fill="#AAAAAA"/>
-  <text x="-134" y="52" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="bold" fill="#EF6C00">+</text>
-  </symbol>
-  <symbol id="ffn-moe-asc" overflow="visible">
-  <use href="#ffn-moe"/>
-  <line x1="108" y1="20" x2="108" y2="-12" stroke="#EF6C00" stroke-width="1.0"/>
-  <path d="M 108,-12 L -134,-12" fill="none" stroke="#EF6C00" stroke-width="1.0" stroke-dasharray="2,3"/>
-  <circle cx="-134" cy="-12" r="4" fill="#AAAAAA"/>
-  <text x="-134" y="-12" text-anchor="middle" dominant-baseline="central" font-size="8" font-weight="bold" fill="#EF6C00">+</text>
-  </symbol>
-  <symbol id="row-chrome" overflow="visible">
-  <circle cx="26" cy="0" r="2.5" fill="#888888"/>
-  <line x1="26" y1="0" x2="36" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
-  <polygon points="32,-2 36,0 32,2" fill="#AAAAAA"/>
-  <line x1="146" y1="0" x2="160" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
-  <polygon points="156,-2 160,0 156,2" fill="#AAAAAA"/>
-  <polygon points="40,-2 36,0 40,2" fill="#AAAAAA"/>
-  </symbol>
-  <symbol id="global-row" overflow="visible">
-  <line x1="26" y1="0" x2="36" y2="0" stroke="#AAAAAA" stroke-width="0.8"/>
-  <polyline points="32,-2 36,0 32,2" fill="none" stroke="#AAAAAA" stroke-width="0.8"/>
-  <rect x="36" y="-20" width="222" height="40" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
-  <rect x="38" y="-17" width="71" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="73" y="0">out</text>
-  <rect x="110" y="-17" width="71" height="34" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="145" y="0">norm</text>
-  <rect x="182" y="-17" width="71" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
-  <text class="tlbl" x="217" y="0">embd</text>
-  <line x1="147" y1="-20" x2="147" y2="-36" stroke="#AAAAAA" stroke-width="0.8"/>
-  <polyline points="144,-30 147,-36 150,-30" fill="none" stroke="#AAAAAA" stroke-width="1"/>
-  <text class="io" x="147" y="-42">OUT</text>
-  </symbol>
-  <symbol id="legend" overflow="visible">
-  <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Legend</text>
-  <rect width="170" height="84" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
-  <rect x="4" y="10" width="10" height="10" fill="url(#zm_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="1"/>
-  <text class="ltxt" x="18" y="15">attention</text>
-  <rect x="4" y="26" width="10" height="10" fill="url(#zm_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="1"/>
-  <text class="ltxt" x="18" y="31">FFN (dense)</text>
-  <rect x="4" y="42" width="10" height="10" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="1"/>
-  <text class="ltxt" x="18" y="47">global</text>
-  <rect x="4" y="58" width="10" height="10" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.8" rx="1"/>
-  <text class="ltxt" x="18" y="63">RMS norm</text>
-  </symbol>
-  <symbol id="summary" overflow="visible">
-  <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="4" y="-5">Summary</text>
-  <rect width="170" height="60" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
-  <text class="shdr" x="4" y="11">65 modules</text>
-  <text class="shdr" x="4" y="29">387 tensors</text>
-  <text class="shdr" x="4" y="47">387 weights</text>
   </symbol>
 </defs>
-  <rect width="588" height="1214" fill="#fafafa" rx="8"/>
+  <rect width="844" height="1081" fill="#fafafa" rx="8"/>
 
-  <text class="title" x="279" y="32" text-anchor="middle">Llada-moe Layers</text>
-  <text x="279" y="46" text-anchor="middle" font-size="11" font-weight="600" fill="#999999">(diffusion — iterative denoising, bidirectional)</text>
-  <line x1="26" y1="90" x2="26" y2="1076" stroke="#AAAAAA" stroke-width="1.5"/>
-  <text class="io" x="26" y="86">IN</text>
-  <path d="M 26,1076 L 26,1088 L 316,1088" fill="none" stroke="#AAAAAA" stroke-width="1.5"/>
-  <polygon points="119,1085 125,1088 119,1091" fill="#AAAAAA"/>
-  <polygon points="222,1085 216,1088 222,1091" fill="#AAAAAA"/>
-  <line x1="316" y1="1088" x2="316" y2="1076" stroke="#AAAAAA" stroke-width="1.5"/>
-  <line x1="316" y1="1076" x2="316" y2="158" stroke="#AAAAAA" stroke-width="1.5"/>
-  <polygon points="313,164 316,170 319,164" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,100)"/>
-  <text class="lbl" x="21" y="100">0</text>
-  <use href="#blk-attention-desc" transform="translate(36,80)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,80)"/>
-  <polygon points="23,118 26,112 29,118" fill="#AAAAAA"/>
-  <polygon points="23,138 26,144 29,138" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,158)"/>
-  <text class="lbl" x="21" y="158">1</text>
-  <use href="#blk-attention-desc" transform="translate(36,138)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,138)"/>
-  <polygon points="23,176 26,170 29,176" fill="#AAAAAA"/>
-  <polygon points="23,196 26,202 29,196" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,216)"/>
-  <text class="lbl" x="21" y="216">2</text>
-  <use href="#blk-attention-desc" transform="translate(36,196)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,196)"/>
-  <polygon points="23,234 26,228 29,234" fill="#AAAAAA"/>
-  <polygon points="23,254 26,260 29,254" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,274)"/>
-  <text class="lbl" x="21" y="274">3</text>
-  <use href="#blk-attention-desc" transform="translate(36,254)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,254)"/>
-  <polygon points="23,292 26,286 29,292" fill="#AAAAAA"/>
-  <polygon points="23,312 26,318 29,312" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,332)"/>
-  <text class="lbl" x="21" y="332">4</text>
-  <use href="#blk-attention-desc" transform="translate(36,312)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,312)"/>
-  <polygon points="23,350 26,344 29,350" fill="#AAAAAA"/>
-  <polygon points="23,370 26,376 29,370" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,390)"/>
-  <text class="lbl" x="21" y="390">5</text>
-  <use href="#blk-attention-desc" transform="translate(36,370)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,370)"/>
-  <polygon points="23,408 26,402 29,408" fill="#AAAAAA"/>
-  <polygon points="23,428 26,434 29,428" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,448)"/>
-  <text class="lbl" x="21" y="448">6</text>
-  <use href="#blk-attention-desc" transform="translate(36,428)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,428)"/>
-  <polygon points="23,466 26,460 29,466" fill="#AAAAAA"/>
-  <polygon points="23,486 26,492 29,486" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,506)"/>
-  <text class="lbl" x="21" y="506">7</text>
-  <use href="#blk-attention-desc" transform="translate(36,486)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,486)"/>
-  <polygon points="23,524 26,518 29,524" fill="#AAAAAA"/>
-  <polygon points="23,544 26,550 29,544" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,564)"/>
-  <text class="lbl" x="21" y="564">8</text>
-  <use href="#blk-attention-desc" transform="translate(36,544)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,544)"/>
-  <polygon points="23,582 26,576 29,582" fill="#AAAAAA"/>
-  <polygon points="23,602 26,608 29,602" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,622)"/>
-  <text class="lbl" x="21" y="622">9</text>
-  <use href="#blk-attention-desc" transform="translate(36,602)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,602)"/>
-  <polygon points="23,640 26,634 29,640" fill="#AAAAAA"/>
-  <polygon points="23,660 26,666 29,660" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,680)"/>
-  <text class="lbl" x="21" y="680">10</text>
-  <use href="#blk-attention-desc" transform="translate(36,660)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,660)"/>
-  <polygon points="23,698 26,692 29,698" fill="#AAAAAA"/>
-  <polygon points="23,718 26,724 29,718" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,738)"/>
-  <text class="lbl" x="21" y="738">11</text>
-  <use href="#blk-attention-desc" transform="translate(36,718)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,718)"/>
-  <polygon points="23,756 26,750 29,756" fill="#AAAAAA"/>
-  <polygon points="23,776 26,782 29,776" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,796)"/>
-  <text class="lbl" x="21" y="796">12</text>
-  <use href="#blk-attention-desc" transform="translate(36,776)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,776)"/>
-  <polygon points="23,814 26,808 29,814" fill="#AAAAAA"/>
-  <polygon points="23,834 26,840 29,834" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,854)"/>
-  <text class="lbl" x="21" y="854">13</text>
-  <use href="#blk-attention-desc" transform="translate(36,834)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,834)"/>
-  <polygon points="23,872 26,866 29,872" fill="#AAAAAA"/>
-  <polygon points="23,892 26,898 29,892" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,912)"/>
-  <text class="lbl" x="21" y="912">14</text>
-  <use href="#blk-attention-desc" transform="translate(36,892)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,892)"/>
-  <polygon points="23,930 26,924 29,930" fill="#AAAAAA"/>
-  <polygon points="23,950 26,956 29,950" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,970)"/>
-  <text class="lbl" x="21" y="970">15</text>
-  <use href="#blk-attention-desc" transform="translate(36,950)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,950)"/>
-  <polygon points="23,988 26,982 29,988" fill="#AAAAAA"/>
-  <polygon points="23,1008 26,1014 29,1008" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(0,1028)"/>
-  <text class="lbl" x="21" y="1028">16</text>
-  <use href="#blk-attention-desc" transform="translate(36,1008)"/>
-  <use href="#ffn-moe-desc" transform="translate(160,1008)"/>
-  <polygon points="23,1046 26,1040 29,1046" fill="#AAAAAA"/>
-  <polygon points="23,1066 26,1072 29,1066" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,1028)"/>
-  <text class="lbl" x="311" y="1028">17</text>
-  <use href="#blk-attention-asc" transform="translate(326,1008)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,1008)"/>
-  <polygon points="313,990 316,984 319,990" fill="#AAAAAA"/>
-  <polygon points="313,1010 316,1016 319,1010" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,970)"/>
-  <text class="lbl" x="311" y="970">18</text>
-  <use href="#blk-attention-asc" transform="translate(326,950)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,950)"/>
-  <polygon points="313,932 316,926 319,932" fill="#AAAAAA"/>
-  <polygon points="313,952 316,958 319,952" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,912)"/>
-  <text class="lbl" x="311" y="912">19</text>
-  <use href="#blk-attention-asc" transform="translate(326,892)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,892)"/>
-  <polygon points="313,874 316,868 319,874" fill="#AAAAAA"/>
-  <polygon points="313,894 316,900 319,894" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,854)"/>
-  <text class="lbl" x="311" y="854">20</text>
-  <use href="#blk-attention-asc" transform="translate(326,834)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,834)"/>
-  <polygon points="313,816 316,810 319,816" fill="#AAAAAA"/>
-  <polygon points="313,836 316,842 319,836" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,796)"/>
-  <text class="lbl" x="311" y="796">21</text>
-  <use href="#blk-attention-asc" transform="translate(326,776)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,776)"/>
-  <polygon points="313,758 316,752 319,758" fill="#AAAAAA"/>
-  <polygon points="313,778 316,784 319,778" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,738)"/>
-  <text class="lbl" x="311" y="738">22</text>
-  <use href="#blk-attention-asc" transform="translate(326,718)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,718)"/>
-  <polygon points="313,700 316,694 319,700" fill="#AAAAAA"/>
-  <polygon points="313,720 316,726 319,720" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,680)"/>
-  <text class="lbl" x="311" y="680">23</text>
-  <use href="#blk-attention-asc" transform="translate(326,660)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,660)"/>
-  <polygon points="313,642 316,636 319,642" fill="#AAAAAA"/>
-  <polygon points="313,662 316,668 319,662" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,622)"/>
-  <text class="lbl" x="311" y="622">24</text>
-  <use href="#blk-attention-asc" transform="translate(326,602)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,602)"/>
-  <polygon points="313,584 316,578 319,584" fill="#AAAAAA"/>
-  <polygon points="313,604 316,610 319,604" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,564)"/>
-  <text class="lbl" x="311" y="564">25</text>
-  <use href="#blk-attention-asc" transform="translate(326,544)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,544)"/>
-  <polygon points="313,526 316,520 319,526" fill="#AAAAAA"/>
-  <polygon points="313,546 316,552 319,546" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,506)"/>
-  <text class="lbl" x="311" y="506">26</text>
-  <use href="#blk-attention-asc" transform="translate(326,486)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,486)"/>
-  <polygon points="313,468 316,462 319,468" fill="#AAAAAA"/>
-  <polygon points="313,488 316,494 319,488" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,448)"/>
-  <text class="lbl" x="311" y="448">27</text>
-  <use href="#blk-attention-asc" transform="translate(326,428)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,428)"/>
-  <polygon points="313,410 316,404 319,410" fill="#AAAAAA"/>
-  <polygon points="313,430 316,436 319,430" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,390)"/>
-  <text class="lbl" x="311" y="390">28</text>
-  <use href="#blk-attention-asc" transform="translate(326,370)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,370)"/>
-  <polygon points="313,352 316,346 319,352" fill="#AAAAAA"/>
-  <polygon points="313,372 316,378 319,372" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,332)"/>
-  <text class="lbl" x="311" y="332">29</text>
-  <use href="#blk-attention-asc" transform="translate(326,312)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,312)"/>
-  <polygon points="313,294 316,288 319,294" fill="#AAAAAA"/>
-  <polygon points="313,314 316,320 319,314" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,274)"/>
-  <text class="lbl" x="311" y="274">30</text>
-  <use href="#blk-attention-asc" transform="translate(326,254)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,254)"/>
-  <polygon points="313,236 316,230 319,236" fill="#AAAAAA"/>
-  <polygon points="313,256 316,262 319,256" fill="#AAAAAA"/>
-  <use href="#row-chrome" transform="translate(290,216)"/>
-  <text class="lbl" x="311" y="216">31</text>
-  <use href="#blk-attention-asc" transform="translate(326,196)"/>
-  <use href="#ffn-moe-asc" transform="translate(450,196)"/>
-  <polygon points="313,178 316,172 319,178" fill="#AAAAAA"/>
-  <polygon points="313,198 316,204 319,198" fill="#AAAAAA"/>
-  <use href="#global-row" transform="translate(290,158)"/>
-  <path d="M 437,110 L 437,54 L 26,54 L 26,78" fill="none" stroke="#AAAAAA" stroke-width="1.2" stroke-dasharray="4,3"/>
-  <polygon points="23,72 26,78 29,72" fill="#AAAAAA"/>
-  <text x="433" y="64" text-anchor="end" font-size="8" font-style="italic" fill="#999999">unmask &amp; re-run (T steps)</text>
-  <use href="#legend" transform="translate(22,1118)"/>
-  <use href="#summary" transform="translate(312,1118)"/>
+  <text class="title" x="314" y="32" text-anchor="middle">Llada-moe Layers</text>
+  <text x="314" y="46" text-anchor="middle" font-size="11" font-weight="600" fill="#999999">(diffusion — iterative denoising)</text>
+  <rect x="98" y="92" width="496" height="40" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
+  <rect x="100" y="95" width="163" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="181" y="112">prompt</text>
+  <rect x="264" y="95" width="163" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="345" y="107">fixed-length</text>
+  <text class="tlbl" x="345" y="116">response</text>
+  <rect x="428" y="95" width="163" height="34" fill="#f5f5f5" stroke="#C62828" stroke-width="0.5" stroke-dasharray="3,2" rx="1"/>
+  <text class="tlbl" x="509" y="112">mask</text>
+  <rect x="98" y="146" width="110" height="40" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
+  <rect x="100" y="149" width="106" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="153" y="166">embd</text>
+  <line x1="153" y1="132" x2="153" y2="146" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="149,138 153,146 157,138" fill="#AAAAAA"/>
+  <text x="161" y="141" text-anchor="start" font-size="8" font-style="italic" fill="#555555">T iterations</text>
+  <path d="M 98,166 L 8,166 L 8,220 L 22,220" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,216 22,220 14,224" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="208" dominant-baseline="text-before-edge">0</text>
+  <use href="#blk-attention" transform="translate(22,200)"/>
+  <use href="#ffn-moe" transform="translate(166,200)"/>
+  <line x1="132" y1="220" x2="166" y2="220" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,216 166,220 158,224" fill="#AAAAAA"/>
+  <path d="M 132,230 L 149,230 L 149,225" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="220" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="220" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="220" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="220" x2="300" y2="220" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,216 300,220 292,224" fill="#AAAAAA"/>
+  <path d="M 264,230 L 281,230 L 281,225" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="220" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="220" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="220" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,220 L 298,247 L 8,247 L 8,274 L 22,274" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,270 22,274 14,278" fill="#AAAAAA"/>
+  <polygon points="161,243 153,247 161,251" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="262" dominant-baseline="text-before-edge">1</text>
+  <use href="#blk-attention" transform="translate(22,254)"/>
+  <use href="#ffn-moe" transform="translate(166,254)"/>
+  <line x1="132" y1="274" x2="166" y2="274" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,270 166,274 158,278" fill="#AAAAAA"/>
+  <path d="M 132,284 L 149,284 L 149,279" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="274" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="274" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="274" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="274" x2="300" y2="274" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,270 300,274 292,278" fill="#AAAAAA"/>
+  <path d="M 264,284 L 281,284 L 281,279" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="274" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="274" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="274" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,274 L 298,301 L 8,301 L 8,328 L 22,328" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,324 22,328 14,332" fill="#AAAAAA"/>
+  <polygon points="161,297 153,301 161,305" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="316" dominant-baseline="text-before-edge">2</text>
+  <use href="#blk-attention" transform="translate(22,308)"/>
+  <use href="#ffn-moe" transform="translate(166,308)"/>
+  <line x1="132" y1="328" x2="166" y2="328" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,324 166,328 158,332" fill="#AAAAAA"/>
+  <path d="M 132,338 L 149,338 L 149,333" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="328" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="328" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="328" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="328" x2="300" y2="328" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,324 300,328 292,332" fill="#AAAAAA"/>
+  <path d="M 264,338 L 281,338 L 281,333" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="328" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="328" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="328" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,328 L 298,355 L 8,355 L 8,382 L 22,382" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,378 22,382 14,386" fill="#AAAAAA"/>
+  <polygon points="161,351 153,355 161,359" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="370" dominant-baseline="text-before-edge">3</text>
+  <use href="#blk-attention" transform="translate(22,362)"/>
+  <use href="#ffn-moe" transform="translate(166,362)"/>
+  <line x1="132" y1="382" x2="166" y2="382" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,378 166,382 158,386" fill="#AAAAAA"/>
+  <path d="M 132,392 L 149,392 L 149,387" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="382" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="382" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="382" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="382" x2="300" y2="382" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,378 300,382 292,386" fill="#AAAAAA"/>
+  <path d="M 264,392 L 281,392 L 281,387" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="382" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="382" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="382" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,382 L 298,409 L 8,409 L 8,436 L 22,436" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,432 22,436 14,440" fill="#AAAAAA"/>
+  <polygon points="161,405 153,409 161,413" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="424" dominant-baseline="text-before-edge">4</text>
+  <use href="#blk-attention" transform="translate(22,416)"/>
+  <use href="#ffn-moe" transform="translate(166,416)"/>
+  <line x1="132" y1="436" x2="166" y2="436" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,432 166,436 158,440" fill="#AAAAAA"/>
+  <path d="M 132,446 L 149,446 L 149,441" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="436" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="436" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="436" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="436" x2="300" y2="436" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,432 300,436 292,440" fill="#AAAAAA"/>
+  <path d="M 264,446 L 281,446 L 281,441" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="436" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="436" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="436" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,436 L 298,463 L 8,463 L 8,490 L 22,490" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,486 22,490 14,494" fill="#AAAAAA"/>
+  <polygon points="161,459 153,463 161,467" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="478" dominant-baseline="text-before-edge">5</text>
+  <use href="#blk-attention" transform="translate(22,470)"/>
+  <use href="#ffn-moe" transform="translate(166,470)"/>
+  <line x1="132" y1="490" x2="166" y2="490" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,486 166,490 158,494" fill="#AAAAAA"/>
+  <path d="M 132,500 L 149,500 L 149,495" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="490" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="490" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="490" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="490" x2="300" y2="490" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,486 300,490 292,494" fill="#AAAAAA"/>
+  <path d="M 264,500 L 281,500 L 281,495" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="490" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="490" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="490" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,490 L 298,517 L 8,517 L 8,544 L 22,544" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,540 22,544 14,548" fill="#AAAAAA"/>
+  <polygon points="161,513 153,517 161,521" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="532" dominant-baseline="text-before-edge">6</text>
+  <use href="#blk-attention" transform="translate(22,524)"/>
+  <use href="#ffn-moe" transform="translate(166,524)"/>
+  <line x1="132" y1="544" x2="166" y2="544" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,540 166,544 158,548" fill="#AAAAAA"/>
+  <path d="M 132,554 L 149,554 L 149,549" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="544" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="544" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="544" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="544" x2="300" y2="544" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,540 300,544 292,548" fill="#AAAAAA"/>
+  <path d="M 264,554 L 281,554 L 281,549" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="544" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="544" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="544" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,544 L 298,571 L 8,571 L 8,598 L 22,598" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,594 22,598 14,602" fill="#AAAAAA"/>
+  <polygon points="161,567 153,571 161,575" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="586" dominant-baseline="text-before-edge">7</text>
+  <use href="#blk-attention" transform="translate(22,578)"/>
+  <use href="#ffn-moe" transform="translate(166,578)"/>
+  <line x1="132" y1="598" x2="166" y2="598" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,594 166,598 158,602" fill="#AAAAAA"/>
+  <path d="M 132,608 L 149,608 L 149,603" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="598" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="598" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="598" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="598" x2="300" y2="598" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,594 300,598 292,602" fill="#AAAAAA"/>
+  <path d="M 264,608 L 281,608 L 281,603" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="598" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="598" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="598" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,598 L 298,625 L 8,625 L 8,652 L 22,652" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,648 22,652 14,656" fill="#AAAAAA"/>
+  <polygon points="161,621 153,625 161,629" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="640" dominant-baseline="text-before-edge">8</text>
+  <use href="#blk-attention" transform="translate(22,632)"/>
+  <use href="#ffn-moe" transform="translate(166,632)"/>
+  <line x1="132" y1="652" x2="166" y2="652" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,648 166,652 158,656" fill="#AAAAAA"/>
+  <path d="M 132,662 L 149,662 L 149,657" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="652" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="652" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="652" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="652" x2="300" y2="652" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,648 300,652 292,656" fill="#AAAAAA"/>
+  <path d="M 264,662 L 281,662 L 281,657" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="652" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="652" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="652" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,652 L 298,679 L 8,679 L 8,706 L 22,706" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,702 22,706 14,710" fill="#AAAAAA"/>
+  <polygon points="161,675 153,679 161,683" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="694" dominant-baseline="text-before-edge">9</text>
+  <use href="#blk-attention" transform="translate(22,686)"/>
+  <use href="#ffn-moe" transform="translate(166,686)"/>
+  <line x1="132" y1="706" x2="166" y2="706" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,702 166,706 158,710" fill="#AAAAAA"/>
+  <path d="M 132,716 L 149,716 L 149,711" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="706" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="706" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="706" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="706" x2="300" y2="706" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,702 300,706 292,710" fill="#AAAAAA"/>
+  <path d="M 264,716 L 281,716 L 281,711" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="706" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="706" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="706" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,706 L 298,733 L 8,733 L 8,760 L 22,760" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,756 22,760 14,764" fill="#AAAAAA"/>
+  <polygon points="161,729 153,733 161,737" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="748" dominant-baseline="text-before-edge">10</text>
+  <use href="#blk-attention" transform="translate(22,740)"/>
+  <use href="#ffn-moe" transform="translate(166,740)"/>
+  <line x1="132" y1="760" x2="166" y2="760" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,756 166,760 158,764" fill="#AAAAAA"/>
+  <path d="M 132,770 L 149,770 L 149,765" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="760" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="760" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="760" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="760" x2="300" y2="760" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,756 300,760 292,764" fill="#AAAAAA"/>
+  <path d="M 264,770 L 281,770 L 281,765" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="760" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="760" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="760" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,760 L 298,787 L 8,787 L 8,814 L 22,814" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,810 22,814 14,818" fill="#AAAAAA"/>
+  <polygon points="161,783 153,787 161,791" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="802" dominant-baseline="text-before-edge">11</text>
+  <use href="#blk-attention" transform="translate(22,794)"/>
+  <use href="#ffn-moe" transform="translate(166,794)"/>
+  <line x1="132" y1="814" x2="166" y2="814" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,810 166,814 158,818" fill="#AAAAAA"/>
+  <path d="M 132,824 L 149,824 L 149,819" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="814" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="814" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="814" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="814" x2="300" y2="814" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,810 300,814 292,818" fill="#AAAAAA"/>
+  <path d="M 264,824 L 281,824 L 281,819" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="814" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="814" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="814" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,814 L 298,841 L 8,841 L 8,868 L 22,868" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,864 22,868 14,872" fill="#AAAAAA"/>
+  <polygon points="161,837 153,841 161,845" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="856" dominant-baseline="text-before-edge">12</text>
+  <use href="#blk-attention" transform="translate(22,848)"/>
+  <use href="#ffn-moe" transform="translate(166,848)"/>
+  <line x1="132" y1="868" x2="166" y2="868" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,864 166,868 158,872" fill="#AAAAAA"/>
+  <path d="M 132,878 L 149,878 L 149,873" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="868" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="868" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="868" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="868" x2="300" y2="868" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,864 300,868 292,872" fill="#AAAAAA"/>
+  <path d="M 264,878 L 281,878 L 281,873" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="868" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="868" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="868" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,868 L 298,895 L 8,895 L 8,922 L 22,922" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,918 22,922 14,926" fill="#AAAAAA"/>
+  <polygon points="161,891 153,895 161,899" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="910" dominant-baseline="text-before-edge">13</text>
+  <use href="#blk-attention" transform="translate(22,902)"/>
+  <use href="#ffn-moe" transform="translate(166,902)"/>
+  <line x1="132" y1="922" x2="166" y2="922" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,918 166,922 158,926" fill="#AAAAAA"/>
+  <path d="M 132,932 L 149,932 L 149,927" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="922" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="922" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="922" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="922" x2="300" y2="922" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,918 300,922 292,926" fill="#AAAAAA"/>
+  <path d="M 264,932 L 281,932 L 281,927" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="922" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="922" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="922" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,922 L 298,949 L 8,949 L 8,976 L 22,976" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,972 22,976 14,980" fill="#AAAAAA"/>
+  <polygon points="161,945 153,949 161,953" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="964" dominant-baseline="text-before-edge">14</text>
+  <use href="#blk-attention" transform="translate(22,956)"/>
+  <use href="#ffn-moe" transform="translate(166,956)"/>
+  <line x1="132" y1="976" x2="166" y2="976" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,972 166,976 158,980" fill="#AAAAAA"/>
+  <path d="M 132,986 L 149,986 L 149,981" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="976" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="976" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="976" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="976" x2="300" y2="976" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,972 300,976 292,980" fill="#AAAAAA"/>
+  <path d="M 264,986 L 281,986 L 281,981" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="976" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="976" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="976" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 298,976 L 298,1003 L 8,1003 L 8,1030 L 22,1030" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="14,1026 22,1030 14,1034" fill="#AAAAAA"/>
+  <polygon points="161,999 153,1003 161,1007" fill="#AAAAAA"/>
+  <text class="lbl" x="20.5" y="1018" dominant-baseline="text-before-edge">15</text>
+  <use href="#blk-attention" transform="translate(22,1010)"/>
+  <use href="#ffn-moe" transform="translate(166,1010)"/>
+  <line x1="132" y1="1030" x2="166" y2="1030" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="158,1026 166,1030 158,1034" fill="#AAAAAA"/>
+  <path d="M 132,1040 L 149,1040 L 149,1035" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="149" cy="1030" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="149" cy="1030" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="149" y="1030" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="264" y1="1030" x2="300" y2="1030" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="292,1026 300,1030 292,1034" fill="#AAAAAA"/>
+  <path d="M 264,1040 L 281,1040 L 281,1035" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="281" cy="1030" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="281" cy="1030" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="281" y="1030" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <line x1="298" y1="1030" x2="352" y2="1030" stroke="#AAAAAA" stroke-width="2.5" stroke-linecap="square"/>
+  <polygon points="344,1026 352,1030 344,1034" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="1018" dominant-baseline="text-before-edge">16</text>
+  <use href="#blk-attention" transform="translate(352,1010)"/>
+  <use href="#ffn-moe" transform="translate(496,1010)"/>
+  <line x1="462" y1="1030" x2="496" y2="1030" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,1026 496,1030 488,1034" fill="#AAAAAA"/>
+  <path d="M 462,1040 L 479,1040 L 479,1035" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="1030" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="1030" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="1030" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="1030" x2="630" y2="1030" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,1026 630,1030 622,1034" fill="#AAAAAA"/>
+  <path d="M 594,1040 L 611,1040 L 611,1035" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="1030" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="1030" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="1030" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,1030 L 628,1003 L 338,1003 L 338,976 L 352,976" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,972 352,976 344,980" fill="#AAAAAA"/>
+  <polygon points="491,999 483,1003 491,1007" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="964" dominant-baseline="text-before-edge">17</text>
+  <use href="#blk-attention" transform="translate(352,956)"/>
+  <use href="#ffn-moe" transform="translate(496,956)"/>
+  <line x1="462" y1="976" x2="496" y2="976" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,972 496,976 488,980" fill="#AAAAAA"/>
+  <path d="M 462,986 L 479,986 L 479,981" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="976" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="976" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="976" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="976" x2="630" y2="976" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,972 630,976 622,980" fill="#AAAAAA"/>
+  <path d="M 594,986 L 611,986 L 611,981" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="976" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="976" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="976" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,976 L 628,949 L 338,949 L 338,922 L 352,922" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,918 352,922 344,926" fill="#AAAAAA"/>
+  <polygon points="491,945 483,949 491,953" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="910" dominant-baseline="text-before-edge">18</text>
+  <use href="#blk-attention" transform="translate(352,902)"/>
+  <use href="#ffn-moe" transform="translate(496,902)"/>
+  <line x1="462" y1="922" x2="496" y2="922" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,918 496,922 488,926" fill="#AAAAAA"/>
+  <path d="M 462,932 L 479,932 L 479,927" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="922" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="922" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="922" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="922" x2="630" y2="922" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,918 630,922 622,926" fill="#AAAAAA"/>
+  <path d="M 594,932 L 611,932 L 611,927" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="922" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="922" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="922" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,922 L 628,895 L 338,895 L 338,868 L 352,868" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,864 352,868 344,872" fill="#AAAAAA"/>
+  <polygon points="491,891 483,895 491,899" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="856" dominant-baseline="text-before-edge">19</text>
+  <use href="#blk-attention" transform="translate(352,848)"/>
+  <use href="#ffn-moe" transform="translate(496,848)"/>
+  <line x1="462" y1="868" x2="496" y2="868" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,864 496,868 488,872" fill="#AAAAAA"/>
+  <path d="M 462,878 L 479,878 L 479,873" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="868" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="868" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="868" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="868" x2="630" y2="868" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,864 630,868 622,872" fill="#AAAAAA"/>
+  <path d="M 594,878 L 611,878 L 611,873" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="868" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="868" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="868" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,868 L 628,841 L 338,841 L 338,814 L 352,814" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,810 352,814 344,818" fill="#AAAAAA"/>
+  <polygon points="491,837 483,841 491,845" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="802" dominant-baseline="text-before-edge">20</text>
+  <use href="#blk-attention" transform="translate(352,794)"/>
+  <use href="#ffn-moe" transform="translate(496,794)"/>
+  <line x1="462" y1="814" x2="496" y2="814" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,810 496,814 488,818" fill="#AAAAAA"/>
+  <path d="M 462,824 L 479,824 L 479,819" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="814" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="814" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="814" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="814" x2="630" y2="814" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,810 630,814 622,818" fill="#AAAAAA"/>
+  <path d="M 594,824 L 611,824 L 611,819" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="814" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="814" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="814" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,814 L 628,787 L 338,787 L 338,760 L 352,760" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,756 352,760 344,764" fill="#AAAAAA"/>
+  <polygon points="491,783 483,787 491,791" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="748" dominant-baseline="text-before-edge">21</text>
+  <use href="#blk-attention" transform="translate(352,740)"/>
+  <use href="#ffn-moe" transform="translate(496,740)"/>
+  <line x1="462" y1="760" x2="496" y2="760" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,756 496,760 488,764" fill="#AAAAAA"/>
+  <path d="M 462,770 L 479,770 L 479,765" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="760" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="760" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="760" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="760" x2="630" y2="760" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,756 630,760 622,764" fill="#AAAAAA"/>
+  <path d="M 594,770 L 611,770 L 611,765" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="760" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="760" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="760" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,760 L 628,733 L 338,733 L 338,706 L 352,706" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,702 352,706 344,710" fill="#AAAAAA"/>
+  <polygon points="491,729 483,733 491,737" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="694" dominant-baseline="text-before-edge">22</text>
+  <use href="#blk-attention" transform="translate(352,686)"/>
+  <use href="#ffn-moe" transform="translate(496,686)"/>
+  <line x1="462" y1="706" x2="496" y2="706" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,702 496,706 488,710" fill="#AAAAAA"/>
+  <path d="M 462,716 L 479,716 L 479,711" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="706" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="706" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="706" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="706" x2="630" y2="706" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,702 630,706 622,710" fill="#AAAAAA"/>
+  <path d="M 594,716 L 611,716 L 611,711" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="706" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="706" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="706" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,706 L 628,679 L 338,679 L 338,652 L 352,652" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,648 352,652 344,656" fill="#AAAAAA"/>
+  <polygon points="491,675 483,679 491,683" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="640" dominant-baseline="text-before-edge">23</text>
+  <use href="#blk-attention" transform="translate(352,632)"/>
+  <use href="#ffn-moe" transform="translate(496,632)"/>
+  <line x1="462" y1="652" x2="496" y2="652" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,648 496,652 488,656" fill="#AAAAAA"/>
+  <path d="M 462,662 L 479,662 L 479,657" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="652" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="652" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="652" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="652" x2="630" y2="652" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,648 630,652 622,656" fill="#AAAAAA"/>
+  <path d="M 594,662 L 611,662 L 611,657" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="652" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="652" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="652" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,652 L 628,625 L 338,625 L 338,598 L 352,598" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,594 352,598 344,602" fill="#AAAAAA"/>
+  <polygon points="491,621 483,625 491,629" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="586" dominant-baseline="text-before-edge">24</text>
+  <use href="#blk-attention" transform="translate(352,578)"/>
+  <use href="#ffn-moe" transform="translate(496,578)"/>
+  <line x1="462" y1="598" x2="496" y2="598" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,594 496,598 488,602" fill="#AAAAAA"/>
+  <path d="M 462,608 L 479,608 L 479,603" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="598" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="598" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="598" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="598" x2="630" y2="598" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,594 630,598 622,602" fill="#AAAAAA"/>
+  <path d="M 594,608 L 611,608 L 611,603" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="598" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="598" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="598" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,598 L 628,571 L 338,571 L 338,544 L 352,544" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,540 352,544 344,548" fill="#AAAAAA"/>
+  <polygon points="491,567 483,571 491,575" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="532" dominant-baseline="text-before-edge">25</text>
+  <use href="#blk-attention" transform="translate(352,524)"/>
+  <use href="#ffn-moe" transform="translate(496,524)"/>
+  <line x1="462" y1="544" x2="496" y2="544" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,540 496,544 488,548" fill="#AAAAAA"/>
+  <path d="M 462,554 L 479,554 L 479,549" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="544" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="544" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="544" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="544" x2="630" y2="544" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,540 630,544 622,548" fill="#AAAAAA"/>
+  <path d="M 594,554 L 611,554 L 611,549" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="544" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="544" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="544" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,544 L 628,517 L 338,517 L 338,490 L 352,490" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,486 352,490 344,494" fill="#AAAAAA"/>
+  <polygon points="491,513 483,517 491,521" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="478" dominant-baseline="text-before-edge">26</text>
+  <use href="#blk-attention" transform="translate(352,470)"/>
+  <use href="#ffn-moe" transform="translate(496,470)"/>
+  <line x1="462" y1="490" x2="496" y2="490" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,486 496,490 488,494" fill="#AAAAAA"/>
+  <path d="M 462,500 L 479,500 L 479,495" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="490" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="490" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="490" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="490" x2="630" y2="490" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,486 630,490 622,494" fill="#AAAAAA"/>
+  <path d="M 594,500 L 611,500 L 611,495" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="490" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="490" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="490" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,490 L 628,463 L 338,463 L 338,436 L 352,436" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,432 352,436 344,440" fill="#AAAAAA"/>
+  <polygon points="491,459 483,463 491,467" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="424" dominant-baseline="text-before-edge">27</text>
+  <use href="#blk-attention" transform="translate(352,416)"/>
+  <use href="#ffn-moe" transform="translate(496,416)"/>
+  <line x1="462" y1="436" x2="496" y2="436" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,432 496,436 488,440" fill="#AAAAAA"/>
+  <path d="M 462,446 L 479,446 L 479,441" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="436" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="436" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="436" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="436" x2="630" y2="436" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,432 630,436 622,440" fill="#AAAAAA"/>
+  <path d="M 594,446 L 611,446 L 611,441" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="436" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="436" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="436" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,436 L 628,409 L 338,409 L 338,382 L 352,382" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,378 352,382 344,386" fill="#AAAAAA"/>
+  <polygon points="491,405 483,409 491,413" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="370" dominant-baseline="text-before-edge">28</text>
+  <use href="#blk-attention" transform="translate(352,362)"/>
+  <use href="#ffn-moe" transform="translate(496,362)"/>
+  <line x1="462" y1="382" x2="496" y2="382" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,378 496,382 488,386" fill="#AAAAAA"/>
+  <path d="M 462,392 L 479,392 L 479,387" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="382" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="382" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="382" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="382" x2="630" y2="382" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,378 630,382 622,386" fill="#AAAAAA"/>
+  <path d="M 594,392 L 611,392 L 611,387" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="382" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="382" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="382" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,382 L 628,355 L 338,355 L 338,328 L 352,328" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,324 352,328 344,332" fill="#AAAAAA"/>
+  <polygon points="491,351 483,355 491,359" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="316" dominant-baseline="text-before-edge">29</text>
+  <use href="#blk-attention" transform="translate(352,308)"/>
+  <use href="#ffn-moe" transform="translate(496,308)"/>
+  <line x1="462" y1="328" x2="496" y2="328" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,324 496,328 488,332" fill="#AAAAAA"/>
+  <path d="M 462,338 L 479,338 L 479,333" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="328" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="328" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="328" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="328" x2="630" y2="328" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,324 630,328 622,332" fill="#AAAAAA"/>
+  <path d="M 594,338 L 611,338 L 611,333" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="328" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="328" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="328" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,328 L 628,301 L 338,301 L 338,274 L 352,274" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,270 352,274 344,278" fill="#AAAAAA"/>
+  <polygon points="491,297 483,301 491,305" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="262" dominant-baseline="text-before-edge">30</text>
+  <use href="#blk-attention" transform="translate(352,254)"/>
+  <use href="#ffn-moe" transform="translate(496,254)"/>
+  <line x1="462" y1="274" x2="496" y2="274" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,270 496,274 488,278" fill="#AAAAAA"/>
+  <path d="M 462,284 L 479,284 L 479,279" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="274" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="274" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="274" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="274" x2="630" y2="274" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,270 630,274 622,278" fill="#AAAAAA"/>
+  <path d="M 594,284 L 611,284 L 611,279" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="274" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="274" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="274" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,274 L 628,247 L 338,247 L 338,220 L 352,220" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,216 352,220 344,224" fill="#AAAAAA"/>
+  <polygon points="491,243 483,247 491,251" fill="#AAAAAA"/>
+  <text class="lbl" x="350.5" y="208" dominant-baseline="text-before-edge">31</text>
+  <use href="#blk-attention" transform="translate(352,200)"/>
+  <use href="#ffn-moe" transform="translate(496,200)"/>
+  <line x1="462" y1="220" x2="496" y2="220" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="488,216 496,220 488,224" fill="#AAAAAA"/>
+  <path d="M 462,230 L 479,230 L 479,225" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="479" cy="220" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="479" cy="220" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="479" y="220" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="594" y1="220" x2="630" y2="220" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="622,216 630,220 622,224" fill="#AAAAAA"/>
+  <path d="M 594,230 L 611,230 L 611,225" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="611" cy="220" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="611" cy="220" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="611" y="220" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 628,220 L 628,193 L 338,193 L 338,166 L 352,166" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="344,162 352,166 344,170" fill="#AAAAAA"/>
+  <polygon points="491,189 483,193 491,197" fill="#AAAAAA"/>
+  <line x1="338" y1="166" x2="352" y2="166" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="344,162 352,166 344,170" fill="#AAAAAA"/>
+  <rect x="352" y="146" width="242" height="40" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
+  <rect x="354" y="149" width="78" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="393" y="166">output norm</text>
+  <rect x="433" y="149" width="78" height="34" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text class="tlbl" x="472" y="166">lm_head</text>
+  <text class="tlbl" x="551" y="166">[sample+remask]</text>
+  <line x1="551" y1="146" x2="551" y2="132" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="547,140 551,132 555,140" fill="#AAAAAA"/>
+  <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="656" y="89">Legend</text>
+  <rect x="652" y="94" width="180" height="84" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <rect x="656" y="104" width="10" height="10" fill="url(#zm_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="670" y="109">attention</text>
+  <rect x="656" y="120" width="10" height="10" fill="url(#zm_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="670" y="125">FFN (MoE)</text>
+  <rect x="656" y="136" width="10" height="10" fill="url(#zm_global)" stroke="#C62828" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="670" y="141">global</text>
+  <rect x="656" y="152" width="10" height="10" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="670" y="157">RMS norm</text>
+  <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="656" y="189">Summary</text>
+  <rect x="652" y="194" width="180" height="60" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <text class="shdr" x="656" y="205">65 modules</text>
+  <text class="shdr" x="656" y="223">387 tensors</text>
+  <text class="shdr" x="656" y="241">387 weights</text>
 </svg>

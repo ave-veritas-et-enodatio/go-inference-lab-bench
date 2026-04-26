@@ -8,64 +8,9 @@ import (
 // layer count, without requiring a GGUF file. Only used for example diagram generation
 // (gen-arch-diagram), never for live model processing. Routing uses fallback param
 // values (e.g. full_attn_interval=4); if the rule still cannot be evaluated, all
-// layers use the if_true block type.
+// layers use the first available block type.
 func ResolveWeightsForDiagram(def *arch.ArchDef, nLayers int) *arch.ResolvedWeights {
-	rw := &arch.ResolvedWeights{
-		Global: make(map[string]string, len(def.Weights.Global)),
-		Layers: make([]arch.ResolvedLayerWeights, nLayers),
-	}
-
-	for logicalName, tensorName := range def.Weights.Global {
-		rw.Global[logicalName] = tensorName
-	}
-
-	fallbackParams := diagramFallbackParams(def, nLayers)
-
-	for i := range nLayers {
-		prefix := arch.ExpandPrefix(def.Layers.Prefix, i)
-
-		blockName, err := arch.ResolveBlockName(def, i, fallbackParams)
-		if err != nil {
-			blockName = def.Layers.Routing.Uniform
-			if blockName == "" {
-				blockName = def.Layers.Routing.IfTrue
-			}
-			if blockName == "" {
-				blockName = def.Layers.Routing.IfFalse
-			}
-		}
-
-		block := def.Blocks[blockName]
-
-		lw := arch.ResolvedLayerWeights{
-			Index:     i,
-			BlockName: blockName,
-			Prefix:    prefix,
-			Common:    make(map[string]string, len(def.Layers.CommonWeights)),
-			Block:     make(map[string]string, len(block.Weights)),
-			FFN:       make(map[string]string, len(def.FFN.Weights)),
-		}
-
-		for logicalName, suffix := range def.Layers.CommonWeights {
-			lw.Common[logicalName] = prefix + suffix
-		}
-		for logicalName, suffix := range block.Weights {
-			lw.Block[logicalName] = prefix + suffix
-		}
-		for logicalName, suffix := range def.FFN.Weights {
-			lw.FFN[logicalName] = prefix + suffix
-		}
-		if def.FFNAlt != nil {
-			lw.FFNAlt = make(map[string]string, len(def.FFNAlt.Weights))
-			for logicalName, suffix := range def.FFNAlt.Weights {
-				lw.FFNAlt[logicalName] = prefix + suffix
-			}
-		}
-
-		rw.Layers[i] = lw
-	}
-
-	return rw
+	return arch.ResolveWeightsLenient(def, nLayers, diagramFallbackParams(def, nLayers))
 }
 
 // diagramFallbackParams builds ResolvedParams for diagram rendering without GGUF.
@@ -124,11 +69,3 @@ func resolveBlockForDiagram(def *arch.ArchDef, layerIdx int, rp *arch.ResolvedPa
 	return blockName
 }
 
-// capitalizeASCII uppercases the first byte of s if it is a lowercase ASCII letter.
-// Used in place of the deprecated strings.Title for arch names, which are always ASCII.
-func capitalizeASCII(s string) string {
-	if len(s) == 0 || s[0] < 'a' || s[0] > 'z' {
-		return s
-	}
-	return string(s[0]-('a'-'A')) + s[1:]
-}

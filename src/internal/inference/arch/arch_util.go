@@ -118,6 +118,24 @@ func configStrOr(config map[string]any, key string, defaultVal string) string {
 	return defaultVal
 }
 
+// IsTrivialRouting reports whether all layers use the same block type,
+// making per-layer routing logic unnecessary in diagrams and tooling.
+func IsTrivialRouting(def *ArchDef) bool {
+	r := def.Layers.Routing
+	return r.Uniform != "" || r.IfTrue == r.IfFalse || (r.IfTrue != "" && r.IfFalse == "") || (r.IfFalse != "" && r.IfTrue == "")
+}
+
+// IsAttentionModule reports whether a module has the standard attention weight
+// pattern (attn_q, attn_k, attn_v, attn_output). Used by diagram tooling to
+// determine rendering layout independent of palette prefix.
+func IsAttentionModule(m *Module) bool {
+	has := map[string]bool{}
+	for _, w := range m.Weights {
+		has[w] = true
+	}
+	return has[WeightAttnQ] && has[WeightAttnK] && has[WeightAttnV] && has[WeightAttnOutput]
+}
+
 // makeTensorFromSpec creates a new graph-context tensor from explicit type and dimension parameters.
 // Unused dimensions should be 1. Used for Go-parser tensor creation.
 func makeTensorFromSpec(gctx *ggml.GraphContext, typ ggml.GGMLType, ne0, ne1, ne2, ne3 int64) ggml.Tensor {
