@@ -3,6 +3,7 @@ package archdiagram
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -60,57 +61,29 @@ func RenderArchDiagram(def *arch.ArchDef, blockSVGDir string, w io.Writer, opts 
 		patternH    = 50
 	)
 
-	// Compute total height
-	y := 0
-	y += 50 // title
-	y += 30 // legend
-	y += 30 // syntax hint + gap
-	y += globalBoxH + arrowLen // embed
-	// For each unique block path in routing
 	routingPaths := collectRoutingPaths(def)
 	ffnKey := def.FFN.Builder
 	if opts.UseFFNAlt && def.FFNAlt != nil {
 		ffnKey = def.FFNAlt.Builder
 	}
-	for i, rp := range routingPaths {
-		if i > 0 {
-			y += groupGap
-		}
-		blk := blocks[rp.blockName]
-		ffnBlk := blocks[ffnKey]
-		// Must match the groupH calculation + cursor advance in the render loop
-		y += computeLayerGroupHeight(normHeight, boxGap, arrowLen, blk.Height, ffnBlk.Height)
-	}
-	if opts.LayerCount > 0 {
-		y += arrowLen + patternH
-	}
-	y += arrowLen + normHeight    // final norm
-	y += arrowLen + globalBoxH    // LM head
-	y += arrowLen + logitsBoxH    // logits
-	y += 80                       // footer text + breathing room
-	totalHeight := y + 20
 
 	bw := bufio.NewWriter(w)
 
-	// SVG header
-	fmt.Fprintf(bw, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" font-family="system-ui, -apple-system, sans-serif" font-size="13">`, svgWidth, totalHeight)
-	bw.WriteString("\n")
+	// Body is written to a buffer so the final SVG height can be computed from
+	// the single cursor advance below and emitted into the <svg> header.
+	var bodyBuf bytes.Buffer
+	body := bufio.NewWriter(&bodyBuf)
 
-	// Shared defs: gradients, markers, filters
-	emitSharedDefs(bw)
+	emitGradientDefs(body)
 
-	// Block defs via <use>
-	bw.WriteString("  <!-- Block definitions -->\n")
+	body.WriteString("  <defs>\n")
 	for _, dk := range displayKeys {
 		blk := blocks[dk.displayKey]
-		fmt.Fprintf(bw, "  <g id=\"block_%s\">\n", dk.displayKey)
-		bw.WriteString(blk.Content)
-		bw.WriteString("\n  </g>\n")
+		fmt.Fprintf(body, "  <g id=\"block_%s\">\n", dk.displayKey)
+		body.WriteString(blk.Content)
+		body.WriteString("\n  </g>\n")
 	}
-	bw.WriteString("  </defs>\n\n")
-
-	// Background
-	fmt.Fprintf(bw, "  <rect width=\"%d\" height=\"%d\" fill=\"%s\" rx=\"8\"/>\n\n", svgWidth, totalHeight, pal["ui.canvas_bg"])
+	body.WriteString("  </defs>\n\n")
 
 	// Title
 	cx := svgWidth / 2
@@ -118,10 +91,10 @@ func RenderArchDiagram(def *arch.ArchDef, blockSVGDir string, w io.Writer, opts 
 	if opts.UseFFNAlt && def.FFNAlt != nil {
 		title += " (" + def.FFNAlt.Builder + " variant)"
 	}
-	fmt.Fprintf(bw, "  <text x=\"%d\" y=\"32\" text-anchor=\"middle\" font-size=\"20\" font-weight=\"bold\" fill=\"%s\">%s</text>\n", cx, pal["ui.text_head"], title)
+	fmt.Fprintf(body, "  <text x=\"%d\" y=\"32\" text-anchor=\"middle\" font-size=\"20\" font-weight=\"bold\" fill=\"%s\">%s</text>\n", cx, pal["ui.text_head"], title)
 
 	// Legend (centered)
-	emitLegend(bw, def, cx, ffnKey)
+	emitLegend(body, def, cx, ffnKey)
 
 	// (syntax hint is now inside the legend box)
 
@@ -133,9 +106,9 @@ func RenderArchDiagram(def *arch.ArchDef, blockSVGDir string, w io.Writer, opts 
 	if def.Architecture.TiedEmbeddings {
 		embLabel += " (tied to output)"
 	}
-	emitGlobalBox(bw, centerX(cx, globalBoxW), cursor, globalBoxW, globalBoxH, "Token Embedding", embLabel)
+	emitGlobalBox(body, centerX(cx, globalBoxW), cursor, globalBoxW, globalBoxH, "Token Embedding", embLabel)
 	cursor += globalBoxH
-	emitArrow(bw, cx, cursor, arrowLen)
+	emitArrow(body, cx, cursor, arrowLen)
 	cursor += arrowLen
 
 	// Layer groups
@@ -151,63 +124,63 @@ func RenderArchDiagram(def *arch.ArchDef, blockSVGDir string, w io.Writer, opts 
 		groupW := svgWidth - 2*margin
 
 		// Dashed group border
-		fmt.Fprintf(bw, "  <rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" rx=\"8\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.5\" stroke-dasharray=\"6,3\" opacity=\"0.6\"/>\n",
+		fmt.Fprintf(body, "  <rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" rx=\"8\" fill=\"none\" stroke=\"%s\" stroke-width=\"1.5\" stroke-dasharray=\"6,3\" opacity=\"0.6\"/>\n",
 			margin, cursor, groupW, groupH, strokeColor)
 
 		// Group label
-		fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" font-weight=\"600\" fill=\"%s\">%s</text>\n",
+		fmt.Fprintf(body, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" font-weight=\"600\" fill=\"%s\">%s</text>\n",
 			margin+12, cursor+20, strokeColor, rp.label)
 		cursor += 28
 
 		// Pre-attn norm
 		normX := centerX(cx, normWidth)
 		cursor += boxGap
-		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, arch.WeightAttnNorm))
+		emitRMSNormBox(body, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, arch.WeightAttnNorm))
 		cursor += normHeight
-		emitArrow(bw, cx, cursor, arrowLen)
+		emitArrow(body, cx, cursor, arrowLen)
 		cursor += arrowLen
 
 		// Block — reference by block name (display key), not builder name
 		blkX := centerX(cx, blk.Width)
-		fmt.Fprintf(bw, "  <use href=\"#block_%s\" transform=\"translate(%d, %d)\"/>\n", rp.blockName, blkX, cursor)
+		fmt.Fprintf(body, "  <use href=\"#block_%s\" transform=\"translate(%d, %d)\"/>\n", rp.blockName, blkX, cursor)
 
 		// Residual label (right of block, inside dashed box)
-		fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" fill=\"%s\" font-weight=\"600\">+ residual</text>\n",
+		fmt.Fprintf(body, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" fill=\"%s\" font-weight=\"600\">+ residual</text>\n",
 			blkX+blk.Width+12, cursor+blk.Height/2, pal["ui.text_body"])
 
 		cursor += blk.Height + boxGap
 
 		// Post-attn norm
-		emitRMSNormBox(bw, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, arch.WeightFFNNorm))
+		emitRMSNormBox(body, normX, cursor, normWidth, normHeight, weightNameOrDefault(def.Layers.CommonWeights, arch.WeightFFNNorm))
 		cursor += normHeight
-		emitArrow(bw, cx, cursor, arrowLen)
+		emitArrow(body, cx, cursor, arrowLen)
 		cursor += arrowLen
 
 		// FFN
 		ffnX := centerX(cx, ffnBlk.Width)
-		fmt.Fprintf(bw, "  <use href=\"#block_%s\" transform=\"translate(%d, %d)\"/>\n", ffnKey, ffnX, cursor)
-		fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" fill=\"%s\" font-weight=\"600\">+ residual</text>\n",
+		fmt.Fprintf(body, "  <use href=\"#block_%s\" transform=\"translate(%d, %d)\"/>\n", ffnKey, ffnX, cursor)
+		fmt.Fprintf(body, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" fill=\"%s\" font-weight=\"600\">+ residual</text>\n",
 			ffnX+ffnBlk.Width+12, cursor+ffnBlk.Height/2+4, pal["ui.text_body"])
 		cursor += ffnBlk.Height + boxGap + 10
 	}
 
 	// Repeat annotation
-	emitArrow(bw, cx, cursor, arrowLen)
-	fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"10\" fill=\"%s\">x repeats</text>\n", cx+8, cursor+arrowLen-4, pal["ui.text_hint"])
+	emitArrow(body, cx, cursor, arrowLen)
+	fmt.Fprintf(body, "  <text x=\"%d\" y=\"%d\" font-size=\"10\" fill=\"%s\">x repeats</text>\n", cx+8, cursor+arrowLen-4, pal["ui.text_hint"])
 	cursor += arrowLen
 
 	// Layer pattern strip
 	if opts.LayerCount > 0 {
-		emitLayerPattern(bw, def, opts.LayerCount, margin, cursor, svgWidth-2*margin, patternH)
+		emitLayerPattern(body, def, opts.LayerCount, margin, cursor, svgWidth-2*margin, patternH)
 		cursor += patternH
-		emitArrow(bw, cx, cursor, arrowLen)
+		emitArrow(body, cx, cursor, arrowLen)
 		cursor += arrowLen
 	}
 
 	// Final norm
-	emitRMSNormBox(bw, centerX(cx, normWidth), cursor, normWidth, normHeight, weightNameOrDefault(def.Weights.Global, arch.WeightOutputNorm))
+	emitRMSNormBox(body, centerX(cx, normWidth), cursor, normWidth, normHeight, weightNameOrDefault(def.Weights.Global, arch.WeightOutputNorm))
 	cursor += normHeight
-	emitArrow(bw, cx, cursor, arrowLen)
+	emitArrow(body, cx, cursor, arrowLen)
 	cursor += arrowLen
 
 	// LM Head
@@ -215,31 +188,31 @@ func RenderArchDiagram(def *arch.ArchDef, blockSVGDir string, w io.Writer, opts 
 	if def.Architecture.TiedEmbeddings {
 		lmLabel = "tied: reuses token_embd.weight"
 	}
-	emitGlobalBox(bw, centerX(cx, globalBoxW), cursor, globalBoxW, globalBoxH, "LM Head", lmLabel)
+	emitGlobalBox(body, centerX(cx, globalBoxW), cursor, globalBoxW, globalBoxH, "LM Head", lmLabel)
 	cursor += globalBoxH
-	emitArrow(bw, cx, cursor, arrowLen)
+	emitArrow(body, cx, cursor, arrowLen)
 	cursor += arrowLen
 
 	// Logits
-	fmt.Fprintf(bw, "  <g transform=\"translate(%d, %d)\">\n", centerX(cx, logitsBoxW), cursor)
-	fmt.Fprintf(bw, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"%s\" stroke=\"%s\" stroke-width=\"1\"/>\n", logitsBoxW, logitsBoxH, pal["ui.box_fill"], pal["ui.box_stroke"])
-	fmt.Fprintf(bw, "    <text x=\"%d\" y=\"20\" text-anchor=\"middle\" font-weight=\"600\" fill=\"%s\">Logits [n_vocab]</text>\n", logitsBoxW/2, pal["ui.text_head"])
-	bw.WriteString("  </g>\n")
+	fmt.Fprintf(body, "  <g transform=\"translate(%d, %d)\">\n", centerX(cx, logitsBoxW), cursor)
+	fmt.Fprintf(body, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"%s\" stroke=\"%s\" stroke-width=\"1\"/>\n", logitsBoxW, logitsBoxH, pal["ui.box_fill"], pal["ui.box_stroke"])
+	fmt.Fprintf(body, "    <text x=\"%d\" y=\"20\" text-anchor=\"middle\" font-weight=\"600\" fill=\"%s\">Logits [n_vocab]</text>\n", logitsBoxW/2, pal["ui.text_head"])
+	body.WriteString("  </g>\n")
 	cursor += logitsBoxH + 30
 
 	// Footer: routing rule (omitted when trivial — single block type)
-	if !isTrivialRouting(def) {
-		fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" fill=\"%s\">", margin, cursor, pal["ui.text_sec"])
-		fmt.Fprintf(bw, "<tspan font-weight=\"600\">Routing:</tspan>")
+	if !arch.IsTrivialRouting(def) {
+		fmt.Fprintf(body, "  <text x=\"%d\" y=\"%d\" font-size=\"11\" fill=\"%s\">", margin, cursor, pal["ui.text_sec"])
+		fmt.Fprintf(body, "<tspan font-weight=\"600\">Routing:</tspan>")
 		if def.Layers.Routing.Pattern != "" {
-			fmt.Fprintf(bw, " <tspan font-family=\"monospace\" fill=\"%s\">${%s}[@{layer_idx}]</tspan>",
+			fmt.Fprintf(body, " <tspan font-family=\"monospace\" fill=\"%s\">${%s}[@{layer_idx}]</tspan>",
 				pal["ui.text_head"], def.Layers.Routing.Pattern)
 		} else {
-			fmt.Fprintf(bw, " <tspan font-family=\"monospace\" fill=\"%s\">%s</tspan>",
+			fmt.Fprintf(body, " <tspan font-family=\"monospace\" fill=\"%s\">%s</tspan>",
 				pal["ui.text_head"], def.Layers.Routing.Rule)
 		}
-		fmt.Fprintf(bw, " -> true: %s / false: %s", def.Layers.Routing.IfTrue, def.Layers.Routing.IfFalse)
-		bw.WriteString("</text>\n")
+		fmt.Fprintf(body, " -> true: %s / false: %s", def.Layers.Routing.IfTrue, def.Layers.Routing.IfFalse)
+		body.WriteString("</text>\n")
 	}
 
 	// Tokens info box (bottom-right)
@@ -248,15 +221,22 @@ func RenderArchDiagram(def *arch.ArchDef, blockSVGDir string, w io.Writer, opts 
 		tokBoxH := 38
 		tokX := svgWidth - margin - tokBoxW
 		tokY := cursor - 20
-		fmt.Fprintf(bw, "  <rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" rx=\"5\" fill=\"%s\" stroke=\"%s\" stroke-width=\"0.8\"/>\n",
+		fmt.Fprintf(body, "  <rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" rx=\"5\" fill=\"%s\" stroke=\"%s\" stroke-width=\"0.8\"/>\n",
 			tokX, tokY, tokBoxW, tokBoxH, pal["ui.box_bg"], pal["ui.box_border"])
-		fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"10\" font-weight=\"600\" fill=\"%s\">Tokens</text>\n",
+		fmt.Fprintf(body, "  <text x=\"%d\" y=\"%d\" font-size=\"10\" font-weight=\"600\" fill=\"%s\">Tokens</text>\n",
 			tokX+8, tokY+15, pal["ui.text_sec"])
-		fmt.Fprintf(bw, "  <text x=\"%d\" y=\"%d\" font-size=\"9\" fill=\"%s\" font-family=\"monospace\">thinking: %s...%s</text>\n",
+		fmt.Fprintf(body, "  <text x=\"%d\" y=\"%d\" font-size=\"9\" fill=\"%s\" font-family=\"monospace\">thinking: %s...%s</text>\n",
 			tokX+8, tokY+28, pal["ui.text_hint"], xmlEsc(def.Tokens.ThinkOpen), xmlEsc(def.Tokens.ThinkClose))
 	}
 
-	bw.WriteString("</svg>\n")
+	// Flush body and emit <svg> header + background + body + close.
+	finalHeight := cursor + 20
+	fmt.Fprintf(bw, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" font-family="system-ui, -apple-system, sans-serif" font-size="13">`, svgWidth, finalHeight)
+	bw.WriteString("\n")
+	fmt.Fprintf(bw, "  <rect width=\"%d\" height=\"%d\" fill=\"%s\" rx=\"8\"/>\n\n", svgWidth, finalHeight, pal["ui.canvas_bg"])
+	body.Flush()
+	bw.Write(bodyBuf.Bytes())
+	fmt.Fprintf(bw, "</svg>\n")
 	return bw.Flush()
 }
 
@@ -286,7 +266,7 @@ func collectRoutingPaths(def *arch.ArchDef) []routingPath {
 
 	// if_true path first (typically the more common one).
 	// When routing is trivial (single block type), omit the condition — it's noise.
-	trivial := isTrivialRouting(def)
+	trivial := arch.IsTrivialRouting(def)
 	if r.IfTrue != "" {
 		label := formatBuilderName(r.IfTrue)
 		if !trivial && trueCondition != "" {
@@ -355,13 +335,6 @@ func blockColorByName(blockName string) string {
 	return pal[palPrefix(blockName)+".stroke"]
 }
 
-func xmlEsc(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	return s
-}
-
 var bboxRe = regexp.MustCompile(`bbox:\s*(\d+)x(\d+)`)
 
 func loadBlockSVG(dir, builderName string) (*blockSVG, error) {
@@ -404,27 +377,18 @@ func emitArrow(w *bufio.Writer, cx, y, length int) {
 		cx, y, cx, y+length, pal["ui.arrow"])
 }
 
-func emitSharedDefs(w *bufio.Writer) {
+func emitGradientDefs(w *bufio.Writer) {
+	// Gradient defs (shared helper)
+	emitGradients(w, "")
+	// Marker + filter defs (arch-diagram-specific)
 	w.WriteString("  <defs>\n")
 	w.WriteString("    <marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"6\" refX=\"8\" refY=\"3\" orient=\"auto\">\n")
 	fmt.Fprintf(w, "      <path d=\"M0,0 L8,3 L0,6\" fill=\"%s\"/>\n", pal["ui.arrow"])
 	w.WriteString("    </marker>\n")
-	for _, def := range []struct{ id, prefix string }{
-		{"ssmGrad", arch.TypeRecurrent},
-		{"attnGrad", arch.TypeFullAttention},
-		{"swaGrad", arch.TypeSWA},
-		{"ffnGrad", arch.TypeFFN},
-		{"normGrad", arch.TypeNorm},
-		{"globalGrad", arch.ModuleGlobal},
-	} {
-		fmt.Fprintf(w, "    <linearGradient id=\"%s\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n", def.id)
-		fmt.Fprintf(w, "      <stop offset=\"0%%\" stop-color=\"%s\"/><stop offset=\"100%%\" stop-color=\"%s\"/>\n",
-			pal[def.prefix+".grad_top"], pal[def.prefix+".grad_bottom"])
-		fmt.Fprintf(w, "    </linearGradient>\n")
-	}
 	w.WriteString("    <filter id=\"shadow\" x=\"-2%\" y=\"-2%\" width=\"104%\" height=\"104%\">\n")
 	w.WriteString("      <feDropShadow dx=\"1\" dy=\"1\" stdDeviation=\"2\" flood-opacity=\"0.12\"/>\n")
 	w.WriteString("    </filter>\n")
+	w.WriteString("  </defs>\n")
 }
 
 func emitLegend(w *bufio.Writer, def *arch.ArchDef, cx int, ffnKey string) {
@@ -434,14 +398,14 @@ func emitLegend(w *bufio.Writer, def *arch.ArchDef, cx int, ffnKey string) {
 	}
 	// Gradient ID mapping for arch diagram legend
 	gradID := map[string]string{
-		arch.TypeFullAttention: "url(#attnGrad)",
-		arch.TypeSWA:           "url(#swaGrad)",
-		arch.TypeRecurrent:     "url(#ssmGrad)",
-		arch.TypeFFN:           "url(#ffnGrad)",
+		arch.TypeFullAttention: "url(#full_attention)",
+		arch.TypeSWA:           "url(#swa)",
+		arch.TypeRecurrent:     "url(#recurrent)",
+		arch.TypeFFN:           "url(#ffn)",
 	}
 	var items []legendItem
-	items = append(items, legendItem{"Global", "url(#globalGrad)", pal[arch.ModuleGlobal+".stroke"]})
-	items = append(items, legendItem{"RMSNorm", "url(#normGrad)", pal[arch.TypeNorm+".stroke"]})
+	items = append(items, legendItem{"Global", "url(#global)", pal[arch.ModuleGlobal+".stroke"]})
+	items = append(items, legendItem{"RMSNorm", "url(#norm)", pal[arch.TypeNorm+".stroke"]})
 
 	// Check if model has recurrent blocks — if not, simplify attention label.
 	hasRecurrent := false
@@ -505,7 +469,7 @@ func emitLayerPattern(w *bufio.Writer, def *arch.ArchDef, nLayers, x, y, width, 
 	fmt.Fprintf(w, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"%s\" stroke=\"%s\" stroke-width=\"1\" filter=\"url(#shadow)\"/>\n", width, height, pal["ui.box_bg"], pal["ui.box_border"])
 	interval := 0
 	title := fmt.Sprintf("Layer Pattern (example: %d layers", nLayers)
-	if !isTrivialRouting(def) {
+	if !arch.IsTrivialRouting(def) {
 		if def.Example.FullAttnEvery > 0 {
 			title += fmt.Sprintf(", full attention every %d", def.Example.FullAttnEvery)
 		} else if def.Example.AttnPatternTrueEvery > 0 {
@@ -523,13 +487,7 @@ func emitLayerPattern(w *bufio.Writer, def *arch.ArchDef, nLayers, x, y, width, 
 		// Build fallback params for diagram rendering (no GGUF available).
 		rp := diagramFallbackParams(def, nLayers)
 
-		boxW := (width - 60) / nLayers
-		if boxW > 18 {
-			boxW = 18
-		}
-		if boxW < 6 {
-			boxW = 6
-		}
+		boxW := min(max((width-60)/nLayers, 6), 18)
 		gap := 1
 		if boxW > 10 {
 			gap = 3
@@ -574,7 +532,7 @@ func computeLayerGroupHeight(normHeight, boxGap, arrowLen, blockH, ffnH int) int
 
 func emitRMSNormBox(bw *bufio.Writer, x, y, width, height int, paramName string) {
 	fmt.Fprintf(bw, "  <g transform=\"translate(%d, %d)\">\n", x, y)
-	fmt.Fprintf(bw, "    <rect width=\"%d\" height=\"%d\" rx=\"5\" fill=\"url(#normGrad)\" stroke=\"%s\" stroke-width=\"1\" filter=\"url(#shadow)\"/>\n", width, height, pal["norm.stroke"])
+	fmt.Fprintf(bw, "    <rect width=\"%d\" height=\"%d\" rx=\"5\" fill=\"url(#norm)\" stroke=\"%s\" stroke-width=\"1\" filter=\"url(#shadow)\"/>\n", width, height, pal["norm.stroke"])
 	fmt.Fprintf(bw, "    <text x=\"%d\" y=\"14\" text-anchor=\"middle\" font-weight=\"600\" fill=\"%s\">RMSNorm</text>\n", width/2, pal["norm.text"])
 	fmt.Fprintf(bw, "    <text x=\"%d\" y=\"27\" text-anchor=\"middle\" font-size=\"10\" fill=\"%s\">%s</text>\n", width/2, pal["ui.text_sub"], paramName)
 	bw.WriteString("  </g>\n")
@@ -582,7 +540,7 @@ func emitRMSNormBox(bw *bufio.Writer, x, y, width, height int, paramName string)
 
 func emitGlobalBox(bw *bufio.Writer, x, y, width, height int, title, label string) {
 	fmt.Fprintf(bw, "  <g transform=\"translate(%d, %d)\">\n", x, y)
-	fmt.Fprintf(bw, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"url(#globalGrad)\" stroke=\"%s\" stroke-width=\"1.2\" filter=\"url(#shadow)\"/>\n", width, height, pal["global.stroke"])
+	fmt.Fprintf(bw, "    <rect width=\"%d\" height=\"%d\" rx=\"6\" fill=\"url(#global)\" stroke=\"%s\" stroke-width=\"1.2\" filter=\"url(#shadow)\"/>\n", width, height, pal["global.stroke"])
 	fmt.Fprintf(bw, "    <text x=\"%d\" y=\"17\" text-anchor=\"middle\" font-weight=\"600\" fill=\"%s\">%s</text>\n", width/2, pal["global.text"], title)
 	fmt.Fprintf(bw, "    <text x=\"%d\" y=\"32\" text-anchor=\"middle\" font-size=\"10\" fill=\"%s\">%s</text>\n", width/2, pal["ui.text_sub"], label)
 	bw.WriteString("  </g>\n")
@@ -592,9 +550,3 @@ func formatBuilderName(name string) string {
 	return strings.ReplaceAll(name, "_", " ")
 }
 
-// isTrivialRouting returns true when all layers use the same block type,
-// making the routing rule pure noise in the diagram.
-func isTrivialRouting(def *arch.ArchDef) bool {
-	r := def.Layers.Routing
-	return r.Uniform != "" || r.IfTrue == r.IfFalse || (r.IfTrue != "" && r.IfFalse == "") || (r.IfFalse != "" && r.IfTrue == "")
-}

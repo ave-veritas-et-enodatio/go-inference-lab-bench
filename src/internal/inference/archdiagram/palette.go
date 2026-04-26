@@ -1,7 +1,8 @@
 package archdiagram
 
 import (
-	"sort"
+	"fmt"
+	"io"
 
 	"inference-lab-bench/internal/inference/arch"
 	"inference-lab-bench/internal/log"
@@ -10,8 +11,7 @@ import (
 // pal is the canonical color map for all SVG diagram rendering.
 //
 // Package-private; mutation is prevented by the absence of any exported
-// setter or map reference. Internal code reads directly; external callers
-// use Pal(key).
+// setter or map reference.
 //
 // Keys use dot-separated component.property naming:
 //
@@ -97,16 +97,13 @@ var pal = map[string]string{
 	"ui.text_tensor": "#000000",
 }
 
-// Pal returns the color value for the given palette key.
-// Returns "" for unknown keys (caller bug).
-func Pal(key string) string { return pal[key] }
-
 // kindPalPrefix maps a registered builder's Kind to its palette prefix.
 // First-pass lookup in palPrefix.
 var kindPalPrefix = map[arch.BuilderKind]string{
-	arch.KindAttention: arch.TypeFullAttention,
-	arch.KindRecurrent: arch.TypeRecurrent,
-	arch.KindFFN:       arch.TypeFFN,
+	arch.KindAttention:    arch.TypeFullAttention,
+	arch.KindSWAAttention: arch.TypeSWA,
+	arch.KindRecurrent:    arch.TypeRecurrent,
+	arch.KindFFN:          arch.TypeFFN,
 }
 
 // moduleTypePalPrefix maps TOML block names and module-type strings that do
@@ -164,24 +161,23 @@ func palPrefix(name string) string {
 	return arch.TypeRecurrent
 }
 
-// BlockBuilderNames returns all registered block builder names, sorted.
-func BlockBuilderNames() []string {
-	m := arch.GetBlockBuilders()
-	names := make([]string, 0, len(m))
-	for k := range m {
-		names = append(names, k)
+// emitGradients writes a self-contained <defs> block of linearGradient elements,
+// one per palette family. idPrefix is prepended to each gradient ID.
+// Called by both renderers; each uses its own ID prefix to avoid conflicts.
+func emitGradients(w io.Writer, idPrefix string) {
+	fmt.Fprintf(w, "  <defs>\n")
+	for _, entry := range []struct{ suffix, prefix string }{
+		{"recurrent", arch.TypeRecurrent},
+		{"full_attention", arch.TypeFullAttention},
+		{"swa", arch.TypeSWA},
+		{"ffn", arch.TypeFFN},
+		{"norm", arch.TypeNorm},
+		{"global", arch.ModuleGlobal},
+	} {
+		fmt.Fprintf(w, "    <linearGradient id=\"%s%s\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n", idPrefix, entry.suffix)
+		fmt.Fprintf(w, "      <stop offset=\"0%%\" stop-color=\"%s\"/><stop offset=\"100%%\" stop-color=\"%s\"/>\n",
+			pal[entry.prefix+".grad_top"], pal[entry.prefix+".grad_bottom"])
+		fmt.Fprintf(w, "    </linearGradient>\n")
 	}
-	sort.Strings(names)
-	return names
-}
-
-// FFNBuilderNames returns all registered FFN builder names, sorted.
-func FFNBuilderNames() []string {
-	m := arch.GetFFNBuilders()
-	names := make([]string, 0, len(m))
-	for k := range m {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	return names
+	fmt.Fprintf(w, "  </defs>\n")
 }

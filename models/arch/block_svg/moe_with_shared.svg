@@ -1,7 +1,7 @@
 <!-- bbox: 660x200 -->
 <!-- color: #e65100 (orange) -->
 <g>
-  <rect width="660" height="200" rx="6" fill="url(#ffnGrad)" stroke="#e65100" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect width="660" height="200" rx="6" fill="url(#ffn)" stroke="#e65100" stroke-width="1.2" filter="url(#shadow)"/>
   <text x="330" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#bf360c">MoE FFN + Shared Expert</text>
 
   <!-- Routed experts -->

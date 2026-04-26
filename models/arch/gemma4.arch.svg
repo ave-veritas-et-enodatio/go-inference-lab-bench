@@ -1,33 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 1538" font-family="system-ui, -apple-system, sans-serif" font-size="13">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 1488" font-family="system-ui, -apple-system, sans-serif" font-size="13">
+  <rect width="960" height="1488" fill="#fafafa" rx="8"/>
+
+  <defs>
+    <linearGradient id="recurrent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
+    </linearGradient>
+    <linearGradient id="full_attention" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e3f2fd"/><stop offset="100%" stop-color="#bbdefb"/>
+    </linearGradient>
+    <linearGradient id="swa" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
+    </linearGradient>
+    <linearGradient id="ffn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff3e0"/><stop offset="100%" stop-color="#ffe0b2"/>
+    </linearGradient>
+    <linearGradient id="norm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f3e5f5"/><stop offset="100%" stop-color="#e1bee7"/>
+    </linearGradient>
+    <linearGradient id="global" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fce4ec"/><stop offset="100%" stop-color="#f8bbd0"/>
+    </linearGradient>
+  </defs>
   <defs>
     <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6" fill="#555555"/>
     </marker>
-    <linearGradient id="ssmGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
-    </linearGradient>
-    <linearGradient id="attnGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#e3f2fd"/><stop offset="100%" stop-color="#bbdefb"/>
-    </linearGradient>
-    <linearGradient id="swaGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
-    </linearGradient>
-    <linearGradient id="ffnGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#fff3e0"/><stop offset="100%" stop-color="#ffe0b2"/>
-    </linearGradient>
-    <linearGradient id="normGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#f3e5f5"/><stop offset="100%" stop-color="#e1bee7"/>
-    </linearGradient>
-    <linearGradient id="globalGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#fce4ec"/><stop offset="100%" stop-color="#f8bbd0"/>
-    </linearGradient>
     <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
       <feDropShadow dx="1" dy="1" stdDeviation="2" flood-opacity="0.12"/>
     </filter>
-  <!-- Block definitions -->
+  </defs>
+  <defs>
   <g id="block_full_attention">
 <g>
-  <rect width="620" height="200" rx="6" fill="url(#attnGrad)" stroke="#1565c0" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect width="620" height="200" rx="6" fill="url(#full_attention)" stroke="#1565c0" stroke-width="1.2" filter="url(#shadow)"/>
   <text x="310" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#0d47a1">Full Attention</text>
   <g transform="translate(15, 35)">
     <rect width="170" height="56" rx="4" fill="#fff" stroke="#64b5f6" stroke-width="0.8" opacity="0.9"/>
@@ -58,7 +63,7 @@
     <text x="62" y="44" text-anchor="middle" font-size="9" fill="#666">shared_kv_group</text>
   </g>
   <g transform="translate(525, 35)">
-    <rect width="80" height="56" rx="4" fill="url(#normGrad)" stroke="#7b1fa2" stroke-width="0.8" opacity="0.9"/>
+    <rect width="80" height="56" rx="4" fill="url(#norm)" stroke="#7b1fa2" stroke-width="0.8" opacity="0.9"/>
     <text x="40" y="18" text-anchor="middle" font-size="10" font-weight="600" fill="#6a1b9a">RMSNorm</text>
     <text x="40" y="32" text-anchor="middle" font-size="9" fill="#777">post_attn</text>
     <text x="40" y="44" text-anchor="middle" font-size="9" fill="#777">post_ffw</text>
@@ -67,7 +72,7 @@
   </g>
   <g id="block_swa_attention">
 <g>
-  <rect width="620" height="200" rx="6" fill="url(#swaGrad)" stroke="#0097A7" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect width="620" height="200" rx="6" fill="url(#swa)" stroke="#0097A7" stroke-width="1.2" filter="url(#shadow)"/>
   <text x="310" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#006064">Sliding-Window Attention</text>
   <g transform="translate(15, 35)">
     <rect width="170" height="56" rx="4" fill="#fff" stroke="#4dd0e1" stroke-width="0.8" opacity="0.9"/>
@@ -98,7 +103,7 @@
     <text x="62" y="44" text-anchor="middle" font-size="9" fill="#666">shared_kv_group</text>
   </g>
   <g transform="translate(525, 35)">
-    <rect width="80" height="56" rx="4" fill="url(#normGrad)" stroke="#7b1fa2" stroke-width="0.8" opacity="0.9"/>
+    <rect width="80" height="56" rx="4" fill="url(#norm)" stroke="#7b1fa2" stroke-width="0.8" opacity="0.9"/>
     <text x="40" y="18" text-anchor="middle" font-size="10" font-weight="600" fill="#6a1b9a">RMSNorm</text>
     <text x="40" y="32" text-anchor="middle" font-size="9" fill="#777">post_attn</text>
     <text x="40" y="44" text-anchor="middle" font-size="9" fill="#777">post_ffw</text>
@@ -107,7 +112,7 @@
   </g>
   <g id="block_geglu">
 <g>
-  <rect width="440" height="120" rx="6" fill="url(#ffnGrad)" stroke="#e65100" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect width="440" height="120" rx="6" fill="url(#ffn)" stroke="#e65100" stroke-width="1.2" filter="url(#shadow)"/>
   <text x="220" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#bf360c">GeGLU FFN</text>
   <g transform="translate(15, 35)">
     <rect width="120" height="36" rx="4" fill="#fff" stroke="#ff9800" stroke-width="0.8" opacity="0.9"/>
@@ -129,25 +134,23 @@
   </g>
   </defs>
 
-  <rect width="960" height="1538" fill="#fafafa" rx="8"/>
-
   <text x="480" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#333333">Gemma4 Architecture</text>
   <rect x="213" y="44" width="535" height="44" rx="5" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8"/>
   <g transform="translate(223, 52)">
-    <rect x="0" width="18" height="14" rx="3" fill="url(#globalGrad)" stroke="#C62828" stroke-width="0.8"/>
+    <rect x="0" width="18" height="14" rx="3" fill="url(#global)" stroke="#C62828" stroke-width="0.8"/>
     <text x="24" y="12" font-size="11" fill="#555555">Global</text>
-    <rect x="82" width="18" height="14" rx="3" fill="url(#normGrad)" stroke="#9C27B0" stroke-width="0.8"/>
+    <rect x="82" width="18" height="14" rx="3" fill="url(#norm)" stroke="#9C27B0" stroke-width="0.8"/>
     <text x="106" y="12" font-size="11" fill="#555555">RMSNorm</text>
-    <rect x="171" width="18" height="14" rx="3" fill="url(#attnGrad)" stroke="#1976D2" stroke-width="0.8"/>
+    <rect x="171" width="18" height="14" rx="3" fill="url(#full_attention)" stroke="#1976D2" stroke-width="0.8"/>
     <text x="195" y="12" font-size="11" fill="#555555">full attention</text>
-    <rect x="309" width="18" height="14" rx="3" fill="url(#swaGrad)" stroke="#4E9650" stroke-width="0.8"/>
+    <rect x="309" width="18" height="14" rx="3" fill="url(#swa)" stroke="#4E9650" stroke-width="0.8"/>
     <text x="333" y="12" font-size="11" fill="#555555">swa attention</text>
-    <rect x="440" width="18" height="14" rx="3" fill="url(#ffnGrad)" stroke="#EF6C00" stroke-width="0.8"/>
+    <rect x="440" width="18" height="14" rx="3" fill="url(#ffn)" stroke="#EF6C00" stroke-width="0.8"/>
     <text x="464" y="12" font-size="11" fill="#555555">geglu</text>
   </g>
   <text x="480" y="78" text-anchor="middle" font-size="9" fill="#999999" font-family="monospace">@{name} = engine builtin, ${name} = GGUF-resolved param</text>
   <g transform="translate(330, 110)">
-    <rect width="300" height="40" rx="6" fill="url(#globalGrad)" stroke="#C62828" stroke-width="1.2" filter="url(#shadow)"/>
+    <rect width="300" height="40" rx="6" fill="url(#global)" stroke="#C62828" stroke-width="1.2" filter="url(#shadow)"/>
     <text x="150" y="17" text-anchor="middle" font-weight="600" fill="#b71c1c">Token Embedding</text>
     <text x="150" y="32" text-anchor="middle" font-size="10" fill="#777777">token_embd.weight (tied to output)</text>
   </g>
@@ -155,7 +158,7 @@
   <rect x="30" y="170" width="900" height="511" rx="8" fill="none" stroke="#4E9650" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.6"/>
   <text x="42" y="190" font-size="11" font-weight="600" fill="#4E9650">swa attention — when: routing rule is true</text>
   <g transform="translate(330, 213)">
-    <rect width="300" height="34" rx="5" fill="url(#normGrad)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
+    <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
     <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">attn_norm.weight</text>
   </g>
@@ -163,7 +166,7 @@
   <use href="#block_swa_attention" transform="translate(170, 267)"/>
   <text x="802" y="367" font-size="11" fill="#555555" font-weight="600">+ residual</text>
   <g transform="translate(330, 482)">
-    <rect width="300" height="34" rx="5" fill="url(#normGrad)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
+    <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
     <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">ffn_norm.weight</text>
   </g>
@@ -173,7 +176,7 @@
   <rect x="30" y="691" width="900" height="511" rx="8" fill="none" stroke="#1976D2" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.6"/>
   <text x="42" y="711" font-size="11" font-weight="600" fill="#1976D2">full attention — when: routing rule is false</text>
   <g transform="translate(330, 734)">
-    <rect width="300" height="34" rx="5" fill="url(#normGrad)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
+    <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
     <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">attn_norm.weight</text>
   </g>
@@ -181,7 +184,7 @@
   <use href="#block_full_attention" transform="translate(170, 788)"/>
   <text x="802" y="888" font-size="11" fill="#555555" font-weight="600">+ residual</text>
   <g transform="translate(330, 1003)">
-    <rect width="300" height="34" rx="5" fill="url(#normGrad)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
+    <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
     <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">ffn_norm.weight</text>
   </g>
@@ -228,13 +231,13 @@
   </g>
   <line x1="480" y1="1272" x2="480" y2="1292" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
   <g transform="translate(330, 1292)">
-    <rect width="300" height="34" rx="5" fill="url(#normGrad)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
+    <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
     <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">output_norm.weight</text>
   </g>
   <line x1="480" y1="1326" x2="480" y2="1346" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
   <g transform="translate(330, 1346)">
-    <rect width="300" height="40" rx="6" fill="url(#globalGrad)" stroke="#C62828" stroke-width="1.2" filter="url(#shadow)"/>
+    <rect width="300" height="40" rx="6" fill="url(#global)" stroke="#C62828" stroke-width="1.2" filter="url(#shadow)"/>
     <text x="150" y="17" text-anchor="middle" font-weight="600" fill="#b71c1c">LM Head</text>
     <text x="150" y="32" text-anchor="middle" font-size="10" fill="#777777">tied: reuses token_embd.weight</text>
   </g>

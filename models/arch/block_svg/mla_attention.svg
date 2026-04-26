@@ -1,7 +1,7 @@
 <!-- bbox: 660x250 -->
 <!-- color: #1565c0 (blue) -->
 <g>
-  <rect width="660" height="250" rx="6" fill="url(#attnGrad)" stroke="#1565c0" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect width="660" height="250" rx="6" fill="url(#full_attention)" stroke="#1565c0" stroke-width="1.2" filter="url(#shadow)"/>
   <text x="330" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#0d47a1">Multi-head Latent Attention (MLA)</text>
 
   <g transform="translate(15, 35)">

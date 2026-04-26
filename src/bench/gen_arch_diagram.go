@@ -83,7 +83,12 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 		mm := arch.BuildModuleMap(def, weights)
 		layersPath := filepath.Join(filepath.Dir(outputPath), def.Architecture.Name+".layers.svg")
 		subtitle := " Layers"
-		if err := archdiagram.RenderLayersDiagram(def, mm, layersPath, subtitle, nil); err != nil {
+		lf, err := os.Create(layersPath)
+		if err != nil {
+			log.Fatal("creating %s: %v", layersPath, err)
+		}
+		defer lf.Close()
+		if err := archdiagram.RenderLayersDiagram(def, mm, lf, subtitle); err != nil {
 			log.Fatal("generating layers SVG: %v", err)
 		}
 		log.Info("wrote %s", layersPath)
@@ -115,7 +120,12 @@ func runRenderDiagram(cmd *cobra.Command, args []string) {
 			altLayersPath := filepath.Join(filepath.Dir(outputPath),
 				def.Architecture.Name+altSuffix+".layers.svg")
 			subtitle := " Layers ("+def.FFNAlt.Builder+" variant)"
-			if err := archdiagram.RenderLayersDiagram(def, altMM, altLayersPath, subtitle, nil); err != nil {
+			alf, err := os.Create(altLayersPath)
+			if err != nil {
+				log.Fatal("creating %s: %v", altLayersPath, err)
+			}
+			defer alf.Close()
+			if err := archdiagram.RenderLayersDiagram(def, altMM, alf, subtitle); err != nil {
 				log.Fatal("generating alt layers SVG: %v", err)
 			}
 			log.Info("wrote %s", altLayersPath)

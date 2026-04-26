@@ -2,7 +2,7 @@
 <!-- color: #0097A7 (teal — sliding-window attention) -->
 <!-- block-name override for gemma4 swa_attention (builder: attention) -->
 <g>
-  <rect width="620" height="200" rx="6" fill="url(#swaGrad)" stroke="#0097A7" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect width="620" height="200" rx="6" fill="url(#swa)" stroke="#0097A7" stroke-width="1.2" filter="url(#shadow)"/>
   <text x="310" y="20" text-anchor="middle" font-weight="700" font-size="13" fill="#006064">Sliding-Window Attention</text>
 
   <g transform="translate(15, 35)">
@@ -37,7 +37,7 @@
   </g>
 
   <g transform="translate(525, 35)">
-    <rect width="80" height="56" rx="4" fill="url(#normGrad)" stroke="#7b1fa2" stroke-width="0.8" opacity="0.9"/>
+    <rect width="80" height="56" rx="4" fill="url(#norm)" stroke="#7b1fa2" stroke-width="0.8" opacity="0.9"/>
     <text x="40" y="18" text-anchor="middle" font-size="10" font-weight="600" fill="#6a1b9a">RMSNorm</text>
     <text x="40" y="32" text-anchor="middle" font-size="9" fill="#777">post_attn</text>
     <text x="40" y="44" text-anchor="middle" font-size="9" fill="#777">post_ffw</text>
