@@ -27,8 +27,13 @@ func FlashAttnSupported(headDim int) bool {
 //
 // Capture (caps) is skipped when FA2 is active — the fused op has no intermediate
 // kq tensor to extract.
+//
+// kqForceF32 controls the K·Q matmul accumulation precision on the standard
+// path: true (the decoder default) forces F32 via MulMatSetPrecF32; false uses
+// native precision, matching llama.cpp's clip vision encoder. The FA2 path is
+// unaffected — it always sets PrecF32 on the fused op.
 func scaledDotProductAttention(ctx *ggml.GraphContext, q, k, v, mask ggml.Tensor,
-	kqScale float32, nHeads, nTokens int64, caps *ForwardCaptures, flashAttn bool) ggml.Tensor {
+	kqScale float32, nHeads, nTokens int64, caps *ForwardCaptures, flashAttn, kqForceF32 bool) ggml.Tensor {
 	if flashAttn && flashAttnHeadDims[q.Ne(0)] {
 		// FA2: V is already in [headDim, nKV, nKVHeads] — no transpose needed.
 		// Cast mask to F16 as required by ggml_flash_attn_ext.
@@ -40,7 +45,9 @@ func scaledDotProductAttention(ctx *ggml.GraphContext, q, k, v, mask ggml.Tensor
 	}
 	// Standard path.
 	kq := ggml.MulMat(ctx, k, q)
-	ggml.MulMatSetPrecF32(kq)
+	if kqForceF32 {
+		ggml.MulMatSetPrecF32(kq)
+	}
 	kq = ggml.SoftMaxExt(ctx, kq, mask, kqScale, 0.0)
 	if caps != nil && caps.Flags&CaptureAttnWeights != 0 {
 		il := caps.currentLayer
@@ -110,10 +117,14 @@ func defaultRopeExt(ctx *ggml.GraphContext, a, pos ggml.Tensor, nRot int, freqBa
 		freqBase, 1.0, 0.0, 1.0, 32.0, 1.0)
 }
 
-// defaultRopeMulti applies multi-section RoPE with standard YaRN scaling defaults.
+// defaultRopeMulti applies multi-section RoPE with standard YaRN scaling
+// defaults. mode is the ggml rope-type (RopeTypeNeoX for the plain multi path,
+// RopeTypeImrope for the Qwen3-VL decoder); both run the same ggml_rope_multi
+// op — only the mode flag differs, and for text positions IMROPE reduces to the
+// NEOX result.
 func defaultRopeMulti(ctx *ggml.GraphContext, a, pos ggml.Tensor,
-	nRot int, sections [4]int, freqBase float32) ggml.Tensor {
-	return ggml.RopeMulti(ctx, a, pos, ggml.NilTensor(), nRot, sections, ggml.RopeTypeNeoX, 0,
+	nRot int, sections [4]int, freqBase float32, mode int) ggml.Tensor {
+	return ggml.RopeMulti(ctx, a, pos, ggml.NilTensor(), nRot, sections, mode, 0,
 		freqBase, 1.0, 0.0, 1.0, 32.0, 1.0)
 }
 
@@ -124,18 +135,29 @@ func applyRoPEPair(ctx *ggml.GraphContext, q, k, pos ggml.Tensor,
 		defaultRopeExt(ctx, k, pos, nRot, freqBase)
 }
 
-// applyRoPEMultiPair applies multi-section RoPE to both Q and K tensors.
+// applyRoPEMultiPair applies multi-section RoPE to both Q and K tensors with
+// the given ggml rope-type mode (RopeTypeNeoX or RopeTypeImrope).
 func applyRoPEMultiPair(ctx *ggml.GraphContext, q, k, pos ggml.Tensor,
-	nRot int, sections [4]int, freqBase float32) (ggml.Tensor, ggml.Tensor) {
-	return defaultRopeMulti(ctx, q, pos, nRot, sections, freqBase),
-		defaultRopeMulti(ctx, k, pos, nRot, sections, freqBase)
+	nRot int, sections [4]int, freqBase float32, mode int) (ggml.Tensor, ggml.Tensor) {
+	return defaultRopeMulti(ctx, q, pos, nRot, sections, freqBase, mode),
+		defaultRopeMulti(ctx, k, pos, nRot, sections, freqBase, mode)
+}
+
+// ropeMultiMode maps the block's rope config value to the ggml rope-type passed
+// to ggml_rope_multi. RopeImrope → IMROPE (Qwen3-VL decoder, needs [4n] InpPos);
+// everything else (RopeMulti / "") → NEOX (the historical multi path).
+func ropeMultiMode(config map[string]any) int {
+	if configStrOr(config, ConfigRope, "") == RopeImrope {
+		return ggml.RopeTypeImrope
+	}
+	return ggml.RopeTypeNeoX
 }
 
 // selectSharedKV returns K and V for a non-KV layer using the shared cache.
 // Prefill: uses SharedKV directly (all tokens computed by the KV layer in-graph).
 // Decode: concatenates cached history with the current-token SharedKV tensor.
 func selectSharedKV(ctx *ggml.GraphContext, cache *LayerCache, seqPos int,
-	shared *SharedKVState, group string, headDim, nKV, nKVHeads int64) (ggml.Tensor, ggml.Tensor) {
+	shared *SharedKVState, group string, headDim, nKVHeads int64) (ggml.Tensor, ggml.Tensor) {
 	kShared := shared.K[group]
 	vShared := shared.V[group]
 

@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 778" font-family="system-ui, -apple-system, sans-serif" font-size="13">
+  <rect width="960" height="778" fill="#fafafa" rx="8"/>
+
+  <defs>
+    <linearGradient id="recurrent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
+    </linearGradient>
+    <linearGradient id="full_attention" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e3f2fd"/><stop offset="100%" stop-color="#bbdefb"/>
+    </linearGradient>
+    <linearGradient id="swa" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
+    </linearGradient>
+    <linearGradient id="ffn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff3e0"/><stop offset="100%" stop-color="#ffe0b2"/>
+    </linearGradient>
+    <linearGradient id="norm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f3e5f5"/><stop offset="100%" stop-color="#e1bee7"/>
+    </linearGradient>
+    <linearGradient id="global" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fce4ec"/><stop offset="100%" stop-color="#f8bbd0"/>
+    </linearGradient>
+  </defs>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#555555"/>
+    </marker>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="1" dy="1" stdDeviation="2" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <defs>
+    <linearGradient id="image" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e53935" stop-opacity="0.55"/><stop offset="40%" stop-color="#43a047" stop-opacity="0.55"/><stop offset="75%" stop-color="#1e88e5" stop-opacity="0.55"/><stop offset="100%" stop-color="#ffffff" stop-opacity="0.55"/>
+    </linearGradient>
+  </defs>
+  <text x="480" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#333333">Gemma4 Vision Tower</text>
+  <g transform="translate(250, 60)">
+    <rect width="460" height="46" rx="6" fill="url(#image)" stroke="#757575" stroke-width="1.2" filter="url(#shadow)"/>
+    <text x="230" y="16" text-anchor="middle" font-weight="600" fill="#333333">Image</text>
+    <text x="230" y="32" text-anchor="middle" font-size="9" fill="#666666">raw RGB · arbitrary size</text>
+  </g>
+  <line x1="480" y1="106" x2="480" y2="126" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g transform="translate(250, 126)">
+    <rect width="460" height="60" rx="6" fill="url(#norm)" stroke="#9C27B0" stroke-width="1.2" filter="url(#shadow)"/>
+    <text x="230" y="16" text-anchor="middle" font-weight="600" fill="#333333">Patch Align</text>
+    <text x="230" y="32" text-anchor="middle" font-size="9" fill="#666666">aspect-resize to patch×merge multiple + pad</text>
+    <text x="230" y="46" text-anchor="middle" font-size="9" fill="#666666">patch=16 · merge=3 · soft tokens 252..280</text>
+  </g>
+  <line x1="480" y1="186" x2="480" y2="206" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g transform="translate(250, 206)">
+    <rect width="460" height="60" rx="6" fill="url(#global)" stroke="#C62828" stroke-width="1.2" filter="url(#shadow)"/>
+    <text x="230" y="16" text-anchor="middle" font-weight="600" fill="#333333">Patch Embed</text>
+    <text x="230" y="32" text-anchor="middle" font-size="9" fill="#666666">conv patch embed</text>
+    <text x="230" y="46" text-anchor="middle" font-size="9" fill="#666666">+ learned position grid</text>
+  </g>
+  <line x1="480" y1="266" x2="480" y2="286" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="30" y="286" width="900" height="246" rx="8" fill="none" stroke="#1976D2" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.6"/>
+  <text x="42" y="306" font-size="11" font-weight="600" fill="#1976D2">Encoder layer × n_layers (vision.block_count)</text>
+  <g transform="translate(250, 314)">
+    <rect width="460" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
+    <text x="230" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
+    <text x="230" y="27" text-anchor="middle" font-size="10" font-family="monospace" fill="#4d4d4d">pre-attention</text>
+  </g>
+  <line x1="480" y1="348" x2="480" y2="368" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g transform="translate(250, 368)">
+    <rect width="460" height="46" rx="6" fill="url(#full_attention)" stroke="#1976D2" stroke-width="1.2" filter="url(#shadow)"/>
+    <text x="230" y="16" text-anchor="middle" font-weight="600" fill="#333333">Attention: attention</text>
+    <text x="230" y="32" text-anchor="middle" font-size="9" fill="#666666">axial2d RoPE · separate Q/K/V</text>
+  </g>
+  <line x1="480" y1="414" x2="480" y2="434" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g transform="translate(250, 434)">
+    <rect width="460" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
+    <text x="230" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
+    <text x="230" y="27" text-anchor="middle" font-size="10" font-family="monospace" fill="#4d4d4d">pre-FFN</text>
+  </g>
+  <line x1="480" y1="468" x2="480" y2="488" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g transform="translate(250, 488)">
+    <rect width="460" height="32" rx="6" fill="url(#ffn)" stroke="#EF6C00" stroke-width="1.2" filter="url(#shadow)"/>
+    <text x="230" y="16" text-anchor="middle" font-weight="600" fill="#333333">FFN: geglu quick</text>
+  </g>
+  <line x1="480" y1="532" x2="480" y2="552" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g transform="translate(250, 552)">
+    <rect width="460" height="46" rx="6" fill="url(#swa)" stroke="#4E9650" stroke-width="1.2" filter="url(#shadow)"/>
+    <text x="230" y="16" text-anchor="middle" font-weight="600" fill="#333333">Spatial Merge</text>
+    <text x="230" y="32" text-anchor="middle" font-size="9" fill="#666666">pool n_merge=3 (×9 tokens merged)</text>
+  </g>
+  <line x1="480" y1="598" x2="480" y2="618" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g transform="translate(250, 618)">
+    <rect width="460" height="46" rx="6" fill="url(#ffn)" stroke="#EF6C00" stroke-width="1.2" filter="url(#shadow)"/>
+    <text x="230" y="16" text-anchor="middle" font-weight="600" fill="#333333">Projector: linear post norm</text>
+    <text x="230" y="32" text-anchor="middle" font-size="9" fill="#666666">linear + post-norm</text>
+  </g>
+  <line x1="480" y1="664" x2="480" y2="684" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <g transform="translate(250, 684)">
+    <rect width="460" height="74" rx="6" fill="url(#global)" stroke="#C62828" stroke-width="1.2" filter="url(#shadow)"/>
+    <text x="230" y="16" text-anchor="middle" font-weight="600" fill="#333333">Splice into Decoder</text>
+    <text x="230" y="32" text-anchor="middle" font-size="9" fill="#666666">280 soft tokens / image</text>
+    <text x="230" y="46" text-anchor="middle" font-size="9" fill="#666666">placeholder: &lt;|image|&gt;</text>
+    <text x="230" y="60" text-anchor="middle" font-size="9" fill="#666666">decoder_non_causal: bidirectional image span</text>
+  </g>
+</svg>

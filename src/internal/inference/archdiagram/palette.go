@@ -61,6 +61,18 @@ var pal = map[string]string{
 	"global.grad_top":    "#fce4ec",
 	"global.grad_bottom": "#f8bbd0",
 
+	// image input — a polychromatic "RGB image" box (vision overview only). The
+	// fill is a multi-color diagonal gradient (red→green→blue→white) carried as an
+	// ordered, contiguous stop ramp below — analogous to the *.grad_top/*.grad_bottom
+	// ramps the block families store. stroke/text are neutral grey since no one hue
+	// owns the box. grad_0..grad_3 map to the gradient offsets 0% / 40% / 75% / 100%.
+	"image.stroke": "#757575",
+	"image.text":   "#424242",
+	"image.grad_0": "#e53935", // 0%
+	"image.grad_1": "#43a047", // 40%
+	"image.grad_2": "#1e88e5", // 75%
+	"image.grad_3": "#ffffff", // 100%
+
 	// norm tensors (attn_norm, ffn_norm, post_attention_norm, output_norm)
 	"norm.stroke":      "#9C27B0",
 	"norm.fill":        "#e1bee7",
@@ -91,9 +103,9 @@ var pal = map[string]string{
 	"ui.text_head":   "#333333",
 	"ui.text_body":   "#555555",
 	"ui.text_sec":    "#666666",
-	"ui.text_sub":    "#777777",
-	"ui.text_label":  "#888888",
-	"ui.text_hint":   "#999999",
+	"ui.text_sub":    "#4d4d4d",
+	"ui.text_label":  "#595959",
+	"ui.text_hint":   "#666666",
 	"ui.text_tensor": "#000000",
 }
 

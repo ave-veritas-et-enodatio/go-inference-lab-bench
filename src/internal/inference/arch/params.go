@@ -157,6 +157,13 @@ func resolveParam(name, ggufKey string, reader ModelReader, rp *ResolvedParams) 
 	}
 
 	if optional {
+		// Absent optional numeric param resolves to 0 — the GGUF "unset"
+		// convention. Recording it as present-0 (rather than omitting it) lets
+		// derived expressions reference it: e.g. n_layers = block_count -
+		// nextn_predict_layers, where nextn is absent on non-MTP models.
+		// Existing consumers already treat 0 as unset (they gate on `v != 0` /
+		// `v > 0`), so this does not change their behavior.
+		rp.Ints[name] = 0
 		return nil
 	}
 	return fmt.Errorf("GGUF key %q not found", ggufKey)

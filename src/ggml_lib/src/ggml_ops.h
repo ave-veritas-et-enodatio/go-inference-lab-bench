@@ -26,13 +26,16 @@ enum {
     GGML_GO_TYPE_F32  = 0,
     GGML_GO_TYPE_F16  = 1,
     GGML_GO_TYPE_I32  = 26,
+    GGML_GO_TYPE_I64  = 27,
     GGML_GO_TYPE_BF16 = 30,
     GGML_GO_TYPE_Q4_0  = 2,
     GGML_GO_TYPE_Q4_K  = 12,
     GGML_GO_TYPE_Q6_K  = 14,
 };
 enum {
-    GGML_GO_ROPE_TYPE_NEOX = 2,
+    GGML_GO_ROPE_TYPE_NEOX   = 2,
+    GGML_GO_ROPE_TYPE_VISION = 24,
+    GGML_GO_ROPE_TYPE_IMROPE = 40,
 };
 enum {
     GGML_GO_PREC_F32 = 1, /* GGML_PREC_F32 */
@@ -90,17 +93,43 @@ ggml_go_tensor ggml_go_neg(ggml_go_context ctx, ggml_go_tensor a);
 /* --- Normalization --- */
 ggml_go_tensor ggml_go_rms_norm(ggml_go_context ctx, ggml_go_tensor a, float eps);
 ggml_go_tensor ggml_go_l2_norm(ggml_go_context ctx, ggml_go_tensor a, float eps);
+ggml_go_tensor ggml_go_norm(ggml_go_context ctx, ggml_go_tensor a, float eps);
 
 /* --- Activations --- */
 ggml_go_tensor ggml_go_silu(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_sigmoid(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_softplus(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_gelu(ggml_go_context ctx, ggml_go_tensor a);
+ggml_go_tensor ggml_go_gelu_quick(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_tanh(ggml_go_context ctx, ggml_go_tensor a);
 ggml_go_tensor ggml_go_soft_max_ext(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor mask, float scale, float max_bias);
 
 /* --- Embedding / indexing --- */
 ggml_go_tensor ggml_go_get_rows(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b);
+ggml_go_tensor ggml_go_set_rows(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b, ggml_go_tensor c);
+
+/* --- Convolution --- */
+ggml_go_tensor ggml_go_conv_2d(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b,
+    int s0, int s1, int p0, int p1, int d0, int d1);
+
+/* --- Interpolation / resize --- */
+/* mode: ggml_scale_mode [ | ggml_scale_flag...] (see GGML_SCALE_* in ggml.h). */
+ggml_go_tensor ggml_go_interpolate(ggml_go_context ctx, ggml_go_tensor a,
+    int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3, uint32_t mode);
+
+/* --- Pooling --- */
+/* pool_op: 0 = MAX, 1 = AVG (matches ggml_op_pool enum). */
+ggml_go_tensor ggml_go_pool_2d(ggml_go_context ctx, ggml_go_tensor a, int pool_op,
+    int k0, int k1, int s0, int s1, float p0, float p1);
+
+/* --- Element-wise arithmetic (subtraction) --- */
+ggml_go_tensor ggml_go_sub(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b);
+
+/* --- Continuous reshapes (rank 3 and 4) --- */
+ggml_go_tensor ggml_go_cont_3d(ggml_go_context ctx, ggml_go_tensor a,
+    int64_t ne0, int64_t ne1, int64_t ne2);
+ggml_go_tensor ggml_go_cont_4d(ggml_go_context ctx, ggml_go_tensor a,
+    int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3);
 
 /* --- Sorting / selection --- */
 ggml_go_tensor ggml_go_argsort_top_k(ggml_go_context ctx, ggml_go_tensor a, int k);

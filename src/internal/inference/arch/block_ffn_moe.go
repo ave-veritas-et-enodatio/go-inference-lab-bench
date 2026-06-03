@@ -57,8 +57,11 @@ func (b *MoEBuilder) Contract() BuilderContract {
 	}
 }
 
+// inputs is unused: no MoE-FFN architecture uses clamped linears (the only
+// LinearClamps consumer is the Gemma-4 vision tower, which is dense geglu).
 func (b *MoEBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
-	weights map[string]ggml.Tensor, params *ResolvedParams, config map[string]any) ggml.Tensor {
+	weights map[string]ggml.Tensor, params *ResolvedParams, config map[string]any,
+	_ *GraphInputs) ggml.Tensor {
 
 	nExpert := int64(params.Ints[ParamNExpert])
 	nExpertUsed := int64(params.Ints[ParamNExpertUsed])
@@ -233,8 +236,12 @@ func (b *MoEBuilder) addSharedExpert(ctx *ggml.GraphContext, moeOut, input ggml.
 
 // applyActivation applies the configured activation function to a tensor.
 func applyActivation(ctx *ggml.GraphContext, x ggml.Tensor, activation string) ggml.Tensor {
-	if activation == ActivationGELU {
+	switch activation {
+	case ActivationGELU:
 		return ggml.Gelu(ctx, x)
+	case ActivationGELUQuick:
+		return ggml.GeluQuick(ctx, x)
+	default:
+		return ggml.Silu(ctx, x) // default
 	}
-	return ggml.Silu(ctx, x) // default
 }

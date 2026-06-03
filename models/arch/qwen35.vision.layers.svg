@@ -1,0 +1,550 @@
+<svg viewBox="0 0 996 1042" xmlns="http://www.w3.org/2000/svg">
+<style>
+  text { font-family: 'Courier New', monospace; }
+  .title { font-size: 20px; font-weight: bold; fill: #333333; font-family: system-ui, -apple-system, sans-serif; }
+  .lbl   { font-size: 9px; fill: #595959; text-anchor: end; dominant-baseline: middle; }
+  .tlbl  { font-size: 7px; fill: #000000; text-anchor: middle; dominant-baseline: middle; }
+  .clbl  { font-size: 8px; font-weight: 600; fill: #333333; text-anchor: middle; dominant-baseline: middle; }
+  .io    { font-size: 8px; font-weight: bold; fill: #888888; text-anchor: middle; dominant-baseline: middle; }
+  .ltxt  { font-size: 8px; fill: #555555; dominant-baseline: middle; }
+</style>
+  <defs>
+    <linearGradient id="vl_recurrent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
+    </linearGradient>
+    <linearGradient id="vl_full_attention" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e3f2fd"/><stop offset="100%" stop-color="#bbdefb"/>
+    </linearGradient>
+    <linearGradient id="vl_swa" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e8f5e9"/><stop offset="100%" stop-color="#c8e6c9"/>
+    </linearGradient>
+    <linearGradient id="vl_ffn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff3e0"/><stop offset="100%" stop-color="#ffe0b2"/>
+    </linearGradient>
+    <linearGradient id="vl_norm" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f3e5f5"/><stop offset="100%" stop-color="#e1bee7"/>
+    </linearGradient>
+    <linearGradient id="vl_global" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fce4ec"/><stop offset="100%" stop-color="#f8bbd0"/>
+    </linearGradient>
+  </defs>
+<defs>
+  <symbol id="vl-attn" overflow="visible">
+    <rect x="0" y="0" width="150" height="46" fill="url(#vl_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="2"/>
+    <rect x="2" y="4" width="16" height="38" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+    <text class="tlbl" x="10" y="23" transform="rotate(-90,10,23)">ln1</text>
+    <line x1="19" y1="0" x2="19" y2="46" stroke="#DDDDDD" stroke-width="0.7"/>
+    <rect x="22" y="18" width="70" height="9" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+    <text class="tlbl" x="57" y="22">QKV</text>
+    <line x1="93" y1="0" x2="93" y2="46" stroke="#DDDDDD" stroke-width="0.7"/>
+    <rect x="96" y="4" width="52" height="38" fill="#cce5f6" stroke="#1976D2" stroke-width="0.5" rx="1"/>
+    <text class="tlbl" x="122" y="23">out</text>
+  </symbol>
+  <symbol id="vl-ffn" overflow="visible">
+    <rect x="0" y="0" width="132" height="46" fill="url(#vl_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="2"/>
+    <rect x="2" y="4" width="16" height="38" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.5" rx="1"/>
+    <text class="tlbl" x="10" y="23" transform="rotate(-90,10,23)">ln2</text>
+    <line x1="19" y1="0" x2="19" y2="46" stroke="#DDDDDD" stroke-width="0.7"/>
+    <rect x="22" y="18" width="64" height="9" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5" rx="1"/>
+    <text class="tlbl" x="54" y="22">U</text>
+    <line x1="87" y1="0" x2="87" y2="46" stroke="#DDDDDD" stroke-width="0.7"/>
+    <rect x="90" y="4" width="40" height="38" fill="#ffddb8" stroke="#EF6C00" stroke-width="0.5" rx="1"/>
+    <text class="tlbl" x="110" y="23">D</text>
+  </symbol>
+</defs>
+  <rect width="996" height="1042" fill="#fafafa" rx="8"/>
+
+  <text class="title" x="386" y="32" text-anchor="middle">Qwen35 Vision Tower — Layers</text>
+  <text x="386" y="47" text-anchor="middle" font-size="11" font-weight="600" fill="#666666">uniform encoder · 27 layers (example) · LayerNorm · bidirectional</text>
+  <rect x="114" y="84" width="150" height="46" fill="url(#vl_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
+  <text class="clbl" x="189" y="101" fill="#b71c1c">Patch Embed</text>
+  <text class="tlbl" x="189" y="114">conv + position grid</text>
+  <text class="io" x="189" y="68">IMAGE PATCHES</text>
+  <line x1="189" y1="73" x2="189" y2="84" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="185,76 189,84 193,76" fill="#AAAAAA"/>
+  <path d="M 189,130 L 189,141 L 10,141 L 10,177 L 26,177" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,173 26,177 18,181" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="163">0</text>
+  <use href="#vl-attn" transform="translate(26,154)"/>
+  <use href="#vl-ffn" transform="translate(206,154)"/>
+  <line x1="176" y1="177" x2="206" y2="177" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,173 206,177 198,181" fill="#AAAAAA"/>
+  <path d="M 176,188 L 191,188 L 191,182" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="177" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="177" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="177" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="177" x2="368" y2="177" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,173 368,177 360,181" fill="#AAAAAA"/>
+  <path d="M 338,188 L 353,188 L 353,182" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="177" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="177" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="177" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,177 L 368,208 L 10,208 L 10,239 L 26,239" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,235 26,239 18,243" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="225">1</text>
+  <use href="#vl-attn" transform="translate(26,216)"/>
+  <use href="#vl-ffn" transform="translate(206,216)"/>
+  <line x1="176" y1="239" x2="206" y2="239" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,235 206,239 198,243" fill="#AAAAAA"/>
+  <path d="M 176,250 L 191,250 L 191,244" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="239" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="239" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="239" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="239" x2="368" y2="239" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,235 368,239 360,243" fill="#AAAAAA"/>
+  <path d="M 338,250 L 353,250 L 353,244" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="239" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="239" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="239" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,239 L 368,270 L 10,270 L 10,301 L 26,301" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,297 26,301 18,305" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="287">2</text>
+  <use href="#vl-attn" transform="translate(26,278)"/>
+  <use href="#vl-ffn" transform="translate(206,278)"/>
+  <line x1="176" y1="301" x2="206" y2="301" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,297 206,301 198,305" fill="#AAAAAA"/>
+  <path d="M 176,312 L 191,312 L 191,306" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="301" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="301" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="301" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="301" x2="368" y2="301" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,297 368,301 360,305" fill="#AAAAAA"/>
+  <path d="M 338,312 L 353,312 L 353,306" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="301" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="301" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="301" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,301 L 368,332 L 10,332 L 10,363 L 26,363" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,359 26,363 18,367" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="349">3</text>
+  <use href="#vl-attn" transform="translate(26,340)"/>
+  <use href="#vl-ffn" transform="translate(206,340)"/>
+  <line x1="176" y1="363" x2="206" y2="363" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,359 206,363 198,367" fill="#AAAAAA"/>
+  <path d="M 176,374 L 191,374 L 191,368" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="363" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="363" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="363" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="363" x2="368" y2="363" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,359 368,363 360,367" fill="#AAAAAA"/>
+  <path d="M 338,374 L 353,374 L 353,368" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="363" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="363" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="363" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,363 L 368,394 L 10,394 L 10,425 L 26,425" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,421 26,425 18,429" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="411">4</text>
+  <use href="#vl-attn" transform="translate(26,402)"/>
+  <use href="#vl-ffn" transform="translate(206,402)"/>
+  <line x1="176" y1="425" x2="206" y2="425" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,421 206,425 198,429" fill="#AAAAAA"/>
+  <path d="M 176,436 L 191,436 L 191,430" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="425" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="425" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="425" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="425" x2="368" y2="425" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,421 368,425 360,429" fill="#AAAAAA"/>
+  <path d="M 338,436 L 353,436 L 353,430" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="425" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="425" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="425" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,425 L 368,456 L 10,456 L 10,487 L 26,487" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,483 26,487 18,491" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="473">5</text>
+  <use href="#vl-attn" transform="translate(26,464)"/>
+  <use href="#vl-ffn" transform="translate(206,464)"/>
+  <line x1="176" y1="487" x2="206" y2="487" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,483 206,487 198,491" fill="#AAAAAA"/>
+  <path d="M 176,498 L 191,498 L 191,492" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="487" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="487" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="487" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="487" x2="368" y2="487" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,483 368,487 360,491" fill="#AAAAAA"/>
+  <path d="M 338,498 L 353,498 L 353,492" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="487" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="487" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="487" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,487 L 368,518 L 10,518 L 10,549 L 26,549" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,545 26,549 18,553" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="535">6</text>
+  <use href="#vl-attn" transform="translate(26,526)"/>
+  <use href="#vl-ffn" transform="translate(206,526)"/>
+  <line x1="176" y1="549" x2="206" y2="549" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,545 206,549 198,553" fill="#AAAAAA"/>
+  <path d="M 176,560 L 191,560 L 191,554" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="549" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="549" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="549" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="549" x2="368" y2="549" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,545 368,549 360,553" fill="#AAAAAA"/>
+  <path d="M 338,560 L 353,560 L 353,554" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="549" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="549" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="549" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,549 L 368,580 L 10,580 L 10,611 L 26,611" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,607 26,611 18,615" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="597">7</text>
+  <use href="#vl-attn" transform="translate(26,588)"/>
+  <use href="#vl-ffn" transform="translate(206,588)"/>
+  <line x1="176" y1="611" x2="206" y2="611" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,607 206,611 198,615" fill="#AAAAAA"/>
+  <path d="M 176,622 L 191,622 L 191,616" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="611" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="611" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="611" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="611" x2="368" y2="611" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,607 368,611 360,615" fill="#AAAAAA"/>
+  <path d="M 338,622 L 353,622 L 353,616" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="611" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="611" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="611" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,611 L 368,642 L 10,642 L 10,673 L 26,673" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,669 26,673 18,677" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="659">8</text>
+  <use href="#vl-attn" transform="translate(26,650)"/>
+  <use href="#vl-ffn" transform="translate(206,650)"/>
+  <line x1="176" y1="673" x2="206" y2="673" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,669 206,673 198,677" fill="#AAAAAA"/>
+  <path d="M 176,684 L 191,684 L 191,678" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="673" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="673" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="673" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="673" x2="368" y2="673" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,669 368,673 360,677" fill="#AAAAAA"/>
+  <path d="M 338,684 L 353,684 L 353,678" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="673" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="673" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="673" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,673 L 368,704 L 10,704 L 10,735 L 26,735" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,731 26,735 18,739" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="721">9</text>
+  <use href="#vl-attn" transform="translate(26,712)"/>
+  <use href="#vl-ffn" transform="translate(206,712)"/>
+  <line x1="176" y1="735" x2="206" y2="735" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,731 206,735 198,739" fill="#AAAAAA"/>
+  <path d="M 176,746 L 191,746 L 191,740" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="735" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="735" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="735" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="735" x2="368" y2="735" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,731 368,735 360,739" fill="#AAAAAA"/>
+  <path d="M 338,746 L 353,746 L 353,740" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="735" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="735" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="735" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,735 L 368,766 L 10,766 L 10,797 L 26,797" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,793 26,797 18,801" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="783">10</text>
+  <use href="#vl-attn" transform="translate(26,774)"/>
+  <use href="#vl-ffn" transform="translate(206,774)"/>
+  <line x1="176" y1="797" x2="206" y2="797" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,793 206,797 198,801" fill="#AAAAAA"/>
+  <path d="M 176,808 L 191,808 L 191,802" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="797" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="797" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="797" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="797" x2="368" y2="797" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,793 368,797 360,801" fill="#AAAAAA"/>
+  <path d="M 338,808 L 353,808 L 353,802" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="797" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="797" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="797" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,797 L 368,828 L 10,828 L 10,859 L 26,859" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,855 26,859 18,863" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="845">11</text>
+  <use href="#vl-attn" transform="translate(26,836)"/>
+  <use href="#vl-ffn" transform="translate(206,836)"/>
+  <line x1="176" y1="859" x2="206" y2="859" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,855 206,859 198,863" fill="#AAAAAA"/>
+  <path d="M 176,870 L 191,870 L 191,864" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="859" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="859" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="859" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="859" x2="368" y2="859" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,855 368,859 360,863" fill="#AAAAAA"/>
+  <path d="M 338,870 L 353,870 L 353,864" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="859" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="859" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="859" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,859 L 368,890 L 10,890 L 10,921 L 26,921" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,917 26,921 18,925" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="907">12</text>
+  <use href="#vl-attn" transform="translate(26,898)"/>
+  <use href="#vl-ffn" transform="translate(206,898)"/>
+  <line x1="176" y1="921" x2="206" y2="921" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,917 206,921 198,925" fill="#AAAAAA"/>
+  <path d="M 176,932 L 191,932 L 191,926" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="921" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="921" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="921" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="921" x2="368" y2="921" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,917 368,921 360,925" fill="#AAAAAA"/>
+  <path d="M 338,932 L 353,932 L 353,926" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="921" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="921" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="921" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 368,921 L 368,952 L 10,952 L 10,983 L 26,983" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="18,979 26,983 18,987" fill="#AAAAAA"/>
+  <text class="lbl" x="23" y="969">13</text>
+  <use href="#vl-attn" transform="translate(26,960)"/>
+  <use href="#vl-ffn" transform="translate(206,960)"/>
+  <line x1="176" y1="983" x2="206" y2="983" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="198,979 206,983 198,987" fill="#AAAAAA"/>
+  <path d="M 176,994 L 191,994 L 191,988" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="191" cy="983" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="191" cy="983" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="191" y="983" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="338" y1="983" x2="368" y2="983" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="360,979 368,983 360,987" fill="#AAAAAA"/>
+  <path d="M 338,994 L 353,994 L 353,988" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="353" cy="983" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="353" cy="983" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="353" y="983" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <line x1="368" y1="983" x2="430" y2="983" stroke="#AAAAAA" stroke-width="2.5" stroke-linecap="square"/>
+  <polygon points="422,979 430,983 422,987" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="969">14</text>
+  <use href="#vl-attn" transform="translate(430,960)"/>
+  <use href="#vl-ffn" transform="translate(610,960)"/>
+  <line x1="580" y1="983" x2="610" y2="983" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,979 610,983 602,987" fill="#AAAAAA"/>
+  <path d="M 580,994 L 595,994 L 595,988" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="983" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="983" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="983" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="983" x2="772" y2="983" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,979 772,983 764,987" fill="#AAAAAA"/>
+  <path d="M 742,994 L 757,994 L 757,988" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="983" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="983" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="983" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,983 L 772,952 L 414,952 L 414,921 L 430,921" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,917 430,921 422,925" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="907">15</text>
+  <use href="#vl-attn" transform="translate(430,898)"/>
+  <use href="#vl-ffn" transform="translate(610,898)"/>
+  <line x1="580" y1="921" x2="610" y2="921" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,917 610,921 602,925" fill="#AAAAAA"/>
+  <path d="M 580,932 L 595,932 L 595,926" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="921" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="921" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="921" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="921" x2="772" y2="921" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,917 772,921 764,925" fill="#AAAAAA"/>
+  <path d="M 742,932 L 757,932 L 757,926" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="921" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="921" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="921" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,921 L 772,890 L 414,890 L 414,859 L 430,859" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,855 430,859 422,863" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="845">16</text>
+  <use href="#vl-attn" transform="translate(430,836)"/>
+  <use href="#vl-ffn" transform="translate(610,836)"/>
+  <line x1="580" y1="859" x2="610" y2="859" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,855 610,859 602,863" fill="#AAAAAA"/>
+  <path d="M 580,870 L 595,870 L 595,864" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="859" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="859" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="859" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="859" x2="772" y2="859" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,855 772,859 764,863" fill="#AAAAAA"/>
+  <path d="M 742,870 L 757,870 L 757,864" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="859" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="859" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="859" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,859 L 772,828 L 414,828 L 414,797 L 430,797" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,793 430,797 422,801" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="783">17</text>
+  <use href="#vl-attn" transform="translate(430,774)"/>
+  <use href="#vl-ffn" transform="translate(610,774)"/>
+  <line x1="580" y1="797" x2="610" y2="797" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,793 610,797 602,801" fill="#AAAAAA"/>
+  <path d="M 580,808 L 595,808 L 595,802" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="797" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="797" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="797" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="797" x2="772" y2="797" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,793 772,797 764,801" fill="#AAAAAA"/>
+  <path d="M 742,808 L 757,808 L 757,802" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="797" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="797" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="797" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,797 L 772,766 L 414,766 L 414,735 L 430,735" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,731 430,735 422,739" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="721">18</text>
+  <use href="#vl-attn" transform="translate(430,712)"/>
+  <use href="#vl-ffn" transform="translate(610,712)"/>
+  <line x1="580" y1="735" x2="610" y2="735" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,731 610,735 602,739" fill="#AAAAAA"/>
+  <path d="M 580,746 L 595,746 L 595,740" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="735" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="735" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="735" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="735" x2="772" y2="735" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,731 772,735 764,739" fill="#AAAAAA"/>
+  <path d="M 742,746 L 757,746 L 757,740" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="735" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="735" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="735" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,735 L 772,704 L 414,704 L 414,673 L 430,673" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,669 430,673 422,677" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="659">19</text>
+  <use href="#vl-attn" transform="translate(430,650)"/>
+  <use href="#vl-ffn" transform="translate(610,650)"/>
+  <line x1="580" y1="673" x2="610" y2="673" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,669 610,673 602,677" fill="#AAAAAA"/>
+  <path d="M 580,684 L 595,684 L 595,678" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="673" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="673" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="673" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="673" x2="772" y2="673" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,669 772,673 764,677" fill="#AAAAAA"/>
+  <path d="M 742,684 L 757,684 L 757,678" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="673" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="673" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="673" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,673 L 772,642 L 414,642 L 414,611 L 430,611" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,607 430,611 422,615" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="597">20</text>
+  <use href="#vl-attn" transform="translate(430,588)"/>
+  <use href="#vl-ffn" transform="translate(610,588)"/>
+  <line x1="580" y1="611" x2="610" y2="611" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,607 610,611 602,615" fill="#AAAAAA"/>
+  <path d="M 580,622 L 595,622 L 595,616" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="611" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="611" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="611" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="611" x2="772" y2="611" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,607 772,611 764,615" fill="#AAAAAA"/>
+  <path d="M 742,622 L 757,622 L 757,616" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="611" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="611" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="611" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,611 L 772,580 L 414,580 L 414,549 L 430,549" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,545 430,549 422,553" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="535">21</text>
+  <use href="#vl-attn" transform="translate(430,526)"/>
+  <use href="#vl-ffn" transform="translate(610,526)"/>
+  <line x1="580" y1="549" x2="610" y2="549" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,545 610,549 602,553" fill="#AAAAAA"/>
+  <path d="M 580,560 L 595,560 L 595,554" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="549" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="549" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="549" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="549" x2="772" y2="549" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,545 772,549 764,553" fill="#AAAAAA"/>
+  <path d="M 742,560 L 757,560 L 757,554" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="549" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="549" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="549" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,549 L 772,518 L 414,518 L 414,487 L 430,487" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,483 430,487 422,491" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="473">22</text>
+  <use href="#vl-attn" transform="translate(430,464)"/>
+  <use href="#vl-ffn" transform="translate(610,464)"/>
+  <line x1="580" y1="487" x2="610" y2="487" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,483 610,487 602,491" fill="#AAAAAA"/>
+  <path d="M 580,498 L 595,498 L 595,492" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="487" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="487" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="487" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="487" x2="772" y2="487" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,483 772,487 764,491" fill="#AAAAAA"/>
+  <path d="M 742,498 L 757,498 L 757,492" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="487" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="487" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="487" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,487 L 772,456 L 414,456 L 414,425 L 430,425" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,421 430,425 422,429" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="411">23</text>
+  <use href="#vl-attn" transform="translate(430,402)"/>
+  <use href="#vl-ffn" transform="translate(610,402)"/>
+  <line x1="580" y1="425" x2="610" y2="425" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,421 610,425 602,429" fill="#AAAAAA"/>
+  <path d="M 580,436 L 595,436 L 595,430" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="425" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="425" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="425" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="425" x2="772" y2="425" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,421 772,425 764,429" fill="#AAAAAA"/>
+  <path d="M 742,436 L 757,436 L 757,430" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="425" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="425" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="425" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,425 L 772,394 L 414,394 L 414,363 L 430,363" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,359 430,363 422,367" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="349">24</text>
+  <use href="#vl-attn" transform="translate(430,340)"/>
+  <use href="#vl-ffn" transform="translate(610,340)"/>
+  <line x1="580" y1="363" x2="610" y2="363" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,359 610,363 602,367" fill="#AAAAAA"/>
+  <path d="M 580,374 L 595,374 L 595,368" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="363" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="363" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="363" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="363" x2="772" y2="363" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,359 772,363 764,367" fill="#AAAAAA"/>
+  <path d="M 742,374 L 757,374 L 757,368" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="363" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="363" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="363" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,363 L 772,332 L 414,332 L 414,301 L 430,301" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,297 430,301 422,305" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="287">25</text>
+  <use href="#vl-attn" transform="translate(430,278)"/>
+  <use href="#vl-ffn" transform="translate(610,278)"/>
+  <line x1="580" y1="301" x2="610" y2="301" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,297 610,301 602,305" fill="#AAAAAA"/>
+  <path d="M 580,312 L 595,312 L 595,306" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="301" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="301" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="301" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="301" x2="772" y2="301" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,297 772,301 764,305" fill="#AAAAAA"/>
+  <path d="M 742,312 L 757,312 L 757,306" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="301" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="301" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="301" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,301 L 772,270 L 414,270 L 414,239 L 430,239" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,235 430,239 422,243" fill="#AAAAAA"/>
+  <text class="lbl" x="427" y="225">26</text>
+  <use href="#vl-attn" transform="translate(430,216)"/>
+  <use href="#vl-ffn" transform="translate(610,216)"/>
+  <line x1="580" y1="239" x2="610" y2="239" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="602,235 610,239 602,243" fill="#AAAAAA"/>
+  <path d="M 580,250 L 595,250 L 595,244" fill="none" stroke="#1976D2" stroke-width="1.0"/>
+  <circle cx="595" cy="239" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="595" cy="239" r="5" fill="none" stroke="#1976D2" stroke-width="1.2"/>
+  <text x="595" y="239" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#1976D2">+</text>
+  <line x1="742" y1="239" x2="772" y2="239" stroke="#AAAAAA" stroke-width="2.5"/>
+  <polygon points="764,235 772,239 764,243" fill="#AAAAAA"/>
+  <path d="M 742,250 L 757,250 L 757,244" fill="none" stroke="#EF6C00" stroke-width="1.0"/>
+  <circle cx="757" cy="239" r="5" fill="#AAAAAA" stroke="none"/>
+  <circle cx="757" cy="239" r="5" fill="none" stroke="#EF6C00" stroke-width="1.2"/>
+  <text x="757" y="239" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#EF6C00">+</text>
+  <path d="M 772,239 L 772,146 L 414,146 L 414,110 L 430,110" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="422,106 430,110 422,114" fill="#AAAAAA"/>
+  <rect x="430" y="90" width="342" height="40" fill="url(#vl_global)" stroke="#C62828" stroke-width="0.8" rx="2"/>
+  <rect x="432" y="94" width="111" height="32" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text x="487" y="110" text-anchor="middle" dominant-baseline="middle" font-size="7" font-weight="600" fill="#b71c1c">Spatial Merge</text>
+  <rect x="544" y="94" width="111" height="32" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text x="599" y="110" text-anchor="middle" dominant-baseline="middle" font-size="7" font-weight="600" fill="#b71c1c">Post Norm</text>
+  <rect x="656" y="94" width="111" height="32" fill="#f8bbd0" stroke="#C62828" stroke-width="0.5" rx="1"/>
+  <text x="711" y="110" text-anchor="middle" dominant-baseline="middle" font-size="7" font-weight="600" fill="#b71c1c">Splice</text>
+  <text x="711" y="138" text-anchor="middle" font-size="7" font-style="italic" fill="#666666">mlp</text>
+  <path d="M 772,110 L 780,110 L 780,76 L 658,76" fill="none" stroke="#AAAAAA" stroke-width="2.5" stroke-linejoin="miter"/>
+  <polygon points="666,72 658,76 666,80" fill="#AAAAAA"/>
+  <text class="io" style="text-anchor:end" x="656" y="76">IMAGE TOKENS</text>
+  <text style="font-size:9px;font-weight:bold;fill:#333333;font-family:'Courier New',monospace" x="800" y="67">Legend</text>
+  <rect x="796" y="72" width="188" height="110" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8" rx="2"/>
+  <rect x="800" y="82" width="10" height="10" fill="url(#vl_full_attention)" stroke="#1976D2" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="814" y="87">attention</text>
+  <rect x="800" y="100" width="10" height="10" fill="url(#vl_ffn)" stroke="#EF6C00" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="814" y="105">FFN</text>
+  <rect x="800" y="118" width="10" height="10" fill="url(#vl_global)" stroke="#C62828" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="814" y="123">patch embed</text>
+  <rect x="800" y="136" width="10" height="10" fill="#e1bee7" stroke="#9C27B0" stroke-width="0.8" rx="1"/>
+  <text class="ltxt" x="814" y="141">LayerNorm</text>
+  <circle cx="805" cy="159" r="5" fill="#AAAAAA"/>
+  <text x="805" y="159" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="bold" fill="#555555">+</text>
+  <text class="ltxt" x="814" y="159">residual add</text>
+</svg>

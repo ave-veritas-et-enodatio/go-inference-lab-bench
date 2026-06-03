@@ -6,6 +6,7 @@ import (
 	goparser "go/parser"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -15,40 +16,124 @@ import (
 
 // ArchDef is the top-level parsed architecture definition.
 type ArchDef struct {
-	Architecture ArchMeta               `toml:"architecture"`
-	Params       ParamsDef              `toml:"params"`
-	Weights      WeightsDef             `toml:"weights"`
-	Layers       LayersDef              `toml:"layers"`
-	Blocks       map[string]BlockDef    `toml:"blocks"`
-	FFN          FFNDef                 `toml:"ffn"`
-	FFNAlt       *FFNDef                `toml:"ffn_alt"` // optional: layers that have these weights use this FFN instead
-	Tokens       TokensDef              `toml:"tokens"`
-	Example      ExampleDef             `toml:"example"`
+	Architecture ArchMeta            `toml:"architecture"`
+	Params       ParamsDef           `toml:"params"`
+	Weights      WeightsDef          `toml:"weights"`
+	Layers       LayersDef           `toml:"layers"`
+	Blocks       map[string]BlockDef `toml:"blocks"`
+	FFN          FFNDef              `toml:"ffn"`
+	FFNAlt       *FFNDef             `toml:"ffn_alt"` // optional: layers that have these weights use this FFN instead
+	Tokens       TokensDef           `toml:"tokens"`
+	Example      ExampleDef          `toml:"example"`
+
+	// Vision and Projector together describe a multimodal model's second
+	// tower (image encoder) and the bridge between it and the decoder. Both
+	// fields are nil for unimodal text models. See ARCHITECTURE.md "Vision /
+	// Multimodal Subsystem" — this is the parsing surface; the forward graph
+	// and load-time wiring are described there too.
+	Vision    *VisionDef    `toml:"vision"`
+	Projector *ProjectorDef `toml:"projector"`
+}
+
+// VisionDef describes a vision tower as a parallel set of layers and
+// blocks alongside the text decoder. Subsections mirror the top-level
+// shape (params/weights/layers/blocks/ffn) so existing block and FFN
+// builders apply unchanged — the vision tower is "another model, sharing
+// the same code paths," not a special-cased addition.
+//
+// Phase 3 parses and stores this definition. Phase 4 wires it into a
+// runVisionLayers forward graph; Phase 7 splices the resulting embeddings
+// into the decoder input. Validation deferred to Phase 4 so the schema
+// can settle against a working forward graph before the rules harden.
+type VisionDef struct {
+	Params  ParamsDef           `toml:"params"`
+	Weights WeightsDef          `toml:"weights"`
+	Layers  LayersDef           `toml:"layers"`
+	Blocks  map[string]BlockDef `toml:"blocks"`
+	FFN     FFNDef              `toml:"ffn"`
+
+	// Preprocessing names the image-preprocessing strategy (e.g.
+	// "gemma_pan_scan"). It is consumed only by the diagram renderer
+	// (archdiagram/vision_diagram.go) as a label hint; the actual
+	// preprocessing path is selected in Go, not from this field.
+	Preprocessing string `toml:"preprocessing"`
+
+	// PatchSize is used by the runtime patch-embedding stage. InputSize is
+	// consumed only by the diagram renderer (vision_diagram.go) as the
+	// example raw-image dimension; it is not read by the preprocessor.
+	PatchSize int `toml:"patch_size"`
+	InputSize int `toml:"input_size"`
+
+	// ImageToken is the placeholder token in the chat-template-rendered
+	// prompt (Gemma 4 emits `<|image|>` for each image part).
+	//
+	// NImageTokens is informational / diagram-only (read solely by
+	// vision_diagram.go to label the soft-token count). The splice does NOT
+	// use it: the number of embedding rows per image is computed
+	// dynamically from PreprocessedImage.NTokens(nMerge).
+	ImageToken   string `toml:"image_token"`
+	NImageTokens int    `toml:"n_image_tokens"`
+
+	// Architectural constants that aren't in the model file metadata
+	// but are fixed per-arch (e.g. for Gemma 4 vision they're the
+	// upstream `clip.cpp` PROJECTOR_TYPE_GEMMA4V hardcoded values).
+	// Declaring them as arch.toml fields keeps Go free of model-
+	// specific branches — every vision-arch difference lives in data.
+	NMerge         int     `toml:"n_merge"`          // post-encoder spatial merge (== pooling kernel)
+	RopeTheta      float32 `toml:"rope_theta"`       // RoPE base frequency for 2D split rope in attention
+	ImageMinTokens int     `toml:"image_min_tokens"` // smart-resize lower bound in soft-token count
+	ImageMaxTokens int     `toml:"image_max_tokens"` // smart-resize upper bound in soft-token count
+
+	// NormType selects the per-layer norm used by the encoder dispatch frame
+	// (BuildVisionGraph): "rms" (default, Gemma 4 — RmsNorm, weight-only) or
+	// "layernorm" (Qwen3-VL — ggml_norm with a learned weight + bias). Drives
+	// the norm-type-aware frame so neither tower needs model-specific Go.
+	NormType string `toml:"norm_type"`
+
+	// DecoderNonCausal makes the decoder attend to each image's soft-token
+	// span bidirectionally during prefill (the span is re-opened in the
+	// causal + SWA masks). This mirrors llama-mtmd, where only GEMMA3/GEMMA4V
+	// decode the image ubatch with causal_attn=false
+	// (mtmd_decode_use_non_causal). All other towers (e.g. Qwen3-VL) keep the
+	// image tokens causal — the default (false) here. NOT the same as the
+	// arch-level `non_causal` (whole-sequence bidirectional, for diffusion).
+	DecoderNonCausal bool `toml:"decoder_non_causal"`
+}
+
+// ProjectorDef describes how the vision tower's per-patch embeddings are
+// projected into the decoder's token-embedding space. For Gemma 4 this is
+// a single linear matmul (`mm.input_projection.weight`, shape [768, 2560]);
+// other VLMs use avgpool+MLP or other patterns. Type selects the projector
+// path in BuildVisionGraph (vision.go) and is also used as a diagram label.
+type ProjectorDef struct {
+	Type    string            `toml:"type"`
+	Weights map[string]string `toml:"weights"`
 }
 
 // ExampleDef provides diagram-only example values for SVG generation.
 // Has no effect on inference. Used when no GGUF model is loaded.
 type ExampleDef struct {
-	NLayers       int `toml:"n_layers"`        // example layer count for layer-pattern strip
-	FullAttnEvery int `toml:"full_attn_every"` // interval: layer (i+1) % N == 0 is full/global attention
-	AttnPatternTrueEvery int `toml:"attn_pattern_true_every"` //  pattern[n] = ((i+1) % N) == 0
+	NLayers               int `toml:"n_layers"`                 // example layer count for layer-pattern strip
+	VisionNLayers         int `toml:"vision_n_layers"`          // example vision-encoder depth for the exploded vision-layers diagram (0 = omit)
+	FullAttnEvery         int `toml:"full_attn_every"`          // interval: layer (i+1) % N == 0 is full/global attention
+	AttnPatternTrueEvery  int `toml:"attn_pattern_true_every"`  //  pattern[n] = ((i+1) % N) == 0
 	AttnPatternFalseEvery int `toml:"attn_pattern_false_every"` // pattern[n] = ((i+1) % N) != 0
 }
 
 type TokensDef struct {
-	ThinkOpen  string   `toml:"think_open"`   // e.g. "<think>"
-	ThinkClose string   `toml:"think_close"`  // e.g. "</think>"
-	ExtraEOS []string `toml:"extra_eos"`
+	ThinkOpen  string   `toml:"think_open"`  // e.g. "<think>"
+	ThinkClose string   `toml:"think_close"` // e.g. "</think>"
+	ExtraEOS   []string `toml:"extra_eos"`
 }
 
 type ArchMeta struct {
-	Name            string `toml:"name"`
-	TiedEmbeddings  bool   `toml:"tied_embeddings"`
-	NonCausal       bool   `toml:"non_causal"`       // bidirectional attention (no causal mask)
-	EmbedScale      bool   `toml:"embed_scale"`      // multiply embeddings by sqrt(n_embd)
-	Generation      string `toml:"generation"`       // "" (default autoregressive) or "diffusion"
-	ShiftLogits     bool   `toml:"shift_logits"`     // diffusion: use position p-1 logits for output position p
-	NoFlashAttn     bool   `toml:"no_flash_attn"`    // disable flash attention; falls back to standard MulMat SDPA
+	Name           string `toml:"name"`
+	TiedEmbeddings bool   `toml:"tied_embeddings"`
+	NonCausal      bool   `toml:"non_causal"`    // bidirectional attention (no causal mask)
+	EmbedScale     bool   `toml:"embed_scale"`   // multiply embeddings by sqrt(n_embd)
+	Generation     string `toml:"generation"`    // "" (default autoregressive) or "diffusion"
+	ShiftLogits    bool   `toml:"shift_logits"`  // diffusion: use position p-1 logits for output position p
+	NoFlashAttn    bool   `toml:"no_flash_attn"` // disable flash attention; falls back to standard MulMat SDPA
 }
 
 // ParamsDef holds GGUF key mappings and derived expressions.
@@ -56,9 +141,9 @@ type ArchMeta struct {
 // or a special value like "neox" for enum-like params.
 type ParamsDef struct {
 	// Flat params parsed from TOML key=value pairs (excluding "derived" and "defaults")
-	Keys     map[string]string  `toml:"-"`
-	Derived  map[string]string  `toml:"derived"`
-	Defaults map[string]string  `toml:"defaults"` // fallback: if param resolves to 0, use this param's value instead
+	Keys     map[string]string `toml:"-"`
+	Derived  map[string]string `toml:"derived"`
+	Defaults map[string]string `toml:"defaults"` // fallback: if param resolves to 0, use this param's value instead
 }
 
 // UnmarshalTOML implements custom unmarshalling for ParamsDef.
@@ -104,10 +189,10 @@ type WeightsDef struct {
 }
 
 type LayersDef struct {
-	Count         string                  `toml:"count"`
-	Prefix        string                  `toml:"prefix"`
-	Routing       RoutingDef              `toml:"routing"`
-	CommonWeights map[string]string       `toml:"common_weights"`
+	Count         string            `toml:"count"`
+	Prefix        string            `toml:"prefix"`
+	Routing       RoutingDef        `toml:"routing"`
+	CommonWeights map[string]string `toml:"common_weights"`
 }
 
 // RoutingDef defines per-layer block routing.
@@ -125,10 +210,10 @@ type RoutingDef struct {
 }
 
 type BlockDef struct {
-	Builder string                 `toml:"builder"`
-	Weights map[string]string      `toml:"weights"`
-	Config  map[string]any         `toml:"config"`
-	Cache   map[string]CacheDef    `toml:"cache"`
+	Builder string              `toml:"builder"`
+	Weights map[string]string   `toml:"weights"`
+	Config  map[string]any      `toml:"config"`
+	Cache   map[string]CacheDef `toml:"cache"`
 }
 
 type CacheDef struct {
@@ -138,9 +223,9 @@ type CacheDef struct {
 }
 
 type FFNDef struct {
-	Builder string                 `toml:"builder"`
-	Weights map[string]string      `toml:"weights"`
-	Config  map[string]any         `toml:"config"`
+	Builder string            `toml:"builder"`
+	Weights map[string]string `toml:"weights"`
+	Config  map[string]any    `toml:"config"`
 }
 
 // archTomlExt is a package-local alias for the canonical extension constant.
@@ -552,14 +637,7 @@ func validateContract(c BuilderContract, weights map[string]string, config map[s
 			}
 			if validValues != nil {
 				strVal := fmt.Sprintf("%v", v)
-				found := false
-				for _, vv := range validValues {
-					if strVal == vv {
-						found = true
-						break
-					}
-				}
-				if !found {
+				if !slices.Contains(validValues, strVal) {
 					add(tomlPath(prefix, tomlConfig, k),
 						fmt.Sprintf("invalid value %q (valid: %s)", strVal, strings.Join(validValues, ", ")))
 				}

@@ -93,8 +93,13 @@ func (b *GatedDeltaNetBuilder) BuildStateless(
 		kSSM = ggml.Repeat4D(ctx, kSSM, dState, dtRank, nTokens, nSeqs)
 	}
 
-	// Delta-net fused op with zero initial state
-	ssmState := newZeroFilledInput(ctx, ggml.TypeF32, zeroFill, hvDim, hvDim, dtRank, nSeqs)
+	// Delta-net fused op with zero initial state.
+	// ggml gated_delta_net contract (v0.12.0+): state is [D, K, n_seqs] with
+	// D = S_v*S_v*H (S_v=hvDim value dim, H=dtRank heads) and K = snapshot-slot
+	// count (1 here — bench does not use spec-decode state snapshots). The
+	// output layout (per-token block then state tail) is unchanged for K=1, so
+	// the views below are unaffected. (Earlier ggml took state as [S_v,S_v,H,seqs].)
+	ssmState := newZeroFilledInput(ctx, ggml.TypeF32, zeroFill, hvDim*hvDim*dtRank, 1, nSeqs)
 
 	deltaOut := ggml.GatedDeltaNet(ctx, qSSM, kSSM, vSSM, g, beta, ssmState)
 
@@ -179,9 +184,13 @@ func (b *GatedDeltaNetBuilder) BuildCached(
 		kSSM = ggml.Repeat4D(ctx, kSSM, dState, dtRank, nNew, nSeqs)
 	}
 
-	// Delta-net with cached SSM state
-	ssmSt4d := ggml.Reshape4D(ctx, cache.Tensors[CacheSSMState], hvDim, hvDim, dtRank, nSeqs)
-	deltaOut := ggml.GatedDeltaNet(ctx, qSSM, kSSM, vSSM, g, beta, ssmSt4d)
+	// Delta-net with cached SSM state. ggml gated_delta_net contract (v0.12.0+)
+	// requires state shape [D, K, n_seqs] with D = S_v*S_v*H and K = snapshot
+	// slots (1 — no spec-decode snapshots). Same cache buffer (D*nSeqs elements),
+	// reshaped from the old [S_v, S_v, H, nSeqs] view; the output parsing and
+	// state writeback below are unchanged (the K=1 output layout matches).
+	ssmStateIn := ggml.Reshape3D(ctx, cache.Tensors[CacheSSMState], hvDim*hvDim*dtRank, 1, nSeqs)
+	deltaOut := ggml.GatedDeltaNet(ctx, qSSM, kSSM, vSSM, g, beta, ssmStateIn)
 
 	ssmOutput := ggml.View4D(ctx, deltaOut, hvDim, dtRank, nNew, nSeqs,
 		ggml.RowSize(ggml.TypeF32, hvDim), ggml.RowSize(ggml.TypeF32, hvDim*dtRank),

@@ -24,6 +24,98 @@ func init() {
 	gonja.SetLoggerOutput(io.Discard)
 }
 
+// setBlockPattern matches Jinja2 set-block syntax:
+//
+//	{%[-]? set <name> [-]?%} ... {%[-]? endset [-]?%}
+//
+// The (?s) flag makes `.` match newlines; the body capture is non-greedy so
+// multiple set-blocks in the same template don't merge. <name> = standard
+// identifier. The right-hand side of the opening `%}` has no `=` — that's
+// how we distinguish set-block from the standard `{% set var = expr %}`,
+// which gonja already handles correctly and we leave alone.
+var setBlockPattern = regexp.MustCompile(`(?s)\{%-?\s*set\s+([_a-zA-Z][_a-zA-Z0-9]*)\s*-?%\}(.*?)\{%-?\s*endset\s*-?%\}`)
+
+// rewriteJinjaSetBlocks converts `{% set NAME %}...{% endset %}` blocks into
+// equivalent macro definitions plus set-with-call, since gonja v2 does not
+// support the set-block form. Each set-block becomes:
+//
+//	{%- macro __setblock_<name>_<idx>() -%}<body>{%- endmacro -%}
+//	{%- set <name> = __setblock_<name>_<idx>() -%}
+//
+// A Jinja2 macro call returns the rendered body as a string, so this is
+// semantically equivalent to the set-block form. Macros are emitted inline
+// at the original site, so their scope matches the original set-block's
+// scope (important when the set-block is inside a {% for %} or {% if %}).
+//
+// Indexed per occurrence so multiple set-blocks in the same template don't
+// collide on macro name. Used by the chat-template compiler in NewTokenizer
+// alongside the [::-1] → |reverse rewrite.
+//
+// Encountered first in Gemma 4 multimodal chat templates, which use a
+// set-block to capture content rendered from a mixed-content message
+// (text/image/audio parts) into a single variable.
+func rewriteJinjaSetBlocks(src string) string {
+	idx := 0
+	return setBlockPattern.ReplaceAllStringFunc(src, func(match string) string {
+		sub := setBlockPattern.FindStringSubmatch(match)
+		name := sub[1]
+		body := sub[2]
+		macroName := fmt.Sprintf("__setblock_%s_%d", name, idx)
+		idx++
+		return fmt.Sprintf(
+			"{%%- macro %s() -%%}%s{%%- endmacro -%%}{%%- set %s = %s() -%%}",
+			macroName, body, name, macroName,
+		)
+	})
+}
+
+// dictGetPattern matches single-arg dict.get() calls in Jinja2 templates:
+//
+//	<expr>.get('key')  or  <expr>.get("key")
+//
+// (Whitespace allowed inside the parens.) The captured group is the quoted
+// key. Multi-arg .get(key, default) is not currently used in Gemma 4's
+// template; supporting it would require a different rewrite shape (bracket
+// access defaults to Undefined, not the caller's default value) and is
+// deferred until a model needs it.
+var dictGetPattern = regexp.MustCompile(`\.get\(\s*(['"][^'"]+['"])\s*\)`)
+
+// dictGetMultiArgPattern matches the multi-argument dict.get(key, default)
+// form, which the single-arg rewrite in rewriteJinjaDictGet does NOT handle.
+// A comma inside the parens (after the quoted key) distinguishes it from the
+// single-arg form. Used only for detection/warning, not rewriting: the bracket
+// rewrite cannot express the caller's default value, so a multi-arg .get would
+// otherwise reach gonja unmodified and fail later with an opaque runtime error.
+var dictGetMultiArgPattern = regexp.MustCompile(`\.get\(\s*['"][^'"]+['"]\s*,`)
+
+// rewriteJinjaDictGet converts Python-style dict.get('key') method calls into
+// Jinja2 bracket access `['key']`. gonja v2 does not implement the Python
+// dict .get method on maps, but it does implement bracket access — and in
+// standard Jinja2 semantics, bracket access on a missing key yields
+// Undefined, which evaluates falsy in `or` chains and `if` conditions. That
+// matches the `dict.get(key) returns None for missing keys` semantics used
+// throughout chat templates that came from Python-side codebases (e.g. the
+// Gemma 4 multimodal template's `message.get('reasoning') or
+// message.get('reasoning_content')` pattern).
+//
+// Only the single-arg form is rewritten. Two-arg `.get(key, default)` is not
+// currently used in any chat template the bench loads; if a future template
+// needs it, the rewrite shape would be `(d['k'] if 'k' in d else default)` —
+// extend this function then.
+func rewriteJinjaDictGet(src string) string {
+	// Surface the unsupported multi-arg form at template-processing time so it
+	// produces a clear diagnostic here rather than an opaque gonja runtime
+	// error later. Snippet is length-capped per project logging rules.
+	if m := dictGetMultiArgPattern.FindString(src); m != "" {
+		snippet := m
+		if len(snippet) > 64 {
+			snippet = snippet[:64]
+		}
+		log.Warn("chat template uses unsupported multi-arg dict .get(key, default) form (%s...) — only single-arg .get(key) is rewritten; this will likely fail at template execution", snippet)
+	}
+	return dictGetPattern.ReplaceAllString(src, "[$1]")
+}
+
 // Tokenizer implements BPE tokenization loaded from a GGUF file's metadata.
 // Supports both GPT-2 byte-level BPE (Llama, Qwen) and SentencePiece BPE (Gemma).
 type Tokenizer struct {
@@ -101,10 +193,19 @@ func NewTokenizerFromGGUF(f *ggufparser.GGUFFile, ggufPath string) (*Tokenizer, 
 	}
 
 	// Compile chat template from GGUF.
-	// Patch Python slice syntax gonja doesn't support: x[::-1] → x|reverse
+	// Apply gonja-compatibility rewrites in order:
+	//   1. Python slice syntax: x[::-1] → x|reverse
+	//   2. Set-block syntax: {% set var %}...{% endset %} → macro + set-call
+	//      (Gemma 4 multimodal templates use this; gonja v2 doesn't support it.)
+	//   3. Dict .get(key) method calls: dict.get('key') → dict['key']
+	//      (Python-style dict method; gonja v2 doesn't have .get on maps. The
+	//      bracket form returns Undefined for missing keys, which evaluates
+	//      falsy in `or` chains — same semantics as .get(key) returning None.)
 	var chatTpl *exec.Template
 	if tplKV, ok := kvs.Get(arch.GGUFKeyTokenizerChatTemplate); ok {
 		src := strings.ReplaceAll(tplKV.ValueString(), "[::-1]", "|reverse")
+		src = rewriteJinjaSetBlocks(src)
+		src = rewriteJinjaDictGet(src)
 		tpl, err := gonja.FromString(src)
 		if err != nil {
 			return nil, fmt.Errorf("compiling chat template: %w", err)
@@ -218,7 +319,20 @@ func (t *Tokenizer) EncodeChat(messages []ChatMessage, kwargs map[string]any) ([
 
 	msgs := make([]map[string]any, len(messages))
 	for i, m := range messages {
-		msgs[i] = map[string]any{"role": m.Role, "content": m.Content}
+		var content any
+		if m.Parts != nil {
+			// Multi-part: feed the template a list of {type, text} dicts so
+			// it can iterate and emit per-type output (text inline, image
+			// placeholder via the model-specific image_token literal).
+			parts := make([]any, len(m.Parts))
+			for j, p := range m.Parts {
+				parts[j] = map[string]any{"type": p.Type, "text": p.Text}
+			}
+			content = parts
+		} else {
+			content = m.Content
+		}
+		msgs[i] = map[string]any{"role": m.Role, "content": content}
 	}
 
 	bosStr := ""
@@ -249,15 +363,47 @@ func (t *Tokenizer) EncodeChat(messages []ChatMessage, kwargs map[string]any) ([
 }
 
 // ChatMessage is a single message in a conversation.
+//
+// Two content shapes are supported, mutually exclusive:
+//   - Plain text: `Content` holds the string, `Parts` is nil. This is the
+//     pre-multimodal path used by every text-only model.
+//   - Typed parts: `Parts` is non-nil and lists `{type, text}` entries in
+//     order. The chat template iterates over the parts and emits the
+//     model's image placeholder token at each `image` part. Decoded image
+//     data does NOT live on ChatMessage — it travels separately through
+//     `GenerateParams.Images` so the splice code receives a flat list in
+//     template-render order. Keeping data out of the template-input
+//     struct avoids JSON-shape coupling between rendering and splicing.
 type ChatMessage struct {
 	Role    string
 	Content string
+	Parts   []ChatContentPart // optional; when non-nil, overrides Content for template rendering
+}
+
+// ChatContentPart is a single entry in a multi-part message content list.
+// Only the shape the chat template needs to render placeholders — actual
+// image pixels are carried out-of-band on GenerateParams.Images.
+type ChatContentPart struct {
+	Type string // "text" or "image"
+	Text string // populated for Type == "text"
 }
 
 // VocabContains returns true if s is a direct vocabulary entry (single token).
 func (t *Tokenizer) VocabContains(s string) bool {
 	_, ok := t.tokenIDs[s]
 	return ok
+}
+
+// TokenID returns the vocabulary ID for the single-vocab-entry string s,
+// or (-1, false) if s is not in the vocabulary. Use this to resolve
+// special/control tokens (e.g. the vision-placeholder token) at engine
+// init rather than re-encoding the literal at every request.
+func (t *Tokenizer) TokenID(s string) (int32, bool) {
+	id, ok := t.tokenIDs[s]
+	if !ok {
+		return -1, false
+	}
+	return id, true
 }
 
 // BuildStopSet returns a set of token IDs that should halt generation.

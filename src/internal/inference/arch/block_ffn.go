@@ -23,9 +23,17 @@ func (b *gluBuilder) Contract() BuilderContract {
 }
 
 func (b *gluBuilder) BuildFFN(ctx *ggml.GraphContext, input ggml.Tensor,
-	weights map[string]ggml.Tensor, params *ResolvedParams, config map[string]any) ggml.Tensor {
+	weights map[string]ggml.Tensor, params *ResolvedParams, config map[string]any,
+	inputs *GraphInputs) ggml.Tensor {
 
-	gateFfn := applyActivation(ctx, ggml.MulMat(ctx, weights[MoEGate], input), b.activation)
-	up := ggml.MulMat(ctx, weights[MoEUp], input)
-	return ggml.MulMat(ctx, weights[MoEDown], ggml.Mul(ctx, gateFfn, up))
+	// Clamps resolve to inactive (bare MulMat) for every decoder path, where
+	// GraphInputs.LinearClamps is nil. The Gemma-4 vision tower supplies a
+	// per-layer clamp map keyed by ffn_gate / ffn_up / ffn_down.
+	gateClamp := clampFor(inputs.LinearClamps, WeightFFNGate)
+	upClamp := clampFor(inputs.LinearClamps, WeightFFNUp)
+	downClamp := clampFor(inputs.LinearClamps, WeightFFNDown)
+
+	gateFfn := applyActivation(ctx, mulMatClamped(ctx, weights[MoEGate], input, gateClamp), b.activation)
+	up := mulMatClamped(ctx, weights[MoEUp], input, upClamp)
+	return mulMatClamped(ctx, weights[MoEDown], ggml.Mul(ctx, gateFfn, up), downClamp)
 }

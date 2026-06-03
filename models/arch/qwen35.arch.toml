@@ -21,7 +21,11 @@ name = "qwen35"
 tied_embeddings = true
 
 [params]
-n_layers           = "qwen35.block_count"
+block_count          = "qwen35.block_count"
+# Qwen3-Next ships an MTP (next-token-prediction) head as extra block(s) past the
+# transformer stack; newer converters fold it into block_count. bench has no
+# MTP/speculative-decode path, so n_layers (derived below) excludes it.
+nextn_predict_layers = "qwen35.nextn_predict_layers?"
 n_heads            = "qwen35.attention.head_count"
 n_kv_heads         = "qwen35.attention.head_count_kv"
 n_embd             = "qwen35.embedding_length"
@@ -40,12 +44,14 @@ rope_sections      = "qwen35.rope.dimension_sections"
 rope_mode          = "neox"
 
 [params.derived]
+n_layers      = "block_count - nextn_predict_layers"   # exclude MTP head(s) from the layer loop
 n_vocab       = "token_embd.ne[1]"
 head_v_dim    = "ssm_d_inner / ssm_dt_rank"
 conv_channels = "ssm_d_inner + 2 * ssm_n_group * ssm_d_state"
 
 [params.defaults]
-n_kv_heads = "n_heads"    # GGUF convention: 0 means same as n_heads (no GQA)
+n_kv_heads           = "n_heads"   # GGUF convention: 0 means same as n_heads (no GQA)
+nextn_predict_layers = "0"         # non-MTP models: no nextn head → n_layers == block_count
 
 [weights.global]
 token_embd  = "token_embd.weight"
@@ -80,7 +86,11 @@ builder = "full_attention_gated"
   [blocks.full_attention.config]
   q_has_gate    = true
   qk_norm       = "rms"
-  rope          = "multi"
+  # imrope: interleaved multi-section M-RoPE (GGML_ROPE_TYPE_IMROPE, Qwen3-VL).
+  # For text (no image) it reduces to the plain NEOX `multi` result; image spans
+  # get 2-D grid positions via the decoder get_rope_index analogue. Requires the
+  # [4*n_tokens] InpPos buffer (built in graph.go::buildDecoderPositions).
+  rope          = "imrope"
   output_gate   = "sigmoid"
 
   [blocks.full_attention.cache]
@@ -124,7 +134,121 @@ think_open  = "<think>"
 think_close = "</think>"
 extra_eos   = ["<|endoftext|>"]
 
+# ===========================================================================
+# Vision tower (Qwen3.5-VL — PROJECTOR_TYPE_QWEN3VL mmproj).
+#
+# Runs through the same generic block/FFN builders as the decoder via
+# vision.go::BuildVisionGraph's §4 dispatch loop. Differences from Gemma 4's
+# tower are all data-driven (no model-specific Go): LayerNorm-with-bias (not
+# RMS), fused QKV (split into views in-graph), M-RoPE GGML_ROPE_TYPE_VISION
+# (not axial 2D), dual-conv merge-grouped patch embed, bilinearly-interpolated
+# learned position grid, and a 2-layer MLP projector (not single-linear+norm).
+#
+# Hparams source: models/mmproj-Qwen3.5-9B.gguf metadata (clip.vision.*):
+#   block_count 27, embedding_length 1152, feed_forward_length 4304,
+#   head_count 16 (head_dim 72), patch 16, image 768, spatial_merge 2,
+#   projection_dim 4096, GELU (tanh), eps 1e-6, mean/std [0.5].
+# Full attention all 27 layers; no window/deepstack/temporal for this mmproj.
+# ===========================================================================
+
+[vision]
+patch_size      = 16
+image_token     = "<|image_pad|>"
+n_image_tokens  = 0          # variable per image (smart-resize); splice computes the run length
+norm_type       = "layernorm"
+
+# Architectural constants not in the mmproj metadata block but fixed per-arch.
+# n_merge = spatial_merge_size (2); token bounds from clip.cpp
+# set_limit_image_tokens(8, 4096); rope_theta = 10000 (qwen3vl.cpp ggml_rope_multi).
+n_merge          = 2
+rope_theta       = 10000.0
+image_min_tokens = 8
+image_max_tokens = 4096
+
+[vision.params]
+n_layers   = "vision.block_count"
+n_heads    = "vision.attention.head_count"
+n_embd     = "vision.embedding_length"
+n_ff       = "vision.feed_forward_length"
+head_dim   = "vision.attention.key_length?"  # mmproj omits it; derived from n_embd/n_heads
+rms_eps    = "vision.attention.layer_norm_epsilon"
+patch_size = "vision.patch_size"
+
+[vision.weights.global]
+patch_embd      = "v.patch_embd.weight"
+patch_embd_1    = "v.patch_embd.weight.1"   # second conv kernel (summed)
+patch_embd_bias = "v.patch_embd.bias"
+position_embd   = "v.position_embd.weight"  # learned 48x48 grid, bilinearly interpolated
+post_ln         = "v.post_ln.weight"
+post_ln_bias    = "v.post_ln.bias"
+
+[vision.layers]
+count  = "n_layers"
+prefix = "v.blk.@{layer_idx}."
+
+[vision.layers.routing]
+uniform = "encoder_layer"
+
+# Per-layer vision weights (LayerNorm carries a bias; fused QKV is one tensor).
+[vision.layers.common_weights]
+ln1                = "ln1.weight"
+ln1_bias           = "ln1.bias"
+ln2                = "ln2.weight"
+ln2_bias           = "ln2.bias"
+attn_qkv           = "attn_qkv.weight"   # fused QKV — split into q/k/v views in-graph (qkv_fused)
+attn_qkv_bias      = "attn_qkv.bias"
+attn_output        = "attn_out.weight"
+attn_output_bias   = "attn_out.bias"
+ffn_up             = "ffn_up.weight"
+ffn_up_bias        = "ffn_up.bias"
+ffn_down           = "ffn_down.weight"
+ffn_down_bias      = "ffn_down.bias"
+
+# Vision encoder block — generic `attention` builder.
+#   rope=mrope_vision → GGML_ROPE_TYPE_VISION M-RoPE (theta 10000 via rope_freq_base).
+#   kq_prec=native    → no forced-F32 KQ accumulation (clip-encoder parity).
+#   non_causal=true   → bidirectional patch attention.
+#   qkv_fused=true    → split the single attn_qkv weight/bias into q/k/v views.
+# No kq_scale override → default 1/sqrt(head_dim). No qk_norm, no v_norm.
+[vision.blocks.encoder_layer]
+builder = "attention"
+
+  [vision.blocks.encoder_layer.weights]
+  attn_output      = "attn_output"
+  attn_output_bias = "attn_output_bias"
+
+  [vision.blocks.encoder_layer.config]
+  rope       = "mrope_vision"
+  kq_prec    = "native"
+  non_causal = true
+  qkv_fused  = true
+
+# Vision FFN — generic plain MLP: up → GELU → down (no gate), with biases.
+[vision.ffn]
+builder = "mlp"
+
+  [vision.ffn.config]
+  activation = "gelu"
+
+  [vision.ffn.weights]
+  up        = "ffn_up"
+  up_bias   = "ffn_up_bias"
+  down      = "ffn_down"
+  down_bias = "ffn_down_bias"
+
+# Projector — 2-layer MLP: mm.0 → GELU → mm.2 (with biases, no norm).
+# Input [n_embd*4=4608, n_pos/4]; output [projection_dim=4096, n_pos/4].
+[projector]
+type = "mlp"
+
+[projector.weights]
+proj       = "mm.0.weight"
+proj_bias  = "mm.0.bias"
+proj2      = "mm.2.weight"
+proj2_bias = "mm.2.bias"
+
 # Diagram-only example values; no effect on inference.
 [example]
-n_layers       = 32
+n_layers        = 32
+vision_n_layers = 27   # Qwen3.5-VL vision_config.depth
 full_attn_every = 4

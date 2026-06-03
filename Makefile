@@ -1,10 +1,37 @@
 DIAGRAM_TARGETS  := $(patsubst models/arch/%.arch.toml,models/arch/%.arch.svg,$(wildcard models/arch/*.arch.toml))
 ST_TOK_TARGETS  := $(patsubst models/%.st/tokenizer.json,models/%.st/tokenizer.gguf,$(wildcard models/*.st/tokenizer.json))
-ST_GGUF_TARGETS := $(patsubst models/%.st,models/%.gguf,$(wildcard models/*.st))
+ST_GGUF_TARGETS := $(patsubst models/%.st,models/%-f16.gguf,$(wildcard models/*.st))
+GH_ROOT := $(shell dirname $$(git remote -v | awk '{print $$2; exit 0;}'))
 
-.PHONY: all arch-diagrams arch-diagram-targets build test integration-test equiv-test update-dependencies serve chat model-diagrams clean st-tok-ggufs st-ggufs
+.PHONY: all arch-diagrams arch-diagram-targets build test integration-test equiv-test update-dependencies udpate-agents-dependency serve model-diagrams clean agents st-tok-ggufs st-ggufs
 
 all: build
+
+# DO NOT MANUALLY EDIT vvv - use make update-dependencies
+AGENTS_VERSION := v0.6.17
+AGENTS_REPO := $(GH_ROOT)/agents.git
+AGENTS_DIR := .claude/agents
+AGENTS_MARKER := $(AGENTS_DIR)/.git/HEAD
+agents: $(AGENTS_MARKER)
+
+$(AGENTS_MARKER):
+	@mkdir -p $(dir $(AGENTS_DIR))
+	@[[ ! -f $(@) ]] || git -C $(dir $(AGENTS_DIR)) fetch --tags $(AGENTS_REPO)
+	@[[ -f $(@) ]] || git -C $(dir $(AGENTS_DIR)) clone $(AGENTS_REPO)
+	@git -c advice.detachedHead=false -C $(AGENTS_DIR) checkout $(AGENTS_VERSION)
+	@(cd $(dir $(AGENTS_DIR)); [[ -d commands/. ]] || ln -sv agents/commands .)
+
+update-agents-dependency: agents
+	# update to the latest tagged version
+	@git -C $(AGENTS_DIR) fetch --tags
+	@git -C $(AGENTS_DIR) tag --sort=committerdate  | tail -1 | xargs git -C $(AGENTS_DIR) -c advice.detachedHead=false checkout
+	# update Makefile with the new version tag.
+	@(\
+	  VTAG=$$(git -C $(AGENTS_DIR) describe --tag) && \
+		sed "s/^AGENTS_VERSION := $(AGENTS_VERSION)/AGENTS_VERSION := $$VTAG/" Makefile > Makefile.tmp && \
+		mv -f Makefile.tmp Makefile && \
+		echo "AGENTS_VERSION: $(AGENTS_VERSION) -> $$VTAG" \
+	)
 
 build:
 	$(MAKE) -C src all
@@ -16,20 +43,18 @@ LOG ?= bin/bench.log
 serve: build st-tok-ggufs
 	./bin/bench serve-api --log $(LOG) --log-level $(LOG_LEVEL)
 
-chat: build
-	./bin/bench chat
-
 equiv-test: build
-	./test_equiv.sh stateless
-	./test_equiv.sh llama
-	./test_equiv.sh standard-attention
-	./test_equiv.sh gguf-st
+	./test_chat_equiv.sh stateless
+	./test_chat_equiv.sh llama
+	./test_chat_equiv.sh standard-attention
+	./test_chat_equiv.sh gguf-st
+	./test_vision_equiv.sh
 
 PROMPT ?= explain pi in one short sentence.
 integration-test: build
 	@(ls models/*.gguf 2>&1) > /dev/null || (echo "$@: No model/.gguf files." 1>&2 && exit 1)
 	@(rm -f ./bin/itest*.log 2>&1) > /dev/null || true
-	LOG=./bin/itest.log FORCE_NEW_SERVER=true ALL_MODELS=$${ALL_MODELS:-true} THINK=true MAX_TOKENS=1000 ./test_inference.sh "$(PROMPT)" 2>&1 | tee ./bin/itest_stdout.log
+	LOG=./bin/itest.log FORCE_NEW_SERVER=$${FORCE_NEW_SERVER:-true} ALL_MODELS=$${ALL_MODELS:-true} THINK=$${THINK:-true} MAX_TOKENS=$${MAX_TOKENS:-1000} ./test_inference.sh "$(PROMPT)" 2>&1 | tee ./bin/itest_stdout.log
 	@grep '<NO-MODEL-RESPONSE>' ./bin/itest_stdout.log && exit 1 || true
 	@grep '\[ERROR\]' ./bin/itest.log && exit 1 || true
 
@@ -50,7 +75,7 @@ update-attributions:
 	      --allowedTools "Read,Edit,Write,Glob,Grep" \
 				--model sonnet
 
-update-dependencies:
+update-dependencies: udpate-agents-dependency
 	@$(MAKE) -C src $@
 
 test:
@@ -74,5 +99,11 @@ llama-cpp:
 models/%.st/tokenizer.gguf: models/%.st/tokenizer.json models/%.st/tokenizer_config.json $$(wildcard models/%.st/*.jinja)
 	./tools/hf_to_gguf.sh --bench-tokenizer $(dir $(<))
 
-models/%.gguf: $$(wildcard models/%.st/*.json) $$(wildcard models/%.st/*.safetensors) $$(wildcard models/%.st/*.jinja) $$(wildcard models/%.st/*.py)
-	./tools/hf_to_gguf.sh $(dir $(<)) --outtype f16 --outfile $(@)
+# Decoder F16 GGUF. For multimodal models (config.json has vision_config or
+# audio_config), --bench-convert also produces an mmproj-<name>.gguf sidecar
+# alongside the decoder, or prints a prominent warning if the converter's
+# --mmproj support doesn't cover the architecture. The sidecar is not listed
+# in Make's dependency graph by design — it's a side-effect of producing the
+# decoder GGUF, regenerated whenever the decoder is.
+models/%-f16.gguf: $$(wildcard models/%.st/*.json) $$(wildcard models/%.st/*.safetensors) $$(wildcard models/%.st/*.jinja) $$(wildcard models/%.st/*.py)
+	OUT_TYPE=f16 ./tools/hf_to_gguf.sh --bench-convert $(dir $(<))

@@ -148,6 +148,11 @@ func tensorMatchesAnyTransform(transforms []TransformSpec, ggufName string) bool
 	return false
 }
 
+// visionTensorPrefix is the GGUF namespace reserved for vision-tower tensors
+// (per-layer "v.blk.N." and globals like "v.patch_embd"). Decoder-parity
+// [[transforms]] never apply to it — see tensorMatchesApply.
+const visionTensorPrefix = "v."
+
 // tensorMatchesApply matches a full GGUF tensor name against an apply list of
 // short tensor names. A tensor matches iff either:
 //   - the full name equals the apply entry (global tensors like "output_norm.weight"), or
@@ -155,7 +160,17 @@ func tensorMatchesAnyTransform(transforms []TransformSpec, ggufName string) bool
 //
 // The "." separator prevents false-positive partial suffix matches (e.g.
 // "attn_norm.weight" does not match "post_attention_norm.weight").
+//
+// Vision-tower tensors (the "v." GGUF namespace) are never matched: the
+// declared transforms encode the *decoder* converter's numeric ops
+// (Qwen3NextModel.modify_tensors, etc.), which do not touch the vision tower.
+// Without this guard a short suffix like "attn_qkv.weight" would collide across
+// towers — the decoder's fused SSM QKV and the vision encoder's fused attention
+// QKV share the suffix but require entirely different (or no) transforms.
 func tensorMatchesApply(ggufName string, apply []string) bool {
+	if strings.HasPrefix(ggufName, visionTensorPrefix) {
+		return false
+	}
 	for _, a := range apply {
 		if ggufName == a {
 			return true

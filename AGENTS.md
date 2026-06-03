@@ -23,12 +23,15 @@ Known working models (links in README.md):
 - Llama-3.2-3B-Instruct-f16.gguf, llama-3.2-3b-instruct-q4_k_m.gguf (`llama` arch)
 - qwen35-9b-opus46-mix-i1-Q4_K_M.gguf (`qwen35` arch)
 - DeepSeek-V2-Lite-Chat.Q4_K_M.gguf (`deepseek2` arch)
-- gemma-4-E4B-it-Q4_K_M.gguf (dense, `gemma4` arch)
+- gemma-4-E4B-it.gguf (F16, dense, `gemma4` arch — from canonical Google safetensors via `tools/hf_to_gguf.sh --bench-convert`)
 - Gemma 4 MoE (`gemma4` arch, auto-detected via `[ffn_alt]` GGUF weights)
 - LLaDA-MoE-7B-A1B-Instruct gguf (`llada-moe` arch) — MoE diffusion model
 - LLaDA-8B-Instruct gguf (`llada` arch) — dense diffusion model
-- Qwen3.5-9B.st/ (`qwen3.5` arch)
+- Qwen3.5-9B.st/ (`qwen35` arch)
 - LLaDA-8B-Instruct.st/ (`llada` arch)
+- gemma-4-E4B-it.st/ (`gemma4` arch, dense) — verified bit-identical to the F16 GGUF path via `make equiv-test` (`gguf-st` mode)
+
+**Multimodal models**: Gemma 4 dense variants are released as text+image+audio multimodal models. `tools/hf_to_gguf.sh --bench-convert` automatically produces a paired `mmproj-<name>.gguf` sidecar alongside the decoder GGUF when `config.json` declares a vision/audio/video config. **Image input is implemented and passing equivalence** (`test_vision_equiv.sh`): the ViT encoder + projector run from the mmproj sidecar and splice into the decoder token stream (see `BuildVisionGraph` in `arch/vision.go`, `vision_splice.go`, and ARCHITECTURE.md "Vision / Multimodal Subsystem"). Audio input is not yet wired (the audio tower ships in the mmproj but has no input path). `mmproj-*.gguf` files are filtered from the standalone model list — they're consumed paired with the decoder, not loaded directly.
 
 - **Two model formats**: GGUF (`*.gguf`) and safetensors (`*.st/` directories). Format is auto-detected at load time; inference code is identical above the `ModelReader` abstraction layer.
 - KV-cached and stateless inference; TOML DSL drives loading, graph construction, and cache allocation regardless of source format. Only C code is a thin model-agnostic ggml op wrapper. Zero C++.
@@ -50,13 +53,21 @@ Known working models (links in README.md):
 - **Config**: `config/api_config.toml` — `[server]` (host, port, auth_token), `[models]` (directory, default), `[inference]` (max_seq_len, enable_thinking_default, elide_thinking_default, log_thinking, single_resident_model, max_request_seq_len, strict_mode)
 - **Default listen**: `0.0.0.0:11116`
 
+### ggml wrappers
+- `GGMLType` is its own type — not `int`. ne dims: `int64`; mode flags: `int`; element types: `GGMLType`.
+- Nullable tensor params use `opt` prefix (`optMask`, `optFreqFactors`); required params have no prefix.
+- `NewGraphContext` is non-variadic: declare `AllocPermDisallow` (build) or `AllocPermAllow` (scratch). No default.
+- Single source of truth for cgraph node budget: `arch.maxGraphNodes` / `arch.graphCtxSize()`. Don't hardcode 16384.
+- `ggmlGoLogCallback` has `//export` — never forward-declare it in `ggml_ops.h` (CGo auto-decl will collide).
+- CGo stays in `ggml/`. No other package imports `"C"`.
+- `NilTensor` = optional weight absent. Every builder checks `IsNil()` before applying an op.
+
 ## Source Layout
 
 ```
 Makefile                        Top-level: test, integration-test, equiv-test, symlinks bin/ delegates the rest to src/
 config/
   api_config.toml               API server config (models.default, auth, listen, max_seq_len)
-  chat_config.toml              Chat client config (base_url=auto, model, system_prompt)
 models/
   *.gguf                        Model files (not committed)
   *.st/                         Safetensors directories (not committed)
@@ -67,22 +78,21 @@ models/
 src/
   Makefile                      Go build, ggml build, test
   go.mod / go.sum               Module: inference-lab-bench
-  bench/                        CLI entry point (cobra subcommands — thin wrappers)
+  cmd/                          CLI entry point (cobra subcommands — thin wrappers)
     main.go                     Root command
     serve_api.go                serve-api
-    chat.go                     chat
     gen_arch_diagram.go         gen-arch-diagram: SVG from TOML
   internal/
     log/                        Structured leveled logger (Debug/Info/Warn/Error/Fatal); see ### Internal Logging
     util/                       Project-wide utilities (LoadTOML, WriteJSON, BenchPaths, ResolvePaths, extension constants)
     apiserver/                  HTTP handlers (OpenAI-compatible: /api/v1/*), /ctl endpoint
-    chatclient/                 Interactive chat client
     model/                      GGUF scanning + safetensors directory discovery
     inference/
       engine.go                 Engine, GenerateParams, DiffusionParams, IsDiffusion(), Generate() dispatch
       generate_cached.go        generateCached — KV/SSM-cached autoregressive loop
       generate_stateless.go     generateStateless — full-sequence recompute autoregressive loop
       generate_diffusion.go     generateDiffusion — block-based iterative masked denoising
+      vision_prefill.go         Image-placeholder expansion + vision prefill prep
       metrics.go                InferenceMetrics (timing, throughput, FinishReason)
       sampler.go                Greedy and top-p sampling, ComputeTopLogProbs (stable log-softmax)
       tokenizer.go              BPE tokenizer (GPT-2 byte-level + SentencePiece dual mode); chat template from GGUF via gonja; readGGUFTokensRaw direct GGUF binary reader
@@ -90,8 +100,9 @@ src/
         arch.go                 ArchDef, TOML parser, Validate() with builder contracts
         arch_util.go            Shared tensor-op helpers, cache key constants, configIntOr/configFloatOr/configStr, attentionScale
         model_reader.go         ModelReader interface (metadata + tensor loading)
+        model_reader_gguf.go    GGUF ModelReader implementation (pure-Go gguf-parser-go; mmproj sidecar merge)
+        model_reader_safetensors.go  Safetensors ModelReader implementation; BF16→F16 conversion
         safetensors_index.go    LoadSafetensorsIndex() — JSON index parser + shard header reader
-        safetensors_reader.go   Safetensors ModelReader implementation; BF16→F32 conversion
         stmap.go                .arch.stmap.toml parser (LoadArchSTMap, FindSTMapByHFClass)
         block_attention_util.go Shared attention helpers (scaledDotProductAttention, RoPE, KV cache)
         params.go               Param resolver + routing expression eval
@@ -112,16 +123,28 @@ src/
         validate_lines.go       ResolveErrorLines (TOML key path → source line)
         keys.go                 Canonical string constants for map keys, module identifiers, config keys
         model_reader_safetensors_xform.go  Load-time safetensors tensor transform pipeline (reorder, permute)
+        model_reader_safetensors_derived.go  Derived metadata/tensor handler registries (string_array_eq, copy_param, config_key_present, rope_freqs_proportional)
+        vision.go               BuildVisionGraph: ViT encoder + projector forward pass (Gemma 4); vision weight/param resolution (VisionResolved/VisionTensors/VisionParams)
+        vision_preproc.go       Image preprocessing — smart-resize + channel-major patch packing → PreprocessedImage
+        vision_splice.go        Splice image embeddings into the decoder token stream (mask spans, token-ID rewrite)
+        vision_clamp.go         Gemma4ClippableLinear clamp-scalar loader (reader-backed; LinearClamp/VisionClamps)
+        block_ffn_mlp.go        mlp FFN builder — plain two-layer MLP with optional bias (Qwen3.5-VL projector)
+        decoder_positions.go    decoder position-buffer construction; IMROPE multi-modal position encoding
+        vision_rope.go          M-RoPE vision position-buffer construction for Qwen3-VL style towers
+        captures_dump.go        ForwardCaptures → on-disk float dumps + manifest (diagnostic)
       archdiagram/              SVG diagram renderers (separate package)
         arch_diagram.go         Architecture overview SVG renderer (RenderArchDiagram)
         layers_diagram.go       Layers Diagram SVG renderer (RenderLayersDiagram)
         palette.go              Shared diagram palette (Pal())
         weights.go              Weight resolution for diagrams (ResolveWeightsForDiagram)
-      ggml/                     Go wrappers for ggml ops (~43 functions)
+    ggml/                       Go wrappers for ggml ops (~90 functions); all CGo confined here
   ggml_lib/                     C op wrappers + ggml build
   third_party/ggml/             ggml git submodule
-test_inference.sh               Test harness (works with bench or llama-server via IS_LLAMA)
-test_equiv.sh                   Logprob equivalence test: bench vs llama-server, stateless vs non-stateless, flash vs standard
+tools/
+  test_inference.py             Test harness implementation (stdlib-only python; streams SSE; loop mode; all-models mode; invoked via test_inference.sh) - stateless prompt submission to allow for perfectly repeatable testing
+test_inference.sh               Thin launcher → tools/test_inference.py (preserves env-var/CLI contract; works with bench or llama-server via USE_LLAMA)
+test_chat_equiv.sh              Logprob equivalence test: bench vs llama-server, stateless vs non-stateless, flash vs standard
+test_vision_equiv.sh            Vision equivalence gate: bench vs llama-server (llama mode) or bench GGUF vs .st (gguf-st mode); semantic + logprob comparison
 ```
 
 All SVG renderers share a single palette from `archdiagram/palette.go:Pal()`. To change any color, update that map only.
@@ -133,21 +156,20 @@ All SVG renderers share a single palette from `archdiagram/palette.go:Pal()`. To
 ```bash
 make                    # build bench binary, symlink config+models into bin/
 make serve              # build + start API server (--log bin/bench.log --log-level INFO)
-make chat               # build + start interactive chat client
 make arch-diagrams      # rebuild SVG diagrams from models/arch/*.arch.toml
 make st-tok-ggufs       # (re)generate tokenizer.gguf sidecar in every models/*.st/ dir
 make test               # run go unit tests
 make integration-test   # test inference end to end for all models
+make equiv-test         # logprob equivalence vs llama-server + GGUF↔safetensors cross-check
 
 # CLI subcommands
 ./bin/bench serve-api
-./bin/bench chat
 ./bin/bench gen-arch-diagram [--layers] [--blocks] <input.toml> [output.svg]
 
 # Safetensors conversion tools
-tools/hf_to_gguf_setup.sh       One-time setup: Python venv + llama.cpp convert script
+tools/setup_venv.sh       One-time setup: Python venv + llama.cpp convert script
 tools/hf_to_gguf.sh             Tokenizer sidecar generation + full convert passthrough
-  tools/hf_to_gguf.sh --bench-tokenizer <model-name>  # generates tokenizer.gguf in .st/ dir
+tools/hf_to_gguf.sh --bench-tokenizer <model-name>  # generates tokenizer.gguf in .st/ dir
 
 # After adding a new models/<name>.st/ directory, build its tokenizer.gguf sidecar:
 make st-tok-ggufs               # builds the sidecar in every .st/ dir missing one
@@ -157,8 +179,8 @@ make st-tok-ggufs               # builds the sidecar in every .st/ dir missing o
 #     dropping a new .st/ directory into models/.
 
 # Test harness (assumes server running; FORCE_NEW_SERVER=true to kill+restart)
-bash test_inference.sh "What is 2+2?"
-bash test_inference.sh --loop
+./test_inference.sh "What is 2+2?"
+./test_inference.sh --loop
 FORCE_NEW_SERVER=true bash test_inference.sh "Hi"
 MODEL=Qwen3.5-4B_abliterated.Q4_K_M MAX_TOKENS=100 bash test_inference.sh "Hi"
 THINK=true ELIDE_THINK=false bash test_inference.sh "Hi"
@@ -177,6 +199,37 @@ curl -X POST localhost:11116/api/v1/chat/completions \
 * Only one instance of `make integration-test` or `make equiv-test` can run at a time — port and GPU resource contention prevent concurrent runs. All validation is strictly sequential.
 * `make equiv-test` compares top-1 logprobs against `llama-server` (Homebrew) and between the GGUF and safetensors loader paths to verify inference correctness within GPU floating-point variance. This is the authoritative correctness gate.
 * Run `ALL_MODELS=true bash test_inference.sh "..."` before declaring any inference change complete. Llama is easy mode — edge cases surface on Qwen3.5, Qwen3.5-MoE, DeepSeek2, and Gemma4.
+
+**test_vision_equiv.sh** — vision equivalence gate. Two modes:
+
+- `llama` (default) — cross-backend: bench (GGUF) vs llama-server (GGUF) on the same weights. `GGUF_ONLY=true` is set automatically because llama.cpp cannot load safetensors. CHECK = bench (system under test); REF = llama-server (authoritative reference).
+- `gguf-st` — cross-format, bench only: bench's safetensors vision path (CHECK) vs bench's GGUF vision path (REF) for the same logical model; llama is not involved. Enumerates only logical models with both a GGUF decoder and a complete `.st/` directory.
+
+Structure mirrors `test_chat_equiv.sh`: a per-mode trio of `setup_equiv_<name>` / `gather_check_<name>` / `gather_ref_<name>` functions plus shared `interstitial` and `finish`. CHECK is gathered first so a hard bench failure exits before the (slower) reference collection. Cross-function state is global by convention; per-function scratch is `local`.
+
+**Prompt requirements** — both requirements stem from the same root cause: the two backends must see identical token layouts for logprob comparison to be meaningful.
+
+1. **Image-first ordering**: the image marker must lead every prompt so the image is processed through the KV cache before any question text on BOTH engines. llama-mtmd always decodes the image ubatch first; an image spliced mid-sentence (e.g. `"Is @<img> a color…"`) gives bench a different image↔text causal layout than llama — that is a real, precision-invariant layout difference, not FP noise.
+2. **Format-unambiguous wording**: avoid phrasings that induce a near-tie between token formattings. E.g. `"Answer in one word: left or right"` pulls ~8% mass onto a capitalized `Right` competitor, amplifying the FP floor into a visible logprob delta (blue-tie was 0.0186 with the suffix, 0.0019 without). When the choice is inherent and can't be dropped (color/grayscale), pin the exact tokens: `"Describe the image colorspace. Answer in one word with exactly one of 'color' or 'grayscale'."` — this collapsed gemma-31B color from 0.20 → 0.00000. The effect scales with model depth: small models tolerate the ambiguity, deeper models amplify it hard. See `memory/gemma-vision-logprob-deltas-are-prompt-artifacts.md` for the full three-instance record and the "bench faithful throughout" conclusion.
+
+**`VISION_PASS_THRESH`** (default `0.0075`) — max `|check_lp - ref_lp|` answer-token logprob delta before a row's logprob column is FAIL. The residual after image-first + format-unambiguous prompting is the cross-backend F16 floor: the vision path is long and the mmproj is F16 on both sides, so identical ops accumulate sub-LSB differently — visible only on contested tail tokens. gemma-4 sits well under the floor (≤~0.003); **Qwen3.5 rides it at ~0.005–0.006** (subject/color), because its 27-layer encoder + decoder accumulates more F16 residual than gemma's shallower tower.
+
+Crucially, that floor is **sensitive to the reference binary's build**. The reference is whatever `llama-server` the user has installed (Homebrew here), which is **intentionally not pinned** — anyone running the gate uses their own llama.cpp, and forcing a pinned system package (or building llama.cpp C++ under `tools/`, which is reference-source-only and not part of the build) is not reasonable. A llama.cpp reference *rebuild* shifts tail-token logprobs ~0.001 even when no vision or Metal op changed. Measured concretely: across the brew `9410 → 9430` bump the Qwen `subject`/`color` rows moved from `<0.004` to `~0.0057 / ~0.0043` while **bench output was byte-identical** and the reference's Qwen vision-graph + Metal-kernel code was **unchanged** (the only vision commit in `b9410..b9430` was additive DeepSeekOCR2 support). So the shift is pure cross-build FP variance at the floor, not an algorithm change on either side.
+
+Because the reference is deliberately unpinned, the threshold **must absorb cross-build (and cross-machine) variance on the deepest model**: `0.004` sat *below* the Qwen floor and was not robustly reproducible across reference rebuilds; `0.0075` clears it with margin while still catching gross regressions (the 0.185 preproc-stretch class of bug). The vision logprob gate is consequently — and by design — **looser than text equiv** (which holds at 0.001): a deep F16 image path validated against an environment-variable reference cannot be held to the same tolerance, and that is not a bench defect. For diagnosing a *suspected* fidelity regression (vs. floor drift), use the per-element checkpoint-diff below, which is reference-build-robust. History: the gate was 0.02 → 0.0075 → 0.004 (prompt-framing artifacts removed in that progression) → 0.0075 (re-widened to the real reference-build-sensitive Qwen floor).
+
+**Per-element checkpoint-diff is the real encoder-fidelity tool** — `bin/vision_capture` vs `MTMD_DEBUG_GRAPH=1 llama-mtmd-cli` (brew llama.cpp). The logprob gate is robust to encoder error (an 18% embedding error moved logprobs <0.001) and mainly catches gross regressions and wrong answers. Use checkpoint-diff when diagnosing suspected encoder or preprocessing divergence.
+
+**Q4 note**: quantized rows legitimately exceed `VISION_PASS_THRESH` — quant activation noise amplifies the mmproj FP diff (vision-only; text Q4 is byte-identical). A Q4 failure is a quant-path concern, not an F16 fidelity regression.
+
+**`.st` and llama mode**: llama-server cannot load safetensors, so every `llama`-mode comparison (both `test_chat_equiv.sh` and `test_vision_equiv.sh`) sets `GGUF_ONLY=true` to drop `.st` models from enumeration — the cross-backend comparison only runs GGUF models both backends can load. `.st` models are exercised instead by the `gguf-st` mode (bench `.st` vs bench GGUF), which doesn't involve llama. (`GGUF_ONLY` is a `test_inference.py` knob: keep only model ids backed by a local `<id>.gguf`.)
+
+**Env knobs** (vision-equiv specific):
+- `MODEL` — restrict to one model (default: all mmproj-capable in llama mode; all GGUF+`.st` pairs in gguf-st mode)
+- `IMAGES` — comma/whitespace-separated image paths relative to project root (default: `test_data/vision_test.png`, which exercises the bilinear-resize path; `test_data/vision_test_960x624.png` is the no-resize variant for isolating resize bugs)
+- `SKIP_BENCH` / `SKIP_LLAMA` — skip the respective side (llama mode only)
+- `LOG_DIR` — log directory (default: `bin/test_vision_equiv_logs`)
+- `VISION_PASS_THRESH` — logprob threshold (default: `0.0075`; reference-build-sensitive Qwen F16 floor — see threshold rationale above)
 
 **Load-time defensive checks** — the loader runs three cheap sanity checks that turn silent numerical failures into loud load-time errors. Do not disable them without cause:
 * `arch.ResolveParams` validates every required param is present and typed correctly; the loader aborts before VRAM allocation if any required key is missing or has a zero/garbage value that would cause silent divergence downstream (e.g. `rms_eps=0`).
@@ -209,11 +262,8 @@ curl -X POST localhost:11116/api/v1/chat/completions \
 Optional GGUF params use `?` suffix (silently skipped if missing). Full spec: `models/arch/MODEL_ARCH_TOML_DSL_SPEC.md` — **read before writing or modifying any `.arch.toml`**.
 
 ### ggml Semantics (verified)
-- `ggml_permute(ctx, a, ax0..ax3)`: input dim i → output position ax_i. `ne[ax_i] = a->ne[i]`.
-- `ggml_mul_mat(A, B)`: contracts over `A->ne[0] == B->ne[0]`; result `[A->ne[1], B->ne[1], ...]`; GQA broadcasting when `B->ne[2] % A->ne[2] == 0`.
-- `ggml_rms_norm`: normalizes over `ne[0]` per slice.
-- `ggml_soft_max_ext(a, mask, scale, max_bias)`: `softmax(scale * a + mask)` over `ne[0]`.
-- Quantized matmul (Q4_K, Q6_K) dequantizes on the fly — verified correct via isolated test.
+
+See ARCHITECTURE.md §"Verified ggml semantics".
 
 ### Qwen3.5 Architecture
 - **Hybrid**: 32 layers — every 4th (3,7,11,...,31) is full softmax attention; rest are delta-net SSM
@@ -238,41 +288,18 @@ Optional GGUF params use `?` suffix (silently skipped if missing). Full spec: `m
 
 ### Internal Logging
 
-**Package**: `inference-lab-bench/internal/log` — replaces all prior `log.Printf` / `fmt.Fprintf(os.Stderr, ...)` usage.
+**Package**: `inference-lab-bench/internal/log`. Call-site API, output format, `Level` type, and initialization signatures are derivable from source. The non-obvious items are below.
 
-**Call-site API** (use these everywhere):
-```go
-log.Debug(format string, args ...any)
-log.Info(format string, args ...any)
-log.Warn(format string, args ...any)
-log.Error(format string, args ...any)
-log.Fatal(format string, args ...any)  // Error + os.Exit(1)
-```
-
-**Output format**: `<HH:MM:SS>[LEVEL] message` — compact, no key-value spam.
-
-**Level type**: `log.Level` (own type, not `slog`). Constants: `LevelDebug`, `LevelInfo`, `LevelWarn`, `LevelError`, `LevelNone`. `ValidLevelNames []string` is exported — CLI flag descriptions must reference it (DRY, not a hardcoded string).
-
-**Initialization** — call once per CLI entry point, before any goroutines start:
-```go
-level, ok := log.ParseLevel(flagValue)  // (log.Level, bool)
-log.InitLogger(logPath string, stderrLevel log.Level, logFileLine bool) error
-```
-On unrecognized input, `ParseLevel` returns `(LevelInfo, false)` — always check `ok`; ignoring it silently defaults to INFO.
-- `logPath` empty → stderr only at `stderrLevel`
-- `logPath` non-empty → stderr at `stderrLevel` + file at DEBUG (always full). File opens with a session boundary marker line.
-- Pre-init default: stderr at INFO, no panic.
-
-**CLI flags** (on `serve-api`, `chat`):
+**CLI flags** (on `serve-api`):
 - `--log <path>` — log file path
 - `--log-level <level>` — stderr level (`DEBUG|INFO|WARN|ERROR|NONE`), default `INFO`
 - --log-file-line — enables logging of source file names and line numbers 
 - `make serve` passes `--log bin/bench.log --log-level INFO`
 - Batch commands (`gen-arch-diagram`) do not expose these flags
 
-**ggml C library log routing** (`src/internal/inference/ggml/logging.go`):
+**ggml C library log routing** (`src/internal/ggml/logging.go`):
 
-`ggml.InitLogging()` registers a CGo callback via `ggml_log_set` that routes all ggml C library diagnostic output through the Go logger (DEBUG for most levels; WARN/ERROR for ggml levels 3/4). Call it once in `serve_api.go` and `chat.go` immediately after `log.InitLogger`. This eliminates all uncontrolled stderr output — `--log-level NONE` fully suppresses everything including ggml noise.
+`ggml.InitLogging()` registers a CGo callback via `ggml_log_set` that routes all ggml C library diagnostic output through the Go logger (DEBUG for most levels; WARN/ERROR for ggml levels 3/4). Call it once in `serve_api.go` immediately after `log.InitLogger`. This eliminates all uncontrolled stderr output — `--log-level NONE` fully suppresses everything including ggml noise.
 
 **CGo export constraint** — do not violate:
 
@@ -287,41 +314,17 @@ On unrecognized input, `ParseLevel` returns `(LevelInfo, false)` — always chec
 
 ### Path Resolution and Injection
 
-`util.BenchPaths` carries the standard directory layout (`ExeDir`, `ConfigDir`, `ModelsDir`, `ArchDir`, `DiagDir`) derived from the running executable's location. Two rules:
+The structural rule — `ResolvePaths` called once in `bench/`; `BenchPaths` injected downstream; library code never calls `ResolvePaths` — is covered by ARCHITECTURE.md Key Invariant #4 and CLAUDE.md §"Separation of concerns".
 
-- **Resolution happens once, in `bench/`**. `util.ResolvePaths() (BenchPaths, error)` is called from each cobra entry point (`serve_api.go`, `chat.go`, `gen_arch_diagram.go`). The result is cached for the process lifetime via `sync.Once`. On error, the cobra entry calls `log.Fatal` itself.
-- **Injection downstream**. Library code never calls `ResolvePaths`. `BenchPaths` is passed into `apiserver.NewServer(paths, cfg, manager)`, then forwarded to `inference.NewEngine(...)`. `Server` stores `paths util.BenchPaths` and reads `paths.DiagDir` / `paths.ArchDir` from it. This keeps utility and library packages free of `os.Exit` and the executable-path dance.
+Unique fact: `BENCH_EXE_DIR` env var is honored by `ResolvePaths` for debug/IDE configurations where source CWD and runtime CWD diverge.
 
-The `BENCH_EXE_DIR` env var is honored by `ResolvePaths` for debug/IDE configurations where source CWD and runtime CWD diverge.
+### Graph Context Sizing and ggml Wrapper Conventions
 
-### Graph Context Sizing (`arch` ↔ `ggml`)
-
-Two named pieces of state govern every ggml graph the arch package builds:
-
-- `arch.maxGraphNodes = 16384` — single source of truth for the per-pass cgraph node budget. Sized for the widest forward pass we build (stateless + cached, all architectures). Drives both context-arena sizing and `NewGraph` / `NewSched` allocations — all three must agree.
-- `arch.graphCtxSize() int` — returns `ggml.GraphContextSize(maxGraphNodes)`. The underlying `ggml.GraphContextSize(maxNodes)` is principled: `GraphOverheadCustom(maxNodes, false) + TensorOverhead*maxNodes + 64` alignment slop, computed from ggml's own accounting. No empirical multipliers, no magic numbers.
-
-`ggml.NewGraphContext(memSize int, allocPerm AllocPerm)` is non-variadic — every caller declares `AllocPermDisallow` (graph-build context, descriptors only — the normal case) or `AllocPermAllow` (data-arena scratch context, e.g. load-time type conversion). There is no default. The named `AllocPerm` type catches accidental swaps with `memSize`.
-
-Canonical logical weight names live in `arch_util.go`: `WeightAttnNorm`, `WeightFFNNorm`, and the `Cache*` keys. Never inline these literal strings in graph or module-map code.
-
-`ResolvedLayerWeights.Prefix` (set by `ResolveWeights` to the expanded per-layer prefix, e.g. `"blk.5."`, with trailing dot) is the canonical source for any per-layer prefix consumer — module map, tensor dims, diagram code. Never reconstruct `blk.<N>.` from `layer_idx` ad hoc.
-
-### ggml Wrapper Conventions
-
-- `ggml.GGMLType` is a named integer type for tensor element types (`TypeF32`, `TypeF16`, `TypeQ4_K`, etc.). Distinct from `int` — tensor type arguments cannot be silently swapped with unrelated ints (ne dimensions, mode flags, etc.).
-- Nullable tensor parameters in op wrappers use the `opt` prefix to flag that callers may pass `NilTensor()`: `SoftMaxExt(ctx, a, optMask, ...)`, `RopeExt(ctx, a, pos, optFreqFactors, ...)`, `FlashAttnExt(ctx, q, k, v, optMask, ...)`. Required tensor parameters have no prefix.
-- `Buffer.Clear(byte)` zeroes (or fills) an entire backend buffer in a single C call. `GenericCache.Clear()` uses this instead of per-tensor zero loops;
+See ARCHITECTURE.md §"CGo Layer" and Key Invariants #18–21. Also covered as drift-watch items in CLAUDE.md §"ggml wrappers".
 
 ### Model Loader Phase Structure (`arch/model.go`)
 
-`newGenericModelFromReader` builds a `genericModelBuilder` and calls `b.build()`. The builder carries partial state across phase methods (`checkMemory`, `resolveArch`, `initBackendsAndArena`, `uploadWeights`, `buildWeightStore`, `assignBuilders`, `createComputeResources`) and uses `WeightStore` as the ownership cut line:
-
-- Before `buildWeightStore`: the builder owns `gpu`, `cpu`, `weightCtx`, `weightBuf` individually — `cleanupOnError` frees them one by one.
-- After `buildWeightStore`: `store` owns all four — `cleanupOnError` calls `store.Close()` and returns.
-- After `createComputeResources`: the model owns `cachedCtx` / `cachedSched` — `cleanupOnError` frees them before closing the store.
-
-This avoids the double-free hazard of the previous open-coded loader. When adding new phases, place them in the sequence and update the cleanup logic; do not pass loose state by parameter.
+See ARCHITECTURE.md §"Model Loading" for the full phase sequence and `WeightStore` ownership cut line. Invariant: when adding new phases, place them in the sequence and update `cleanupOnError`; do not pass loose state by parameter.
 
 ### Shell Scripting Style
 - Shebang: `#!/usr/bin/env bash`
@@ -345,6 +348,7 @@ Before writing any code, build a complete picture of the model.
    - `tools/llama.cpp/src/llama-hparams.h` — parameter names, defaults, helper functions (e.g., `is_swa()`, `has_kv()`)
    - `tools/llama.cpp/src/llama-model.cpp` — model init (look for arch-specific overrides like `f_attention_scale`, `rope_type`, `layer_reuse_cb`)
    - `tools/llama.cpp/src/llama-graph.cpp` — shared graph construction (attention, KV cache writes, mask construction)
+   - `tools/llama.cpp/conversion/<arch>.py` — the authoritative **HF→GGUF tensor/param mapping** for this architecture (its `modify_tensors` / `set_gguf_parameters`). Requires `make llama-cpp` (lives inside the gitignored `tools/llama.cpp/` clone). Best reference when writing the `.arch.stmap.toml` for a safetensors port — one file for "how weights map," paired with `src/models/<arch>.cpp` for "how they're used."
 
 2. **Scan the model file or directory** — verify actual metadata keys and tensor names:
 
@@ -384,7 +388,7 @@ Before writing any code, build a complete picture of the model.
 If the architecture needs ggml ops not yet exposed:
 1. `src/ggml_lib/src/ggml_ops.h` — add function declaration
 2. `src/ggml_lib/src/ggml_ops.c` — add implementation (typically a one-line cast+forward to the underlying ggml function)
-3. `src/internal/inference/ggml/ops_graph.go` — add Go wrapper function
+3. `src/internal/ggml/ops.go` — add Go wrapper function
 
 Pattern: each op is 1 line .h + 1 line .c + 1 function in Go. Keep it mechanical.
 
@@ -439,11 +443,24 @@ The layer loop ordering in `runLayers` is: `attn_norm → attention block → po
 6. Update `[blocks.*]` — per-block-type weights, config overrides, cache specs
 7. Update `[ffn]` — FFN builder and weights
 
-**If using safetensors**, also write `models/arch/<arch-name>.arch.stmap.toml` mapping HF names → GGUF-equivalent names (see `models/arch/MODEL_ARCH_STMAP_TOML_DSL_SPEC.md`). The stmap covers:
-- `[params]` — HF `config.json` keys → GGUF metadata keys
+**If using safetensors**, also write `models/arch/<arch-name>.arch.stmap.toml` mapping HF names → GGUF-equivalent names (see `models/arch/MODEL_ARCH_STMAP_TOML_DSL_SPEC.md` for the full contract). The stmap covers:
+- `[params]` — HF `config.json` keys → GGUF metadata keys (1:1 scalar mapping)
 - `[layer_prefix].hf` — HF per-layer prefix with `{N}` substitution
 - `[tensors]` — our short tensor names → HF short tensor names
 - `[tensors.global]` — our short global names → HF full tensor names
+- `[gguf_metadata]` — literal GGUF metadata values for arch-level constants the converter writes as fixed values (e.g. `qwen35.ssm.inner_size = 4096`)
+- `[[transforms]]` — per-tensor F32 transforms (norm-shift, V-head reorder, etc.) when the converter applies non-trivial tensor data manipulation
+- `[[derived_metadata]]` — GGUF metadata computed at load time from `config.json` keys (e.g. Gemma 4's `string_array_eq` for `layer_types` → `sliding_window_pattern`, `copy_param` when one source value populates multiple GGUF keys)
+- `[[derived_tensors]]` — GGUF tensors synthesized at load time with no safetensors source (e.g. Gemma 4's `rope_freqs_proportional` for partial-rotary RoPE on top of full-rotary primitive)
+
+**When to use which:**
+- 1:1 scalar mapping → `[params]`
+- Fixed value (same across all instances of this arch) → `[gguf_metadata]`
+- Computed from `config.json` → `[[derived_metadata]]` (use existing op or add a new one to `derivedMetadataOps` in `model_reader_safetensors_derived.go`)
+- Synthesized tensor (converter's `generate_extra_tensors` analogue) → `[[derived_tensors]]` (same pattern, `derivedTensorOps`)
+- Per-tensor numeric transform (read source, compute, store) → `[[transforms]]`
+
+If the converter has procedural metadata/tensor computation, declare it in the stmap rather than fork the safetensors reader. New op handlers register in Go-side maps the same way block builders do; the TOML side stays declarative.
 
 **Common pitfalls:**
 - GGUF tensor names: check for `.weight` suffix presence/absence. Our loader tries both.
@@ -474,12 +491,6 @@ This is typically the hardest phase. The model will load and run before the outp
 
 ### Verification
 
-All must pass before the work is complete:
-```bash
-make test && make integration-test
-ALL_MODELS=true bash test_inference.sh "Hello"   # test against every loaded model
-make equiv-test                                  # logprob equivalence vs llama-server (Homebrew)
-make arch-diagrams                               # regenerate SVGs; confirm new arch renders correctly
-```
+Run the acceptance gate: `make test && make integration-test && make equiv-test && make arch-diagrams`. Confirm the new arch renders correctly in the generated SVGs.
 
-The equivalence test (`test_equiv.sh`) is the critical gate. It compares our forward pass logprobs against llama.cpp's output on the same prompt. Threshold is ~0.01 logprob diff. GPU floating-point variance accounts for small differences; anything larger indicates a computation bug.
+**Ensure Docs Stay Up To Date** - AGENTS.md, README.md, ARCHITECTURE.md, SPEC.md must be brought up to date when committing checkpoints.

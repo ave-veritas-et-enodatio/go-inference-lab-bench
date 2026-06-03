@@ -110,6 +110,127 @@ Example:
 "output.weight"      = "lm_head.weight"
 ```
 
+### `[gguf_metadata]`
+
+Literal GGUF metadata values injected at load time. Used for architecture-level
+constants that the converter writes into the GGUF as fixed values — they don't
+come from `config.json` and don't depend on the model instance.
+
+Format: `"gguf.metadata.key" = <literal>` (string, integer, float, or array literal)
+
+Example:
+```toml
+[gguf_metadata]
+"qwen35.ssm.inner_size"          = 4096
+"qwen35.attention.key_length"    = 256
+"qwen35.rope.dimension_sections" = [11, 11, 10, 0]
+```
+
+Use when a GGUF metadata key has the same value across every instance of an
+architecture (a fixed kernel dimension, an architecture-wide constant).
+Per-instance values that need to be computed at load time belong in
+`[[derived_metadata]]` instead.
+
+### `[[derived_metadata]]`
+
+GGUF metadata values *computed* at load time from one or more `config.json`
+fields, rather than being a direct 1:1 mapping or a literal. Used when the
+converter applies a non-trivial transformation from source config to GGUF
+metadata.
+
+Each entry registers an op handler (looked up in the `derivedMetadataOps`
+Go-side registry) and runs it once during the safetensors load. The handler
+reads from `config.json` and produces a value stored under `target` in the
+same param namespace that `[params]` and `[gguf_metadata]` populate. The
+loader's `[param]` debug dump shows derived entries alongside the rest, so
+visual GGUF-vs-safetensors diffing remains a single-flat-list operation.
+
+Format:
+```toml
+[[derived_metadata]]
+target = "gguf.metadata.key"       # required: the GGUF key to populate
+op     = "<op_name>"               # required: handler name from the registry
+# ... op-specific params (see "Registered ops" below)
+```
+
+#### Registered ops
+
+| `op` value | Purpose | Required op-params |
+|---|---|---|
+| `string_array_eq` | Translate a `config.json` string array into a `[]bool` by comparing each element to a constant. Used for `layer_types: ["sliding_attention", "full_attention", ...]` → `sliding_window_pattern: [true, false, ...]` patterns. | `source` (config.json dotted key path), `match` (the string compared element-wise) |
+| `copy_param` | Copy one `config.json` value verbatim under a different GGUF key. Used when a single source value populates multiple GGUF keys — the `[params]` map can only express a 1:1 HF-key→GGUF-key relationship, so the second target needs `copy_param`. | `source` (config.json dotted key path) |
+
+Adding a new op is a Go-side change: register a new handler in
+`src/internal/inference/arch/model_reader_safetensors_derived.go`'s
+`derivedMetadataOps` map, mirroring the block builder registry pattern. The
+TOML side stays declarative.
+
+Example (Gemma 4):
+```toml
+# text_config.layer_types is ["sliding_attention", "full_attention", ...].
+# Convert to a bool array used by [layers.routing].pattern in gemma4.arch.toml.
+[[derived_metadata]]
+target = "gemma4.attention.sliding_window_pattern"
+op     = "string_array_eq"
+source = "text_config.layer_types"
+match  = "sliding_attention"
+
+# global_head_dim is mapped to gemma4.attention.key_length in [params]. The
+# converter ALSO writes the same value to gemma4.rope.dimension_count — but
+# [params] can only assign one target per source, so the second target needs
+# copy_param.
+[[derived_metadata]]
+target = "gemma4.rope.dimension_count"
+op     = "copy_param"
+source = "text_config.global_head_dim"
+```
+
+### `[[derived_tensors]]`
+
+GGUF tensors *synthesized* at load time — no source tensor exists in the
+safetensors file. Used when the converter generates extra tensors procedurally
+(e.g., `convert_hf_to_gguf.py`'s `generate_extra_tensors` method), typically
+for compatibility shims between the source model's math and the inference
+engine's primitives.
+
+Each entry registers an op handler (looked up in the `derivedTensorOps`
+Go-side registry) that returns an F32 array and its shape. The synthesized
+tensor appears in the loader's tensor enumeration (`TensorCount`,
+`TensorNames`, `TensorSpec`, `ReadTensor`) alongside safetensors-sourced
+tensors — downstream code is format-agnostic and cannot tell the two apart.
+Synthesized tensors are stored as F32 little-endian bytes.
+
+Format:
+```toml
+[[derived_tensors]]
+target = "gguf.tensor.name"        # required: the GGUF tensor name (typically global)
+op     = "<op_name>"               # required: handler name from the registry
+# ... op-specific params (see "Registered ops" below)
+```
+
+#### Registered ops
+
+| `op` value | Purpose | Required op-params |
+|---|---|---|
+| `rope_freqs_proportional` | Synthesize the `rope_freqs.weight` tensor for models using "proportional" RoPE on top of ggml's full-rotary NeoX primitive. Produces an F32 array of length `head_dim / 2` with `1.0` repeated `n_rot` times followed by `1e30` repeated `n_unrot` times, where `n_rot = int(head_dim × partial_rotary_factor / 2)`. The `1e30` values divide the rotation frequency so dramatically that the corresponding pairs effectively don't rotate, implementing partial-rotary RoPE on top of a full-rotary primitive op. | `head_dim_source` (config.json dotted key for the full head dim), `partial_rotary_source` (config.json dotted key for the partial rotary factor) |
+
+Adding a new op is a Go-side change in the same file as `derivedMetadataOps`,
+under `derivedTensorOps`.
+
+Example (Gemma 4):
+```toml
+# Gemma 4 full-attention layers use proportional RoPE (only ~25% of each head's
+# dimensions are rotated). The reference converter computes a freq_factors
+# tensor that masks the unrotated pairs by setting their per-pair theta divider
+# to 1e30 (effective theta ≈ 0, no rotation). We reproduce that computation at
+# load time from the rope params in config.json.
+[[derived_tensors]]
+target                = "rope_freqs.weight"
+op                    = "rope_freqs_proportional"
+head_dim_source       = "text_config.global_head_dim"
+partial_rotary_source = "text_config.rope_parameters.full_attention.partial_rotary_factor"
+```
+
 ## Complete Example: Llama
 
 ```toml

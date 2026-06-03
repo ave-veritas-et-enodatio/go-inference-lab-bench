@@ -16,12 +16,15 @@ static_assert(GGML_GO_STATUS_SUCCESS == GGML_STATUS_SUCCESS, "GGML_GO_STATUS_SUC
 static_assert(GGML_GO_TYPE_F32 == GGML_TYPE_F32, "GGML_GO_TYPE_F32 must match GGML_TYPE_F32");
 static_assert(GGML_GO_TYPE_F16 == GGML_TYPE_F16, "GGML_GO_TYPE_F16 must match GGML_TYPE_F16");
 static_assert(GGML_GO_TYPE_I32 == GGML_TYPE_I32, "GGML_GO_TYPE_I32 must match GGML_TYPE_I32");
+static_assert(GGML_GO_TYPE_I64 == GGML_TYPE_I64, "GGML_GO_TYPE_I64 must match GGML_TYPE_I64");
 static_assert(GGML_GO_TYPE_BF16 == GGML_TYPE_BF16, "GGML_GO_TYPE_BF16 must match GGML_TYPE_BF16");
 static_assert(GGML_GO_TYPE_Q4_0 == GGML_TYPE_Q4_0, "GGML_GO_TYPEQ4_0 must match GGML_TYPEQ4_0");
 static_assert(GGML_GO_TYPE_Q4_K == GGML_TYPE_Q4_K, "GGML_GO_TYPEQ4_K must match GGML_TYPEQ4_K");
 static_assert(GGML_GO_TYPE_Q6_K == GGML_TYPE_Q6_K, "GGML_GO_TYPEQ6_K must match GGML_TYPEQ6_K");
 
 static_assert(GGML_GO_ROPE_TYPE_NEOX == GGML_ROPE_TYPE_NEOX, "GGML_GO_ROPE_TYPE_NEOX must match GGML_ROPE_TYPE_NEOX");
+static_assert(GGML_GO_ROPE_TYPE_VISION == GGML_ROPE_TYPE_VISION, "GGML_GO_ROPE_TYPE_VISION must match GGML_ROPE_TYPE_VISION");
+static_assert(GGML_GO_ROPE_TYPE_IMROPE == GGML_ROPE_TYPE_IMROPE, "GGML_GO_ROPE_TYPE_IMROPE must match GGML_ROPE_TYPE_IMROPE");
 
 static_assert(GGML_GO_BACKEND_DEVICE_TYPE_CPU == GGML_BACKEND_DEVICE_TYPE_CPU, "GGML_GO_BACKEND_DEVICE_TYPE_CPU must match GGML_BACKEND_DEVICE_TYPE_CPU");
 static_assert(GGML_GO_BACKEND_DEVICE_TYPE_GPU == GGML_BACKEND_DEVICE_TYPE_GPU, "GGML_GO_BACKEND_DEVICE_TYPE_GPU must match GGML_BACKEND_DEVICE_TYPE_GPU");
@@ -81,17 +84,45 @@ ggml_go_tensor ggml_go_mul_mat_id(ggml_go_context ctx, ggml_go_tensor as, ggml_g
 /* --- Normalization --- */
 ggml_go_tensor ggml_go_rms_norm(ggml_go_context ctx, ggml_go_tensor a, float eps) { return ggml_rms_norm(CTX(ctx), T(a), eps); }
 ggml_go_tensor ggml_go_l2_norm(ggml_go_context ctx, ggml_go_tensor a, float eps)  { return ggml_l2_norm(CTX(ctx), T(a), eps); }
+ggml_go_tensor ggml_go_norm(ggml_go_context ctx, ggml_go_tensor a, float eps)     { return ggml_norm(CTX(ctx), T(a), eps); }
 
 /* --- Activations --- */
 ggml_go_tensor ggml_go_silu(ggml_go_context ctx, ggml_go_tensor a)                                                         { return ggml_silu(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_sigmoid(ggml_go_context ctx, ggml_go_tensor a)                                                      { return ggml_sigmoid(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_softplus(ggml_go_context ctx, ggml_go_tensor a)                                                     { return ggml_softplus(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_gelu(ggml_go_context ctx, ggml_go_tensor a)                                                        { return ggml_gelu(CTX(ctx), T(a)); }
+ggml_go_tensor ggml_go_gelu_quick(ggml_go_context ctx, ggml_go_tensor a)                                                  { return ggml_gelu_quick(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_tanh(ggml_go_context ctx, ggml_go_tensor a)                                                        { return ggml_tanh(CTX(ctx), T(a)); }
 ggml_go_tensor ggml_go_soft_max_ext(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor mask, float scale, float max_bias) { return ggml_soft_max_ext(CTX(ctx), T(a), T(mask), scale, max_bias); }
 
 /* --- Embedding / indexing --- */
 ggml_go_tensor ggml_go_get_rows(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b) { return ggml_get_rows(CTX(ctx), T(a), T(b)); }
+ggml_go_tensor ggml_go_set_rows(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b, ggml_go_tensor c) { return ggml_set_rows(CTX(ctx), T(a), T(b), T(c)); }
+
+/* --- Convolution --- */
+ggml_go_tensor ggml_go_conv_2d(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b,
+    int s0, int s1, int p0, int p1, int d0, int d1) { return ggml_conv_2d(CTX(ctx), T(a), T(b), s0, s1, p0, p1, d0, d1); }
+
+/* --- Interpolation / resize --- */
+ggml_go_tensor ggml_go_interpolate(ggml_go_context ctx, ggml_go_tensor a,
+    int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3, uint32_t mode) {
+    return ggml_interpolate(CTX(ctx), T(a), ne0, ne1, ne2, ne3, mode);
+}
+
+/* --- Pooling --- */
+ggml_go_tensor ggml_go_pool_2d(ggml_go_context ctx, ggml_go_tensor a, int pool_op,
+    int k0, int k1, int s0, int s1, float p0, float p1) {
+    return ggml_pool_2d(CTX(ctx), T(a), (enum ggml_op_pool)pool_op, k0, k1, s0, s1, p0, p1);
+}
+
+/* --- Element-wise subtraction --- */
+ggml_go_tensor ggml_go_sub(ggml_go_context ctx, ggml_go_tensor a, ggml_go_tensor b) { return ggml_sub(CTX(ctx), T(a), T(b)); }
+
+/* --- Continuous reshapes --- */
+ggml_go_tensor ggml_go_cont_3d(ggml_go_context ctx, ggml_go_tensor a,
+    int64_t ne0, int64_t ne1, int64_t ne2) { return ggml_cont_3d(CTX(ctx), T(a), ne0, ne1, ne2); }
+ggml_go_tensor ggml_go_cont_4d(ggml_go_context ctx, ggml_go_tensor a,
+    int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3) { return ggml_cont_4d(CTX(ctx), T(a), ne0, ne1, ne2, ne3); }
 
 /* --- Sorting / selection --- */
 ggml_go_tensor ggml_go_argsort_top_k(ggml_go_context ctx, ggml_go_tensor a, int k) { return ggml_argsort_top_k(CTX(ctx), T(a), k); }

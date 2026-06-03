@@ -1,12 +1,12 @@
 GGML_LIB_DIR := ggml_lib
 BINDIR       := ../bin
 
-.PHONY: all ggml ggml_lib bench test clean update-dependencies update-ggml-dependency
+.PHONY: all ggml ggml_lib build test clean update-dependencies update-ggml-dependency
 
-all: bench
+all: build
 
 # DO NOT MANUALLY EDIT vvv - use make update-dependencies
-GGML_VERSION := v0.10.0
+GGML_VERSION := v0.13.1
 GGML_REPO := https://github.com/ggerganov/ggml.git
 
 GGML_DIR := third_party/ggml
@@ -22,9 +22,9 @@ ggml_lib: ggml
 	@echo "make -C $(GGML_LIB_DIR)"
 	@$(MAKE) -C $(GGML_LIB_DIR)
 
-bench: ggml_lib
+build: ggml_lib
 	@mkdir -p $(BINDIR)
-	go build -o $(BINDIR)/ ./bench
+	go build -o $(BINDIR)/bench ./cmd
 
 update-dependencies: update-ggml-dependency
 	go mod tidy
@@ -43,9 +43,15 @@ update-ggml-dependency:
 		echo "GGML_VERSION: $(GGML_VERSION) -> $$VTAG" \
 	)
 
-test: bench
+test: build
 	go vet ./...
 	go test ./... --count=1
+
+# Run a single test by regex: make test-run RUN=TestFoo [PKG=./internal/...] [VERBOSE=1]
+# Diagnostic helper — same build env as `test`, no vet, filtered run.
+PKG ?= ./...
+test-run: build
+	go test $(PKG) -run '$(RUN)' --count=1 $(if $(VERBOSE),-v,) -timeout 1800s
 
 clean:
 	@$(MAKE) -C $(GGML_LIB_DIR) clean

@@ -13,9 +13,9 @@ import (
 )
 
 // WriteJSON writes a JSON response with the appropriate Content-Type header.
-func WriteJSON(w http.ResponseWriter, v any) error {
+func WriteJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	return json.NewEncoder(w).Encode(v)
+	json.NewEncoder(w).Encode(v)
 }
 
 // LoadTOML reads a TOML file and decodes it into the provided value.

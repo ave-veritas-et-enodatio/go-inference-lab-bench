@@ -1,0 +1,258 @@
+# Gemma 4 stmap — maps HuggingFace tensor/param names to our logical names.
+# HF class: Gemma4ForConditionalGeneration
+# Arch name: gemma4
+#
+# Covers all Gemma 4 decoder variants: dense (E4B, 31B) and MoE (26B-A4B).
+# MoE-specific [params], [tensors], and norms are grouped under the "--- MoE
+# additions ---" header; they are silently skipped on dense models whose
+# config.json and safetensors index lack the corresponding entries. The MoE
+# path is auto-selected by layerHasAltFFN(): if any MoE-only weight
+# (ffn_gate_inp / ffn_gate_up_exps / ffn_down_exps) resolves for a layer,
+# def.FFNAlt is used in place of def.FFN for that layer.
+#
+# Notes:
+# - All params nested under `text_config.*` per Gemma 4 multimodal config.json
+#   layout; the safetensors loader's `resolveNested` handles dotted keys.
+# - Gemma 4 does NOT use the +1 norm convention that Gemma 2/3 used.
+#   Gemma4Model.norm_shift returns 0.0 in convert_hf_to_gguf.py — no [[transforms]]
+#   add_scalar entry needed.
+# - `layer_scalar` has no `.weight` suffix in safetensors. Gemma4Model.filter_tensors
+#   appends `.weight` during GGUF conversion; we just map directly here (the stmap
+#   accepts mismatched-suffix bench↔HF name pairs).
+# - `output.weight` is omitted because `tied_embeddings = true` in gemma4.arch.toml.
+# - `rope_freqs.weight` is synthesized via [[derived_tensors]] — it doesn't exist in
+#   safetensors. Gemma 4 uses ggml's NeoX full-rotary RoPE op with per-pair
+#   freq_factors set to 1e30 for unrotated dims, implementing "proportional" RoPE
+#   on top of a full-rotary primitive. See Gemma4Model.generate_extra_tensors in
+#   convert_hf_to_gguf.py.
+# - `sliding_window_pattern` is a bool array derived from text_config.layer_types
+#   string array. The arch's [layers.routing] reads it as the SWA pattern.
+# - For 26B-A4B, full-attention layers carry `num_global_key_value_heads = 2`
+#   while SWA layers carry `num_key_value_heads = 8`. The GGUF converter writes
+#   head_count_kv as a per-layer array; the bench's safetensors path stays
+#   scalar (= 8) and relies on the attention builder inferring the actual
+#   per-layer n_kv_heads from the K weight shape (block_attention.go ~L73-77).
+#   Cache is over-allocated by 4× on full-attn layers — wasteful but correct.
+
+[architecture]
+hf_class = "Gemma4ForConditionalGeneration"
+
+[params]
+"text_config.num_hidden_layers"          = "gemma4.block_count"
+"text_config.num_attention_heads"        = "gemma4.attention.head_count"
+"text_config.num_key_value_heads"        = "gemma4.attention.head_count_kv"
+"text_config.hidden_size"                = "gemma4.embedding_length"
+"text_config.intermediate_size"          = "gemma4.feed_forward_length"
+"text_config.rms_norm_eps"               = "gemma4.attention.layer_norm_rms_epsilon"
+"text_config.max_position_embeddings"    = "gemma4.context_length"
+"text_config.sliding_window"             = "gemma4.attention.sliding_window"
+"text_config.num_kv_shared_layers"       = "gemma4.attention.shared_kv_layers"
+"text_config.hidden_size_per_layer_input" = "gemma4.embedding_length_per_layer_input"
+"text_config.final_logit_softcapping"    = "gemma4.final_logit_softcapping"
+"text_config.global_head_dim"            = "gemma4.attention.key_length"
+"text_config.head_dim"                   = "gemma4.attention.key_length_swa"
+"text_config.rope_parameters.full_attention.rope_theta"    = "gemma4.rope.freq_base"
+"text_config.rope_parameters.sliding_attention.rope_theta" = "gemma4.rope.freq_base_swa"
+
+# --- MoE additions (26B-A4B) — silently skipped on dense variants ---
+# Scalar 1:1 HF→GGUF; absent text_config keys on dense models yield no entry.
+"text_config.num_experts"           = "gemma4.expert_count"
+"text_config.top_k_experts"         = "gemma4.expert_used_count"
+"text_config.moe_intermediate_size" = "gemma4.expert_feed_forward_length"
+
+[layer_prefix]
+hf = "model.language_model.layers.{N}."
+
+[tensors]
+# Per-layer norms (no +1 shift — see header note)
+"attn_norm.weight"           = "input_layernorm.weight"
+"ffn_norm.weight"            = "pre_feedforward_layernorm.weight"
+"post_attention_norm.weight" = "post_attention_layernorm.weight"
+"post_ffw_norm.weight"       = "post_feedforward_layernorm.weight"
+
+# Per-layer embedding stack (Gemma 4 per-layer-input feature)
+"inp_gate.weight"            = "per_layer_input_gate.weight"
+"proj.weight"                = "per_layer_projection.weight"
+"post_norm.weight"           = "post_per_layer_input_norm.weight"
+"layer_output_scale.weight"  = "layer_scalar"  # no .weight suffix in safetensors
+
+# Attention block (full and SWA share these tensor names — config differs per
+# block type in the arch TOML, but the HF tensor names are the same per layer)
+"attn_q.weight"              = "self_attn.q_proj.weight"
+"attn_k.weight"              = "self_attn.k_proj.weight"
+"attn_v.weight"              = "self_attn.v_proj.weight"
+"attn_output.weight"         = "self_attn.o_proj.weight"
+"attn_q_norm.weight"         = "self_attn.q_norm.weight"
+"attn_k_norm.weight"         = "self_attn.k_norm.weight"
+
+# Dense FFN (also the MoE shared-expert path; same HF names in either variant)
+"ffn_gate.weight"            = "mlp.gate_proj.weight"
+"ffn_up.weight"              = "mlp.up_proj.weight"
+"ffn_down.weight"            = "mlp.down_proj.weight"
+
+# --- MoE additions (26B-A4B) — absent on dense; skipped in ggufToHF build ---
+# Router: rms_norm(input)*learned_scale → matmul; matches `[ffn_alt.weights]` in gemma4.arch.toml.
+# Converter (Gemma4Model.modify_tensors) renames `router.scale` → `ffn_gate_inp.scale`
+# and `router.per_expert_scale` → `ffn_down_exps.scale`. The .scale / .weight
+# suffix mismatch between bench↔HF sides is intentional: HF strips the
+# `.weight` suffix on these tensors (and on the stacked-expert weights), the
+# converter's filter_tensors / modify_tensors re-adds them, and the stmap
+# encodes that asymmetry directly.
+"ffn_gate_inp.weight"        = "router.proj.weight"
+"ffn_gate_inp.scale"         = "router.scale"
+"ffn_gate_up_exps.weight"    = "experts.gate_up_proj"
+"ffn_down_exps.weight"       = "experts.down_proj"
+"ffn_down_exps.scale"        = "router.per_expert_scale"
+
+# Self-normed parallel-path norms (MoE has separate norms for shared-expert
+# and routed-expert paths; dense has only the shared pair already mapped above).
+"pre_ffw_norm_2.weight"      = "pre_feedforward_layernorm_2.weight"
+"post_ffw_norm_1.weight"     = "post_feedforward_layernorm_1.weight"
+"post_ffw_norm_2.weight"     = "post_feedforward_layernorm_2.weight"
+
+[tensors.global]
+"token_embd.weight"           = "model.language_model.embed_tokens.weight"
+"output_norm.weight"          = "model.language_model.norm.weight"
+"per_layer_token_embd.weight" = "model.language_model.embed_tokens_per_layer.weight"
+"per_layer_model_proj.weight" = "model.language_model.per_layer_model_projection.weight"
+"per_layer_proj_norm.weight"  = "model.language_model.per_layer_projection_norm.weight"
+
+# ---------------------------------------------------------------------------
+# Derived GGUF metadata — values the llama.cpp converter computes but that
+# have no direct 1:1 config.json mapping, or where one config.json source
+# value needs to populate multiple GGUF target keys.
+# ---------------------------------------------------------------------------
+
+# layer_types ([sliding_attention | full_attention, ...]) → bool pattern array.
+# Used by [layers.routing] in gemma4.arch.toml as the SWA pattern.
+[[derived_metadata]]
+target = "gemma4.attention.sliding_window_pattern"
+op     = "string_array_eq"
+source = "text_config.layer_types"
+match  = "sliding_attention"
+
+# gemma4.rope.dimension_count = global_head_dim (no partial factor here —
+# the "proportional" RoPE behavior is encoded in rope_freqs.weight below).
+# global_head_dim is already mapped to gemma4.attention.key_length; copy_param
+# is the way to map one HF source to a second GGUF target.
+[[derived_metadata]]
+target = "gemma4.rope.dimension_count"
+op     = "copy_param"
+source = "text_config.global_head_dim"
+
+# gemma4.rope.dimension_count_swa = head_dim_swa × partial_rotary_factor_swa.
+# Gemma 4 has no SWA partial_rotary_factor in text_config (the converter
+# defaults to 1.0), so this equals text_config.head_dim.
+[[derived_metadata]]
+target = "gemma4.rope.dimension_count_swa"
+op     = "copy_param"
+source = "text_config.head_dim"
+
+# Multimodality capability flag: 1 when config.json declares a
+# `vision_config` block (the upstream HF convention for "this model has
+# a vision tower"). Mirrors mmproj-GGUF's `clip.has_vision_encoder`
+# metadata key but lives under our own namespace. Consumed by the model
+# loader to gate vision-tower resolution; missing weights when this is
+# set are a load-time error, not silent skip.
+[[derived_metadata]]
+target = "vision.has_encoder"
+op     = "config_key_present"
+source = "vision_config"
+
+# ---------------------------------------------------------------------------
+# Derived tensors — synthesized at load time (no safetensors source).
+# ---------------------------------------------------------------------------
+
+# rope_freqs.weight (global): freq_factors that mask out the unrotated dims
+# of Gemma 4's "proportional" full-attention RoPE. See header note for the
+# math; reference impl is Gemma4Model.generate_extra_tensors in convert_hf_to_gguf.py.
+# For E4B: head_dim_full=512, partial=0.25 → length 256, [1.0]×64 + [1e30]×192.
+[[derived_tensors]]
+target = "rope_freqs.weight"
+op     = "rope_freqs_proportional"
+head_dim_source       = "text_config.global_head_dim"
+partial_rotary_source = "text_config.rope_parameters.full_attention.partial_rotary_factor"
+
+# ===========================================================================
+# Vision tower (multimodal models only) — see ARCHITECTURE.md
+# "Vision / Multimodal Subsystem → Construction Across Two Formats".
+#
+# The vision-tower tensors share the same shard files as the decoder. The
+# safetensors loader's two-pattern matching routes HF tensors under
+# `model.vision_tower.encoder.layers.<N>.` into the `v.blk.<N>.` GGUF
+# namespace, alongside the decoder's `blk.<N>.` namespace. Unmapped HF
+# tensors (QAT calibration scalars: *_max/*_min shape []) are silently
+# skipped. Unimodal Gemma 4 variants simply have no matching HF tensors
+# here, so the [vision] block has no effect on them.
+#
+# Tensor naming notes (from Gemma 4 HF source):
+#   - Linear weights wrap through a `.linear.` submodule (`q_proj.linear.weight`
+#     etc.), an artifact of the QAT bookkeeping wrapper. Per-tensor name
+#     mapping handles the suffix difference; nothing else changes.
+#   - Vision uses LayerNorm pre/post sandwich (not RMSNorm). The norm names
+#     follow llama.cpp's clip convention: `ln1` (pre-attention), `ln2`
+#     (pre-FFN), `attn_post_norm` (post-attention), `ffn_post_norm`
+#     (post-FFN). The actual norm op (LayerNorm vs RMSNorm) is the
+#     concern of the encoder forward graph (Phase 4); the stmap is naming-
+#     only here.
+#   - Vision attention has no Q/K/V/O biases — only `.weight` tensors.
+# ===========================================================================
+
+[vision]
+
+[vision.layer_prefix]
+hf   = "model.vision_tower.encoder.layers.{N}."
+gguf = "v.blk.@{layer_idx}."
+
+[vision.tensors]
+# Norms (LayerNorm pre/post sandwich; weights are the gain vectors)
+"ln1.weight"            = "input_layernorm.weight"
+"attn_post_norm.weight" = "post_attention_layernorm.weight"
+"ln2.weight"            = "pre_feedforward_layernorm.weight"
+"ffn_post_norm.weight"  = "post_feedforward_layernorm.weight"
+
+# Attention (no biases; .linear. wrapper between proj name and .weight)
+"attn_q.weight"      = "self_attn.q_proj.linear.weight"
+"attn_k.weight"      = "self_attn.k_proj.linear.weight"
+"attn_v.weight"      = "self_attn.v_proj.linear.weight"
+"attn_out.weight"    = "self_attn.o_proj.linear.weight"  # vision uses "attn_out" (matches upstream mmproj GGUF); decoder uses "attn_output"
+"attn_q_norm.weight" = "self_attn.q_norm.weight"
+"attn_k_norm.weight" = "self_attn.k_norm.weight"
+
+# GeGLU FFN (vision tower uses gated activation, same builder as decoder dense)
+"ffn_gate.weight" = "mlp.gate_proj.linear.weight"
+"ffn_up.weight"   = "mlp.up_proj.linear.weight"
+"ffn_down.weight" = "mlp.down_proj.linear.weight"
+
+[vision.tensors.global]
+# Patch embedder. In the multimodal safetensors the weight is stored as a
+# flat [768, 768] linear (PyTorch row-major) — i.e. patches flattened to
+# 16*16*3 = 768 input features, projected to 768 embedding dim. The mmproj-
+# GGUF path stores the same data as a [16, 16, 3, 768] Conv2D kernel; same
+# bytes, just a different declared shape. Phase 4 (encoder graph) decides
+# whether to use Im2Col+MulMat or reshape+Conv2D.
+"v.patch_embd.weight"    = "model.vision_tower.patch_embedder.input_proj.weight"
+"v.position_embd.weight" = "model.vision_tower.patch_embedder.position_embedding_table"
+
+[vision.params]
+# Sourced from config.json.vision_config.*; written under the `vision.*`
+# GGUF-key namespace so the decoder's `gemma4.*` params and the vision
+# tower's params are unambiguous in the flat paramValues map.
+"vision_config.num_hidden_layers"   = "vision.block_count"
+"vision_config.hidden_size"         = "vision.embedding_length"
+"vision_config.num_attention_heads" = "vision.attention.head_count"
+"vision_config.intermediate_size"   = "vision.feed_forward_length"
+"vision_config.patch_size"          = "vision.patch_size"
+"vision_config.rms_norm_eps"        = "vision.attention.layer_norm_epsilon"
+"vision_config.head_dim"            = "vision.attention.key_length"
+
+# ===========================================================================
+# Projector — cross-tower bridge from vision-tower output (embd_dim=768)
+# to decoder input (embd_dim=2560 for E4B). For Gemma 4 this is a single
+# linear matmul (`mm.input_projection.weight`).
+# ===========================================================================
+
+[projector]
+
+[projector.tensors.global]
+"mm.input_projection.weight" = "model.embed_vision.embedding_projection.weight"

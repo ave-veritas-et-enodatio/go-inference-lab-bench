@@ -1,13 +1,14 @@
 .DS_Store
 build/
-models/
+*.gguf
+*.st/
+*.st
 bin/
 generated/
 DerivedData/
 .zed/
 xcuserdata/
 local.properties
-.gradle/
 .claude/settings.local.json
 *.a
 *.lib

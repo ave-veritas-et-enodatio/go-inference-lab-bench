@@ -2,6 +2,7 @@ package arch
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -105,6 +106,13 @@ type stModelReader struct {
 	ggufToHF    map[string]string     // GGUF tensor name → HF tensor name
 	archDef     *ArchDef
 
+	// derivedTensors holds load-time-synthesized tensors (no safetensors source).
+	// Keyed by GGUF tensor name. Populated from stmap [[derived_tensors]] entries
+	// at NewModelReaderSafetensors time. Each entry carries the tensor spec and
+	// pre-encoded F32 bytes ready to be copied by ReadTensor. See
+	// model_reader_safetensors_derived.go for the op handler registry.
+	derivedTensors map[string]*derivedTensorEntry
+
 	// scratchCtx is an AllocPermAllow ggml context used as a chunked working
 	// arena for the slow-path tensor conversion pipeline (cast + element-wise
 	// transforms). Tensors allocated here are backed by ggml-aligned arena
@@ -114,9 +122,39 @@ type stModelReader struct {
 	scratchCtx *ggml.GraphContext
 }
 
+// derivedTensorEntry is a synthesized tensor whose data is computed at load
+// time rather than read from safetensors. The spec uses ggml.TypeF32 — the
+// rank-1 weight convention in buildSTTensorSpecs already promotes 1D weights
+// to F32, and all current derived tensors are rank-1.
+type derivedTensorEntry struct {
+	spec TensorSpec
+	data []byte // F32 little-endian bytes ready for ReadTensor copy
+}
+
+// Named-constant aliases for the enableMmproj parameter on
+// NewModelReaderSafetensors / NewGenericModelFromSafetensors. Go has no
+// keyword args, so a bare `true`/`false` at the call site reads as a
+// magic value; these constants make the gate self-documenting. If a
+// second behavior knob ever joins this one, fold both into an options
+// struct rather than stacking positional bools.
+const (
+	MmprojEnabled  = true
+	MmprojDisabled = false
+)
+
 // NewModelReaderSafetensors creates a ModelReader for a safetensors directory.
 // archDir is the directory containing .arch.stmap.toml files.
-func NewModelReaderSafetensors(archDef *ArchDef, stDir string, archDir string) (ModelReader, error) {
+//
+// enableMmproj is the user-facing --auto-mmproj gate (use the
+// MmprojEnabled / MmprojDisabled constants at literal call sites).
+// When false, the reader suppresses the `vision.has_encoder` capability
+// flag after the stmap's derived_metadata pass, so the downstream
+// GenericModel never resolves vision-tower weights even though the
+// safetensors directory contains them and config.json declares
+// `vision_config`. This mirrors the GGUF path, where !enableMmproj
+// nulls out ModelInfo.MmprojPath at discovery time and the loader
+// simply never sees the sidecar.
+func NewModelReaderSafetensors(archDef *ArchDef, stDir string, archDir string, enableMmproj bool) (ModelReader, error) {
 	// 1. Parse the index
 	index, err := LoadSafetensorsIndex(stDir)
 	if err != nil {
@@ -164,6 +202,33 @@ func NewModelReaderSafetensors(archDef *ArchDef, stDir string, archDir string) (
 		paramValues[key] = val
 	}
 
+	// Apply derived_metadata handlers: compute GGUF metadata values from
+	// config.json fields that have no 1:1 mapping (e.g. Gemma 4's
+	// sliding_window_pattern bool array derived from text_config.layer_types
+	// string array). Runs before the param dump so derived values appear in
+	// the debug output alongside the 1:1 and literal entries.
+	for _, dspec := range stmap.DerivedMetadata {
+		handler, err := resolveDerivedMetadataOp(dspec.Op)
+		if err != nil {
+			return nil, fmt.Errorf("stmap derived_metadata target %q: %w", dspec.Target, err)
+		}
+		val, err := handler(dspec, configJSON)
+		if err != nil {
+			return nil, fmt.Errorf("stmap derived_metadata target %q: %w", dspec.Target, err)
+		}
+		paramValues[dspec.Target] = val
+	}
+
+	// Apply the --auto-mmproj gate: when disabled, suppress the
+	// `vision.has_encoder` flag so visionMetadataDeclared returns false
+	// and the model loads as text-only. Done after the derived_metadata
+	// pass (the flag may have been populated by config_key_present from
+	// `config.json.vision_config`); the suppression overrides whatever
+	// the stmap inferred from the model's own metadata.
+	if !enableMmproj {
+		delete(paramValues, KeyVisionHasEncoder)
+	}
+
 	// Dump all resolved params at debug level. Mirrored by an equivalent dump
 	// in NewModelReaderGGUF so that two model loads (same model, different
 	// formats) can be diff'd key-for-key to catch param-coercion regressions
@@ -182,7 +247,15 @@ func NewModelReaderSafetensors(archDef *ArchDef, stDir string, archDir string) (
 	// 7. Build tensor specs (precompute ggml type and size)
 	tensorSpecs := buildSTTensorSpecs(index)
 
-	// 8. Build GGUF → HF tensor name translation map
+	// 8. Apply derived_tensors handlers: synthesize tensors with no safetensors
+	// source (e.g. Gemma 4's rope_freqs.weight computed from rope params).
+	// Done before the GGUF→HF map build so log output orders sensibly.
+	derivedTensors, err := buildDerivedTensors(stmap, configJSON, index, stDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// 9. Build GGUF → HF tensor name translation map
 	ggufToHF, err := buildGGUFToHFMap(stmap, index)
 	if err != nil {
 		return nil, fmt.Errorf("building GGUF→HF name map: %w", err)
@@ -209,15 +282,69 @@ func NewModelReaderSafetensors(archDef *ArchDef, stDir string, archDir string) (
 	log.Info("ModelReader[safetensors] created for %s", filepath.Base(stDir))
 
 	return &stModelReader{
-		index:       index,
-		stmap:       stmap,
-		paramValues: paramValues,
-		tensorSpecs: tensorSpecs,
-		shardFiles:  shardFiles,
-		ggufToHF:    ggufToHF,
-		archDef:     archDef,
-		scratchCtx:  scratchCtx,
+		index:          index,
+		stmap:          stmap,
+		paramValues:    paramValues,
+		tensorSpecs:    tensorSpecs,
+		shardFiles:     shardFiles,
+		ggufToHF:       ggufToHF,
+		archDef:        archDef,
+		derivedTensors: derivedTensors,
+		scratchCtx:     scratchCtx,
 	}, nil
+}
+
+// buildDerivedTensors iterates the stmap's [[derived_tensors]] entries,
+// invokes the corresponding op handler for each, encodes the resulting
+// F32 data as little-endian bytes, and returns a map keyed by GGUF
+// tensor name. Returns an empty map if the stmap declares no derived
+// tensors. Errors carry the target name for diagnostic clarity.
+func buildDerivedTensors(stmap *ArchSTMap, configJSON map[string]any, index *SafetensorsIndex, stDir string) (map[string]*derivedTensorEntry, error) {
+	out := make(map[string]*derivedTensorEntry, len(stmap.DerivedTensors))
+	for _, dspec := range stmap.DerivedTensors {
+		// Source-reading ops need access to the safetensors index + shard
+		// directory (not just config.json) — they synthesize a tensor by
+		// slicing/transforming an on-disk HF tensor rather than from params.
+		// Dispatched separately from the config-only derivedTensorOps registry.
+		if dspec.Op == "conv3d_temporal_split" {
+			data, ne, err := handleConv3DTemporalSplit(dspec, index, stDir)
+			if err != nil {
+				return nil, fmt.Errorf("stmap derived_tensors target %q: %w", dspec.Target, err)
+			}
+			out[dspec.Target] = encodeDerivedF32(data, ne)
+			log.Debug("[derived_tensor] %s: op=%s len=%d ne=%v", dspec.Target, dspec.Op, len(data), ne)
+			continue
+		}
+
+		handler, err := resolveDerivedTensorOp(dspec.Op)
+		if err != nil {
+			return nil, fmt.Errorf("stmap derived_tensors target %q: %w", dspec.Target, err)
+		}
+		data, ne, err := handler(dspec, configJSON)
+		if err != nil {
+			return nil, fmt.Errorf("stmap derived_tensors target %q: %w", dspec.Target, err)
+		}
+		out[dspec.Target] = encodeDerivedF32(data, ne)
+		log.Debug("[derived_tensor] %s: op=%s len=%d ne=%v", dspec.Target, dspec.Op, len(data), ne)
+	}
+	return out, nil
+}
+
+// encodeDerivedF32 packs synthesized F32 data + shape into a derivedTensorEntry.
+// Explicit little-endian binary encoding (not unsafe slice aliasing) keeps the
+// result independent of the source []float32 lifetime and free of platform
+// endianness assumptions. Derived tensors are small, so the per-element loop
+// cost is irrelevant.
+func encodeDerivedF32(data []float32, ne [4]int64) *derivedTensorEntry {
+	nBytes := len(data) * 4
+	bytes := make([]byte, nBytes)
+	for i, v := range data {
+		binary.LittleEndian.PutUint32(bytes[i*4:], math.Float32bits(v))
+	}
+	return &derivedTensorEntry{
+		spec: TensorSpec{Type: ggml.TypeF32, Ne: ne, Size: nBytes},
+		data: bytes,
+	}
 }
 
 // loadConfigJSON reads and unmarshals a config.json file.
@@ -267,11 +394,26 @@ func extractHFClass(cfg map[string]any) (string, error) {
 //
 // Supports dotted key paths (e.g. "text_config.num_hidden_layers") for
 // models like Qwen3.5 that nest text model parameters under a sub-object.
+//
+// Vision and projector params from optional [vision.params] / [projector.params]
+// blocks are merged into the same flat namespace. Decoder param keys live
+// under `<arch>.*`; vision params live under `vision.*`; projector params
+// live under `mm.*` (or whatever the stmap targets). All three coexist in
+// one map and one debug dump, so visual diffing stays a single-list op.
 func buildParamValues(archDef *ArchDef, stmap *ArchSTMap, configJSON map[string]any) map[string]any {
 	result := make(map[string]any)
-	for hfParam, ggufKey := range stmap.Params {
-		if val, ok := resolveNested(configJSON, hfParam); ok {
-			result[ggufKey] = val
+	paramSets := []map[string]string{stmap.Params}
+	if stmap.Vision != nil {
+		paramSets = append(paramSets, stmap.Vision.Params)
+	}
+	if stmap.Projector != nil {
+		paramSets = append(paramSets, stmap.Projector.Params)
+	}
+	for _, params := range paramSets {
+		for hfParam, ggufKey := range params {
+			if val, ok := resolveNested(configJSON, hfParam); ok {
+				result[ggufKey] = val
+			}
 		}
 	}
 	result["general.architecture"] = archDef.Architecture.Name
@@ -338,13 +480,17 @@ func buildSTTensorSpecs(index *SafetensorsIndex) map[string]TensorSpec {
 			ne[i] = entry.Shape[rank-1-i]
 		}
 
-		// Safetensors tensors can have rank > 2 (e.g. conv1d as [8192, 1, 4]).
-		// GGML expects weight matrices to be 2D [ne0, ne1]. Fold trailing dims
-		// into ne1 — the raw data is identical (row-major), we just declare a
-		// different 2D view so ggml_is_matrix() passes.
-		for dim := 2; dim < 4; dim++ {
-			ne[1] *= ne[dim]
-			ne[dim] = 1
+		// Conv1d-style HF tensors are rank-3 with a unit middle dim
+		// (e.g. [out, 1, kernel] HF → ggml ne [kernel, 1, out]); ggml's
+		// matmul kernels require ggml_is_matrix(), so fold ne[2] into the
+		// unit ne[1] to expose a 2D view over the same row-major bytes.
+		// Genuine rank-3 tensors with no unit dims — notably MoE expert
+		// weight stacks [hidden, expert_dim, n_experts] — must keep their
+		// 3D shape; ggml_mul_mat_id consumes them as-is and folding here
+		// destroys the per-expert layout.
+		if rank == 3 && ne[1] == 1 && ne[2] > 1 {
+			ne[1] = ne[2]
+			ne[2] = 1
 		}
 
 		// Rank-1 weight tensors (norm weights, biases, scale vectors) are used as
@@ -382,46 +528,123 @@ func buildSTTensorSpecs(index *SafetensorsIndex) map[string]TensorSpec {
 // HF-format tensor names, using the stmap file and the safetensors index.
 //
 // Strategy:
-//  1. Global tensors: stmap.GlobalTensors maps our_short_name → hf_full_name
-//     and GGUF global names are just the short names.
-//  2. Per-layer tensors: iterate every HF tensor in the index, try to match
-//     it against the HF prefix pattern. When matched, construct the GGUF name
-//     by applying the same layer index to the GGUF prefix.
+//  1. Global tensors: stmap.GlobalTensors (decoder) + stmap.Projector.GlobalTensors
+//     (cross-tower bridge) map our_short_name → hf_full_name; GGUF global
+//     names are just the short names.
+//  2. Per-layer tensors: iterate every HF tensor in the index and try to
+//     match against each registered per-layer prefix pattern (decoder,
+//     vision). When a tensor matches one pattern, route through the
+//     corresponding short-name table and emit a GGUF name in the matching
+//     namespace ("blk." for decoder, "v.blk." for vision). The two
+//     namespaces are disjoint by construction (different prefixes); the
+//     flat ggufToHF map carries both without ambiguity.
+//  3. Unmapped HF tensors (e.g. QAT calibration scalars) are silently
+//     skipped — they aren't in any short-name table.
 func buildGGUFToHFMap(stmap *ArchSTMap, index *SafetensorsIndex) (map[string]string, error) {
 	ggufToHF := make(map[string]string)
 
-	// 1. Global tensors: our_short_name → hf_full_name (direct)
+	// 1a. Decoder globals.
 	for ourShort, hfFull := range stmap.GlobalTensors {
 		ggufToHF[ourShort] = hfFull
 	}
-
-	// 2. Build reverse lookup: HF_short_name → our_short_name for per-layer tensors.
-	hfShortToOur := make(map[string]string, len(stmap.Tensors))
-	for ourShort, hfShort := range stmap.Tensors {
-		hfShortToOur[hfShort] = ourShort
-	}
-
-	// 3. Split HF prefix on {N} into before/after parts.
-	//    e.g. "model.layers.{N}." → before="model.layers.", after="."
-	before, after, ok := strings.Cut(stmap.LayerPrefixHF, "{N}")
-	if !ok {
-		return nil, fmt.Errorf("HF layer prefix %q must contain {N} placeholder", stmap.LayerPrefixHF)
-	}
-
-	// 4. Match each HF tensor against the prefix pattern.
-	for hfName := range index.Tensors {
-		layerIdx, suffix, matched := matchHFName(hfName, before, after)
-		if !matched {
-			continue
+	// 1b. Projector globals (cross-tower bridge; e.g. mm.input_projection.weight).
+	if stmap.Projector != nil {
+		for ourShort, hfFull := range stmap.Projector.GlobalTensors {
+			ggufToHF[ourShort] = hfFull
 		}
-		ourShort, ok := hfShortToOur[suffix]
+	}
+	// 1c. Vision globals (patch embedder, position embedding, etc.).
+	if stmap.Vision != nil {
+		for ourShort, hfFull := range stmap.Vision.GlobalTensors {
+			ggufToHF[ourShort] = hfFull
+		}
+	}
+
+	// 2. Collect per-layer routing rules. Each rule pairs an HF prefix
+	// pattern with the corresponding short-name table and GGUF prefix.
+	type layerPattern struct {
+		hfPrefix    string            // pre-{N} part; e.g. "model.layers."
+		hfSuffix    string            // post-{N} part; e.g. "."
+		ggufPrefix  string            // template containing @{layer_idx}
+		shortToOur  map[string]string // hf_short_name → our_short_name
+	}
+	var patterns []layerPattern
+	addPattern := func(hfTemplate, ggufTemplate string, tensorMap map[string]string) error {
+		before, after, ok := strings.Cut(hfTemplate, "{N}")
 		if !ok {
-			// Tensor exists in HF but isn't mapped in the stmap — skip.
-			continue
+			return fmt.Errorf("HF layer prefix %q must contain {N} placeholder", hfTemplate)
 		}
-		// Construct GGUF name: replace @{layer_idx} in GGUF prefix, append our_short_name.
-		ggufName := strings.ReplaceAll(stmap.LayerPrefixGGUF, BuiltinLayerIdxRef, strconv.Itoa(layerIdx)) + ourShort
-		ggufToHF[ggufName] = hfName
+		rev := make(map[string]string, len(tensorMap))
+		for ourShort, hfShort := range tensorMap {
+			rev[hfShort] = ourShort
+		}
+		patterns = append(patterns, layerPattern{
+			hfPrefix: before, hfSuffix: after,
+			ggufPrefix: ggufTemplate,
+			shortToOur: rev,
+		})
+		return nil
+	}
+	if err := addPattern(stmap.LayerPrefixHF, stmap.LayerPrefixGGUF, stmap.Tensors); err != nil {
+		return nil, err
+	}
+	if stmap.Vision != nil && len(stmap.Vision.Tensors) > 0 {
+		if err := addPattern(stmap.Vision.LayerPrefixHF, stmap.Vision.LayerPrefixGGUF, stmap.Vision.Tensors); err != nil {
+			return nil, fmt.Errorf("vision: %w", err)
+		}
+	}
+
+	// 3. Match each HF tensor against every prefix pattern. First match
+	// wins; the patterns are constructed from disjoint HF namespaces
+	// (model.layers vs model.vision_tower.encoder.layers) so order is
+	// not load-bearing, but we still pick the first to keep behavior
+	// deterministic if a future stmap accidentally overlaps.
+	for hfName := range index.Tensors {
+		for _, p := range patterns {
+			layerIdx, suffix, matched := matchHFName(hfName, p.hfPrefix, p.hfSuffix)
+			if !matched {
+				continue
+			}
+			ourShort, ok := p.shortToOur[suffix]
+			if !ok {
+				// Falls through to next pattern (or unmapped).
+				continue
+			}
+			ggufName := strings.ReplaceAll(p.ggufPrefix, BuiltinLayerIdxRef, strconv.Itoa(layerIdx)) + ourShort
+			ggufToHF[ggufName] = hfName
+			break
+		}
+	}
+
+	// 4. Clamp-sibling discovery. Gemma 4's vision-tower linears are wrapped
+	// in Gemma4ClippableLinear, which stores four scalar bounds as tensors
+	// sibling to the weight (`<base>.input_min` etc.). These short names are
+	// not declared in any stmap table, so step 2 skips them. Register them
+	// here under canonical names derived from the already-mapped weight so the
+	// unified clamp loader finds them identically for GGUF and safetensors.
+	//
+	// Iterate a snapshot of the entries — we mutate ggufToHF inside the loop.
+	type weightPair struct{ gguf, hf string }
+	var weights []weightPair
+	for gguf, hf := range ggufToHF {
+		if strings.HasSuffix(gguf, ".weight") {
+			weights = append(weights, weightPair{gguf, hf})
+		}
+	}
+	clampSuffixes := []string{clampInputMinSuffix, clampInputMaxSuffix, clampOutputMinSuffix, clampOutputMaxSuffix}
+	for _, w := range weights {
+		ggufBase := strings.TrimSuffix(w.gguf, ".weight")
+		// hfBase mirrors deriveBase in vision_clamp.go: Gemma wraps linears as
+		// `...q_proj.linear.weight`, with the clamp sibling at `...q_proj.input_max`.
+		hfBase, ok := strings.CutSuffix(w.hf, ".linear.weight")
+		if !ok {
+			hfBase = strings.TrimSuffix(w.hf, ".weight")
+		}
+		for _, suf := range clampSuffixes {
+			if _, present := index.Tensors[hfBase+suf]; present {
+				ggufToHF[ggufBase+suf] = hfBase + suf
+			}
+		}
 	}
 
 	return ggufToHF, nil
@@ -505,6 +728,16 @@ func (r *stModelReader) GetArrBools(key string) ([]bool, bool) {
 }
 
 func (r *stModelReader) GetTensorDim(ggufName string, dim int) (int64, bool) {
+	if dim < 0 || dim >= 4 {
+		return 0, false
+	}
+	// Derived tensors first (no HF source, spec is precomputed).
+	if d, ok := r.derivedTensors[ggufName+".weight"]; ok {
+		return d.spec.Ne[dim], true
+	}
+	if d, ok := r.derivedTensors[ggufName]; ok {
+		return d.spec.Ne[dim], true
+	}
 	hfName, ok := r.ggufToHF[ggufName+".weight"]
 	if !ok {
 		hfName, ok = r.ggufToHF[ggufName]
@@ -516,9 +749,6 @@ func (r *stModelReader) GetTensorDim(ggufName string, dim int) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	if dim < 0 || dim >= 4 {
-		return 0, false
-	}
 	return spec.Ne[dim], true
 }
 
@@ -527,12 +757,15 @@ func (r *stModelReader) GetTensorDim(ggufName string, dim int) (int64, bool) {
 // ---------------------------------------------------------------------------
 
 func (r *stModelReader) TensorCount() int {
-	return len(r.ggufToHF)
+	return len(r.ggufToHF) + len(r.derivedTensors)
 }
 
 func (r *stModelReader) TensorNames() []string {
-	names := make([]string, 0, len(r.ggufToHF))
+	names := make([]string, 0, len(r.ggufToHF)+len(r.derivedTensors))
 	for n := range r.ggufToHF {
+		names = append(names, n)
+	}
+	for n := range r.derivedTensors {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -540,6 +773,9 @@ func (r *stModelReader) TensorNames() []string {
 }
 
 func (r *stModelReader) TensorSpec(ggufName string) (TensorSpec, bool) {
+	if d, ok := r.derivedTensors[ggufName]; ok {
+		return d.spec, true
+	}
 	hfName, ok := r.ggufToHF[ggufName]
 	if !ok {
 		return TensorSpec{}, false
@@ -553,6 +789,15 @@ func (r *stModelReader) TensorSpec(ggufName string) (TensorSpec, bool) {
 // ---------------------------------------------------------------------------
 
 func (r *stModelReader) ReadTensor(ggufName string, buf []byte) error {
+	// Derived tensors first: synthesized at load time, no shard I/O.
+	if d, ok := r.derivedTensors[ggufName]; ok {
+		if len(buf) < len(d.data) {
+			return fmt.Errorf("buffer too small for derived tensor %q: need %d, have %d", ggufName, len(d.data), len(buf))
+		}
+		copy(buf, d.data)
+		return nil
+	}
+
 	hfName, ok := r.ggufToHF[ggufName]
 	if !ok {
 		return fmt.Errorf("GGUF tensor name %q not mapped to HF (not in stmap or missing from index)", ggufName)
@@ -809,6 +1054,9 @@ func (r *stModelReader) MinMemoryRequired(maxSeqLen int) MemReq {
 	for _, spec := range r.tensorSpecs {
 		weightVRAM += uint64(spec.Size)
 	}
+	for _, d := range r.derivedTensors {
+		weightVRAM += uint64(d.spec.Size)
+	}
 
 	// --- Cache VRAM ---
 	cacheVRAM := r.estimateCacheVRAM(maxSeqLen)
@@ -1001,6 +1249,8 @@ func toUint32(val any) (uint32, bool) {
 			return 0, false
 		}
 		return uint32(v), true
+	case uint32:
+		return v, true
 	case int64:
 		if v < 0 || v > math.MaxUint32 {
 			return 0, false

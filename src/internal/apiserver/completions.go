@@ -3,6 +3,7 @@ package apiserver
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -76,8 +77,31 @@ func (f *thinkFilter) feed(token string) string {
 	return out.String()
 }
 
-func (f *thinkFilter) flush() string {
+// flush returns any buffered content at end of generation.
+//
+// unclosedIsContent controls the fail-safe for a think block that was opened
+// (or primed) but never closed before generation stopped:
+//   - true:  surface the buffered remainder as CONTENT — the model ended its
+//     turn without closing (out-of-norm), so emit the text rather than destroy
+//     it. This is the fix for models that answer with thinking enabled but emit
+//     no close tag.
+//   - false: treat the remainder as incomplete think content and discard it
+//     from output — e.g. the token budget was exhausted mid-think (length).
+func (f *thinkFilter) flush(unclosedIsContent bool) string {
 	if f.inThink {
+		if unclosedIsContent {
+			// Fail-safe: the block was opened/primed but never closed and
+			// generation stopped normally. While inThink, feed() routed the
+			// running text into f.think and held only the close-tag tail in
+			// f.buf — so the full unclosed remainder is f.think + f.buf.
+			// Surface all of it as content rather than destroy it, and reset
+			// f.think so it isn't double-counted as elided reasoning.
+			out := f.think.String() + f.buf
+			f.think.Reset()
+			f.buf = ""
+			f.inThink = false
+			return out
+		}
 		f.think.WriteString(f.buf) // incomplete think block — treat remainder as think content
 		f.buf = ""
 	}
@@ -111,14 +135,19 @@ func (f *thinkFilter) logThinking(model string) {
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string         `json:"role"`
+	Content messageContent `json:"content"`
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 type chatCompletionRequest struct {
 	Model              string             `json:"model"`
 	Messages           []chatMessage      `json:"messages"`
 	Stream             bool               `json:"stream"`
+	StreamOptions      *streamOptions     `json:"stream_options,omitempty"`       // OpenAI: stream_options.include_usage emits a final usage chunk before [DONE]
 	MaxTokens          int                `json:"max_tokens"`
 	Temperature        float64            `json:"temperature"`
 	TopP               float64            `json:"top_p"`
@@ -135,10 +164,10 @@ type diffusionRequestParams struct {
 }
 
 type benchCustomParams struct {
-	Stateless           *bool                   `json:"stateless,omitempty"`
-	FlashAttention      *bool                   `json:"flash_attention,omitempty"`
-	ElideThinking       *bool                   `json:"elide_thinking,omitempty"`
-	Diffusion           *diffusionRequestParams `json:"diffusion,omitempty"`
+	Stateless      *bool                   `json:"stateless,omitempty"`
+	FlashAttention *bool                   `json:"flash_attention,omitempty"`
+	ElideThinking  *bool                   `json:"elide_thinking,omitempty"`
+	Diffusion      *diffusionRequestParams `json:"diffusion,omitempty"`
 }
 
 // --- Non-streaming response types ---
@@ -193,9 +222,10 @@ type deltaContent struct {
 }
 
 type streamChoice struct {
-	Index        int          `json:"index"`
-	Delta        deltaContent `json:"delta"`
-	FinishReason *string      `json:"finish_reason"`
+	Index        int             `json:"index"`
+	Delta        deltaContent    `json:"delta"`
+	FinishReason *string         `json:"finish_reason"`
+	LogProbs     *choiceLogProbs `json:"logprobs,omitempty"` // populated only on the final chunk when logprobs was requested
 }
 
 type streamChunk struct {
@@ -204,6 +234,25 @@ type streamChunk struct {
 	Created int64          `json:"created"`
 	Model   string         `json:"model"`
 	Choices []streamChoice `json:"choices"`
+	Usage   *usage         `json:"usage,omitempty"` // populated only on the final chunk when stream_options.include_usage = true
+}
+
+// flattenImages collapses per-message decoded-image lists into a single
+// ordered slice matching the order the chat template emits image
+// placeholders: across messages by index (i ascending), and within each
+// message by the order extractImages produced (ascending PartIndex). That
+// ordering is the contract the vision splice in arch/graph.go relies on — the
+// Nth flattened image must line up with the Nth `<|image|>` placeholder the
+// template renders. total is the precomputed sum of inner lengths, used only
+// to size the result.
+func flattenImages(perMessage [][]decodedImage, total int) []inference.ChatImage {
+	flat := make([]inference.ChatImage, 0, total)
+	for _, imgs := range perMessage {
+		for _, di := range imgs {
+			flat = append(flat, inference.ChatImage{Image: di.Image})
+		}
+	}
+	return flat
 }
 
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -243,9 +292,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// and mirror the resolved value into params.ThinkingEnabled for the
 	// thinkFilter initial state and downstream generation logic.
 	kwargs := make(map[string]any, len(req.ChatTemplateKwargs)+1)
-	for k, v := range req.ChatTemplateKwargs {
-		kwargs[k] = v
-	}
+	maps.Copy(kwargs, req.ChatTemplateKwargs)
 	if raw, present := kwargs[inference.KwEnableThinking]; present {
 		b, ok := raw.(bool)
 		if !ok {
@@ -280,6 +327,45 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Thinking mode is controlled via the enable_thinking template variable
 	// passed to gonja in EncodeChat — no prompt injection needed.
 
+	// Phase 7 vision-plan: a request may carry typed multi-part content
+	// (text + image_url). Decode any attached images up-front so a bad
+	// payload returns 400 before any inference engine work begins, and
+	// collect them as a flat ordered list to thread through to the splice
+	// code. Per-message image lists below; the flat aggregate becomes
+	// params.Images in render order (apiserver order == template render
+	// order, since each multi-part message renders its parts in sequence).
+	// Per-request image cap. ImageCount is a cheap part-type tally (no decode),
+	// so summing it across all messages lets us reject an over-budget request
+	// before allocating a single pixel buffer. extractImages also bounds a
+	// single message, but the request-level total is the real contract — the
+	// per-message bound alone would let an N-message request smuggle in
+	// maxImagesPerRequest×N images.
+	var totalImageParts int
+	for _, m := range req.Messages {
+		if m.Content.IsMultiPart() {
+			totalImageParts += m.Content.ImageCount()
+		}
+	}
+	if totalImageParts > maxImagesPerRequest {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("too many images: %d (limit %d per request)", totalImageParts, maxImagesPerRequest))
+		return
+	}
+
+	perMessageImages := make([][]decodedImage, len(req.Messages))
+	var totalImages int
+	for i, m := range req.Messages {
+		if !m.Content.IsMultiPart() {
+			continue
+		}
+		imgs, err := m.Content.extractImages()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("messages[%d]: %s", i, err.Error()))
+			return
+		}
+		perMessageImages[i] = imgs
+		totalImages += len(imgs)
+	}
+
 	// Guardrails: enforce context length limits to prevent system overload
 	if s.cfg.Inference.MaxRequestSeqLen > 0 && req.MaxTokens > 0 {
 		// Estimate prompt token count via tokenizer.
@@ -288,7 +374,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		// contribute to the prompt that the model must process.
 		var promptChars int
 		for _, m := range req.Messages {
-			promptChars += len(m.Content) + 1 // +1 for newline separator
+			// Only text contributes to the char-based estimate. Image
+			// tokens (~260 each for Gemma 4) aren't counted — keeping the
+			// guardrail arch-agnostic. The engine fails loudly if total
+			// prefill exceeds max_seq_len, so this is a coarse pre-filter
+			// not a hard contract.
+			promptChars += len(m.Content.TextOnly) + 1 // +1 for newline separator
 		}
 
 		estimatedPromptTokens := max(promptChars/charsPerTokenEstimate, minPromptTokenEstimate)
@@ -309,7 +400,36 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	msgs := make([]inference.ChatMessage, len(req.Messages))
 	for i, m := range req.Messages {
-		msgs[i] = inference.ChatMessage{Role: m.Role, Content: m.Content}
+		if !m.Content.IsMultiPart() {
+			msgs[i] = inference.ChatMessage{Role: m.Role, Content: m.Content.TextOnly}
+			continue
+		}
+		// Multi-part: hand the chat template the structured parts list so
+		// it emits per-type output (text inline, model's image_token
+		// literal at image positions). image_url parts collapse to
+		// `{type: "image"}` — pixel data flows separately via
+		// params.Images.
+		parts := make([]inference.ChatContentPart, len(m.Content.Parts))
+		for j, p := range m.Content.Parts {
+			switch p.Type {
+			case "text":
+				parts[j] = inference.ChatContentPart{Type: "text", Text: p.Text}
+			case "image_url":
+				parts[j] = inference.ChatContentPart{Type: "image"}
+			default:
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("messages[%d].content[%d]: unsupported part type %q", i, j, p.Type))
+				return
+			}
+		}
+		msgs[i] = inference.ChatMessage{Role: m.Role, Parts: parts}
+	}
+
+	// Flatten the per-message image lists into a single ordered slice in
+	// template-render order (see flattenImages). This matches the order the
+	// chat template emits `<|image|>` placeholders, which is what the splice
+	// code in arch/graph.go consumes.
+	if totalImages > 0 {
+		params.Images = flattenImages(perMessageImages, totalImages)
 	}
 	// Thinking mode is controlled via the enable_thinking template variable
 	// passed to gonja in EncodeChat — no prompt injection needed.
@@ -360,7 +480,16 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if req.BenchCustom != nil && req.BenchCustom.ElideThinking != nil {
 		elide = *req.BenchCustom.ElideThinking
 	}
-	filter := &thinkFilter{open: eng.ThinkOpen(), close: eng.ThinkClose(), inThink: params.ThinkingEnabled}
+	// Seed inThink only when WE prime an open think block in THIS request's
+	// prompt — i.e. the template opens under thinking (WeOpenThinkBlock, computed
+	// at load) AND this request enabled thinking. Both are required: the Qwen3
+	// family is "always-thinking" and primes a *closed* <think></think> when
+	// thinking is disabled, so an enable_thinking=false request answers directly
+	// and must NOT be seeded. When we don't seed, the filter starts content-
+	// default and feed()'s open-tag detection enters think-mode where the model
+	// actually emits the open tag. Seeding from ThinkingEnabled alone destroyed
+	// answers from models that answer without emitting the close tag.
+	filter := &thinkFilter{open: eng.ThinkOpen(), close: eng.ThinkClose(), inThink: eng.WeOpenThinkBlock() && params.ThinkingEnabled}
 
 	if req.Stream {
 		// --- Streaming (SSE) ---
@@ -423,7 +552,66 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		stop := result.finishReason
-		sendChunk(deltaContent{}, &stop)
+
+		// Final finish-reason chunk. When logprobs was requested, attach the
+		// aggregated per-token logprobs at choices[0].logprobs — OpenAI places
+		// them at the choice level alongside delta. Bench delivers all of them
+		// on this terminal chunk rather than per-content-chunk; the engine
+		// callback signature does not currently expose per-token logprobs and
+		// the aggregated form is sufficient for downstream consumers.
+		var finalLogProbs *choiceLogProbs
+		if req.LogProbs && metrics != nil && len(metrics.TokenLogProbs) > 0 {
+			entries := make([]choiceLogProbEntry, len(metrics.TokenLogProbs))
+			for i, tlp := range metrics.TokenLogProbs {
+				entries[i] = choiceLogProbEntry{TopLogProbs: tlp.TopProbs}
+			}
+			finalLogProbs = &choiceLogProbs{Content: entries}
+		}
+		finishChunk := streamChunk{
+			ID:      chunkID,
+			Object:  "chat.completion.chunk",
+			Created: created,
+			Model:   req.Model,
+			Choices: []streamChoice{{Index: 0, Delta: deltaContent{}, FinishReason: &stop, LogProbs: finalLogProbs}},
+		}
+		if data, err := json.Marshal(finishChunk); err == nil {
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+
+		// OpenAI stream_options.include_usage: emit a final chunk with choices=[]
+		// and a populated usage object before [DONE]. Only sent when the client
+		// opts in, matching OpenAI's semantics.
+		if req.StreamOptions != nil && req.StreamOptions.IncludeUsage && metrics != nil {
+			u := usage{
+				PromptTokens:           metrics.PromptTokens,
+				CompletionTokens:       metrics.CompletionTokens,
+				ThinkingTokens:         filter.thinkTokens,
+				TotalTokens:            metrics.PromptTokens + metrics.CompletionTokens,
+				PromptTokensPerSec:     metrics.PrefillTokensPerSec(),
+				CompletionTokensPerSec: metrics.TokensPerSec(),
+				TotalTokensPerSec:      metrics.TotalTokensPerSec(),
+				PrefillSeconds:         metrics.PrefillDuration.Seconds(),
+				DecodeSeconds:          metrics.DecodeDuration.Seconds(),
+				TotalSeconds:           metrics.TotalDuration.Seconds(),
+			}
+			usageChunk := streamChunk{
+				ID:      chunkID,
+				Object:  "chat.completion.chunk",
+				Created: created,
+				Model:   req.Model,
+				Choices: []streamChoice{},
+				Usage:   &u,
+			}
+			data, _ := json.Marshal(usageChunk)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		if canFlush {
 			flusher.Flush()
@@ -565,17 +753,24 @@ func (s *Server) finalizeGeneration(a finalizeArgs) finalizeResult {
 			a.metrics.TokensPerSec())
 	}
 
+	// Compute finish_reason BEFORE flushing so the flush fail-safe can branch on
+	// it. `length` (max_tokens hit) = truncated mid-think → incomplete reasoning,
+	// elide. Otherwise (stop / error) = model ended its turn without closing →
+	// surface the unclosed remainder as content rather than destroy it.
+	reason := finishReason(a.metrics, a.genErr)
+	unclosedIsContent := reason != inference.FinishReasonLength
+
 	if a.streaming {
 		logMetrics()
 		if a.elide {
-			a.onFlush(a.filter.flush())
+			a.onFlush(a.filter.flush(unclosedIsContent))
 		}
 		if a.logThink {
 			a.filter.logThinking(a.model)
 		}
 	} else {
 		if a.elide {
-			a.onFlush(a.filter.flush())
+			a.onFlush(a.filter.flush(unclosedIsContent))
 			if a.logThink {
 				a.filter.logThinking(a.model)
 			}
@@ -583,7 +778,7 @@ func (s *Server) finalizeGeneration(a finalizeArgs) finalizeResult {
 		logMetrics()
 	}
 
-	return finalizeResult{finishReason: finishReason(a.metrics, a.genErr)}
+	return finalizeResult{finishReason: reason}
 }
 
 // finishReason maps generation outcome to an OpenAI-compatible finish_reason string.

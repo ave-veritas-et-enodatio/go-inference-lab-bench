@@ -82,6 +82,11 @@ hf = "model.language_model.layers.{N}."
 "qwen35.attention.value_length"  = 256
 "qwen35.rope.dimension_count"    = 64
 "qwen35.rope.dimension_sections" = [11, 11, 10, 0]
+# Qwen3-VL vision LayerNorm eps. config.json.vision_config omits it (PyTorch
+# nn.LayerNorm default 1e-5 is overridden in the Qwen3VL vision module to 1e-6);
+# the mmproj GGUF records clip.vision.attention.layer_norm_epsilon = 1e-6. The
+# decoder text path is unaffected (this key lives under the vision.* namespace).
+"vision.attention.layer_norm_epsilon" = 1e-6
 
 # ---------------------------------------------------------------------------
 # Tensor transforms — applied in declared order to the F32 working buffer
@@ -183,3 +188,123 @@ apply = ["ssm_out.weight"]
 [[transforms]]
 op = "neg_exp"
 apply = ["ssm_a"]
+
+# ===========================================================================
+# Vision tower (Qwen3.5-VL — PROJECTOR_TYPE_QWEN3VL / qwen3vl_merger).
+#
+# Maps the HF `model.visual.*` tensors to the canonical GGUF vision keys that
+# qwen35.arch.toml's [vision]/[projector] blocks consume (the same keys the
+# mmproj-Qwen3.5-9B GGUF carries). The vision tower shares the decoder's shard
+# files; the two-pattern matcher in buildGGUFToHFMap routes the per-layer
+# `model.visual.blocks.{N}.` HF names into the `v.blk.{N}.` GGUF namespace.
+#
+# Reference for the HF→GGUF naming + numeric transforms: llama.cpp
+# tools/llama.cpp/conversion/qwen3vl.py (Qwen3VLVisionModel.modify_tensors).
+#
+# Two non-rename complications, both handled below:
+#   1. Dual-conv patch embed. HF stores ONE Conv3d
+#      `patch_embed.proj.weight` [oc, ic, kt=2, kh, kw]; the bench's Qwen tower
+#      (vision.go::buildPatchEmbed) expects TWO summed Conv2D kernels
+#      `v.patch_embd.weight` + `v.patch_embd.weight.1`. The converter splits
+#      the temporal axis (kt): slice kt=0 → `.weight`, kt=1 → `.weight.1`
+#      (qwen3vl.py lines 128-136). This is a one-source→two-output slice with
+#      a rank reduction (5D→4D), which the in-place [[transforms]] mechanism
+#      cannot express; it is realized by the `conv3d_temporal_split`
+#      [[derived_tensors]] op (a flagged minimal Go op — see
+#      model_reader_safetensors_derived.go).
+#   2. merger.norm. HF `merger.norm.weight/bias` is the norm applied to the
+#      merged patch features before the 2-layer projector MLP. The converter
+#      writes it as V_POST_NORM = `v.post_ln.weight/bias` (qwen3vl.py lines
+#      121-122). bench's tower reads `v.post_ln` as the post-encoder norm
+#      (vision.go WeightVisionPostLN); same tensor, same position. Mapped 1:1
+#      below.
+# ===========================================================================
+
+[vision]
+
+[vision.layer_prefix]
+hf   = "model.visual.blocks.{N}."
+gguf = "v.blk.@{layer_idx}."
+
+[vision.tensors]
+# LayerNorm pre/post (carry a bias). norm1 → ln1 (pre-attn), norm2 → ln2 (pre-FFN).
+"ln1.weight" = "norm1.weight"
+"ln1.bias"   = "norm1.bias"
+"ln2.weight" = "norm2.weight"
+"ln2.bias"   = "norm2.bias"
+
+# Attention — fused QKV (split into q/k/v views in-graph), with biases.
+"attn_qkv.weight" = "attn.qkv.weight"
+"attn_qkv.bias"   = "attn.qkv.bias"
+"attn_out.weight" = "attn.proj.weight"
+"attn_out.bias"   = "attn.proj.bias"
+
+# FFN — plain 2-layer MLP (no gate), with biases.
+"ffn_up.weight"   = "mlp.linear_fc1.weight"
+"ffn_up.bias"     = "mlp.linear_fc1.bias"
+"ffn_down.weight" = "mlp.linear_fc2.weight"
+"ffn_down.bias"   = "mlp.linear_fc2.bias"
+
+[vision.tensors.global]
+# patch_embd.weight / .weight.1 are NOT mapped here — they are synthesized by
+# the conv3d_temporal_split derived-tensor op below (one HF Conv3d → two
+# Conv2D kernels). The bias is a straight rename.
+"v.patch_embd.bias"      = "model.visual.patch_embed.proj.bias"
+"v.position_embd.weight" = "model.visual.pos_embed.weight"   # learned 48x48 grid, bilinearly interpolated
+# merger.norm → post-encoder norm (complication 2 above).
+"v.post_ln.weight"       = "model.visual.merger.norm.weight"
+"v.post_ln.bias"         = "model.visual.merger.norm.bias"
+
+[vision.params]
+# Sourced from config.json.vision_config.*; written under the `vision.*`
+# GGUF-key namespace so decoder qwen35.* and vision.* coexist unambiguously.
+"vision_config.depth"             = "vision.block_count"
+"vision_config.hidden_size"       = "vision.embedding_length"
+"vision_config.num_heads"         = "vision.attention.head_count"
+"vision_config.intermediate_size" = "vision.feed_forward_length"
+"vision_config.patch_size"        = "vision.patch_size"
+# Note: vision LayerNorm eps is NOT in config.json.vision_config — it is
+# injected as a literal under [gguf_metadata] ("vision.attention.layer_norm_epsilon").
+
+# ===========================================================================
+# Projector — 2-layer MLP merger (mm.0 → GELU → mm.2). HF merger.linear_fc1 →
+# mm.0, linear_fc2 → mm.2 (qwen3vl.py lines 109-120). No norm here — the
+# merger norm is mapped to v.post_ln above (complication 2).
+# ===========================================================================
+
+[projector]
+
+[projector.tensors.global]
+"mm.0.weight" = "model.visual.merger.linear_fc1.weight"
+"mm.0.bias"   = "model.visual.merger.linear_fc1.bias"
+"mm.2.weight" = "model.visual.merger.linear_fc2.weight"
+"mm.2.bias"   = "model.visual.merger.linear_fc2.bias"
+
+# ---------------------------------------------------------------------------
+# Derived metadata + tensors for the vision tower.
+# ---------------------------------------------------------------------------
+
+# Multimodality capability flag (mirrors gemma4 stmap): 1 when config.json
+# declares `vision_config`. Gates vision-tower resolution in the loader.
+[[derived_metadata]]
+target = "vision.has_encoder"
+op     = "config_key_present"
+source = "vision_config"
+
+# Dual-conv patch embed (complication 1). Splits the single HF Conv3d
+# `patch_embed.proj.weight` [oc, ic, kt, kh, kw] along the temporal axis into
+# two Conv2D kernels with ggml ne = [kw, kh, ic, oc]:
+#   v.patch_embd.weight   = source[:, :, 0, :, :]
+#   v.patch_embd.weight.1 = source[:, :, 1, :, :]
+# Matches llama.cpp qwen3vl.py Qwen3VLVisionModel.modify_tensors (kt must be 2).
+[[derived_tensors]]
+target = "v.patch_embd.weight"
+op     = "conv3d_temporal_split"
+source = "model.visual.patch_embed.proj.weight"
+temporal_index = 0
+
+[[derived_tensors]]
+target = "v.patch_embd.weight.1"
+op     = "conv3d_temporal_split"
+source = "model.visual.patch_embed.proj.weight"
+temporal_index = 1

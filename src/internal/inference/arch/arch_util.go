@@ -40,13 +40,39 @@ func rmsNormApply(ctx *ggml.GraphContext, tensor, weight ggml.Tensor, eps float3
 	return normed
 }
 
+// layerNormApply applies LayerNorm (mean/var normalize over ne[0]) then the
+// affine *weight + bias. Mirrors rmsNormApply but for the LayerNorm norm type
+// used by the Qwen3-VL vision tower (LayerNorm-with-bias). If weight is nil the
+// plain normalized tensor is returned; if optBias is nil (!IsNil() is false)
+// the bias add is skipped — so a weight-only LayerNorm and an affine LayerNorm
+// share one code path. eps is inside the sqrt (matches ggml_norm / clip.cpp).
+func layerNormApply(ctx *ggml.GraphContext, x, weight, optBias ggml.Tensor, eps float32) ggml.Tensor {
+	normed := ggml.Norm(ctx, x, eps)
+	if !weight.IsNil() {
+		normed = ggml.Mul(ctx, normed, weight)
+	}
+	if !optBias.IsNil() {
+		normed = ggml.Add(ctx, normed, optBias)
+	}
+	return normed
+}
+
 // projectReshape3D projects input through weight and reshapes to 3D.
 // Returns NilTensor if weight is nil to prevent C-level segfaults.
 func projectReshape3D(ctx *ggml.GraphContext, weight, input ggml.Tensor, d0, d1, d2 int64) ggml.Tensor {
+	return projectReshape3DClamped(ctx, weight, input, d0, d1, d2, LinearClamp{})
+}
+
+// projectReshape3DClamped is projectReshape3D with an optional clamp applied
+// around the matmul (Gemma-vision clipped linears). An inactive clamp (the
+// decoder default, since GraphInputs.LinearClamps is nil there) makes
+// mulMatClamped fall through to a bare ggml.MulMat — byte-identical to
+// projectReshape3D's old body.
+func projectReshape3DClamped(ctx *ggml.GraphContext, weight, input ggml.Tensor, d0, d1, d2 int64, clamp LinearClamp) ggml.Tensor {
 	if weight.IsNil() {
 		return ggml.NilTensor()
 	}
-	return ggml.Reshape3D(ctx, ggml.MulMat(ctx, weight, input), d0, d1, d2)
+	return ggml.Reshape3D(ctx, mulMatClamped(ctx, weight, input, clamp), d0, d1, d2)
 }
 
 // attentionScale computes 1/sqrt(dim) for attention score scaling.

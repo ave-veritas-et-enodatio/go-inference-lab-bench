@@ -37,7 +37,8 @@ func TestLoadQwen35(t *testing.T) {
 
 	// Params — GGUF keys
 	wantParams := map[string]string{
-		ParamNLayers:          "qwen35.block_count",
+		"block_count":          "qwen35.block_count",
+		"nextn_predict_layers": "qwen35.nextn_predict_layers?",
 		ParamNHeads:           "qwen35.attention.head_count",
 		ParamNKVHeads:         "qwen35.attention.head_count_kv",
 		ParamNEmbd:            "qwen35.embedding_length",
@@ -69,6 +70,7 @@ func TestLoadQwen35(t *testing.T) {
 
 	// Derived params
 	wantDerived := map[string]string{
+		ParamNLayers:      "block_count - nextn_predict_layers",
 		ParamNVocab:       "token_embd.ne[1]",
 		ParamHeadVDim:     "ssm_d_inner / ssm_dt_rank",
 		ParamConvChannels: "ssm_d_inner + 2 * ssm_n_group * ssm_d_state",

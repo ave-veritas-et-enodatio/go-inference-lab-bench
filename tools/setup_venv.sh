@@ -11,6 +11,8 @@ PROJECT_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 
 VENV="${SCRIPT_DIR}/.venv"
 
+[[ "${1}" == "--clean" ]] && { shift; rm -rf "${VENV}"; }
+
 if [[ -f "${VENV}/done.txt" ]]; then
   echo "Setup already done"
   exit 0

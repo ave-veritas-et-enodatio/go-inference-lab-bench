@@ -1,4 +1,4 @@
-# Architecture — inference-lab-bench
+# Architecture — go-inference-lab-bench
 
 Companion to `AGENTS.md`: codebase structure, data flows, and invariants.
 
@@ -122,8 +122,8 @@ Streaming requests on diffusion models produce a single burst response after all
 Structural types (`ModuleMap`), TOML DSL parsing, graph construction, forward pass.
 See subsections below.
 
-### `internal/inference/ggml/`
-Go wrappers for ggml C ops (~43 functions). All CGo for graph ops is isolated here.
+### `internal/ggml/`
+Go wrappers for ggml C ops (~90 functions). All CGo for graph ops is isolated here.
 See "CGo Layer" section. All CGo is confined to this package.
 
 ---
@@ -173,7 +173,7 @@ and builder contracts will identify exactly what is wrong.
 **For safetensors models:** also create a matching `.arch.stmap.toml` file that maps
 HF config.json keys → GGUF metadata keys and HF tensor names → our short names. The
 stmap's `architecture.hf_class` must match `config.json["architectures"][0]` for the
-target architecture. Without it, `NewSafetensorsReader` will fail to locate a stmap.
+target architecture. Without it, `NewModelReaderSafetensors` will fail to locate a stmap.
 
 ---
 
@@ -245,13 +245,13 @@ type ModelReader interface {
 }
 
 type TensorSpec struct {
-    Type int               // ggml type constant (e.g., ggml.TypeF16)
+    Type ggml.GGMLType     // ggml type constant (e.g., ggml.TypeF16)
     Ne   [4]int64          // dimensions, padded to 4 (unused = 1)
     Size int               // total bytes in ggml format
 }
 ```
 
-**Construction**: `NewModelReader(path, *GGUFFile)` for GGUF; `NewSafetensorsReader(stDir, archDir)` for safetensors. Both return `ModelReader`.
+**Construction**: `NewModelReader(path, *GGUFFile)` for GGUF; `NewModelReaderSafetensors(archDef, stDir, archDir)` for safetensors. Both return `ModelReader`.
 
 **`NewGenericModel(archName, modelPath, archDir, gf)`** → `*GenericModel` (GGUF path):
 1. Parse `.arch.toml` → `ArchDef`
@@ -260,14 +260,15 @@ type TensorSpec struct {
 
 **`NewSafetensorsModel(archName, stDir, archDir)`** → `*GenericModel` (safetensors path):
 1. Parse `.arch.toml` → `ArchDef`
-2. Create `ModelReader` via `NewSafetensorsReader(stDir, archDir)`:
+2. Create `ModelReader` via `NewModelReaderSafetensors(def, stDir, archDir)`:
    a. Load `model.safetensors.index.json` (500KB guard) or parse single `model.safetensors`
    b. Read `config.json`, extract `architectures[0]` as HF class
    c. Find matching `.arch.stmap.toml` via `FindSTMapByHFClass()` — scans all stmap files, returns the one with `architecture.hf_class` matching
-   d. Build param value map: stmap says `hf_param → GGUF_key`, values come from `config.json`
-   e. Precompute tensor specs (dtype → ggml type mapping; BF16 mapped to F32)
-   f. Open all shard files for `ReadAt`
-   g. Return `stReaderAdapter` implementing `ModelReader`
+   d. Build param value map: stmap `[params]` (1:1 HF→GGUF) + `[gguf_metadata]` (literals) + `[[derived_metadata]]` (computed from config.json keys)
+   e. Precompute tensor specs (dtype → ggml type mapping; BF16 mapped to F16)
+   f. Synthesize derived tensors per `[[derived_tensors]]` (no safetensors source — generated F32 bytes stored in `derivedTensors` map)
+   g. Open all shard files for `ReadAt`
+   h. Return `stModelReader` implementing `ModelReader`
 3. Delegates to `newGenericModelFromReader()` (steps 3–9 below)
 
 **`newGenericModelFromReader(reader, def, modelPath)`** → `*GenericModel` (shared path):
@@ -452,7 +453,7 @@ Add new analysis routines here rather than to `engine.go`.
 
 ---
 
-## CGo Layer (`internal/inference/ggml/`)
+## CGo Layer (`internal/ggml/`)
 
 All CGo is confined here. `ggml_lib/` is a thin C wrapper over ggml ops — no model-specific
 logic, no C++.
@@ -483,11 +484,11 @@ the rest of the package has no dependency on it.
 - `MulMatSetPrecF32(t)` — sets F32 accumulation precision on a `mul_mat` tensor (no return value; mutates in place)
 
 **Go wrappers for load-time validation (in `ggml/`):**
-- `ValidateRowData(typ int, data []byte) bool` — thunks to upstream `ggml_validate_row_data`. Full element scan for float types; per-block scale/delta scan for quantized types. Returns true on empty input. Called by `newGenericModelFromReader` before every `TensorSetBytes`. Unit tested in `ggml/validate_test.go` (F32 NaN/Inf, I32 pass-through, Q4_K block-scale NaN).
+- `ValidateRowData(typ GGMLType, data []byte) bool` — thunks to upstream `ggml_validate_row_data`. Full element scan for float types; per-block scale/delta scan for quantized types. Returns true on empty input. Called by `newGenericModelFromReader` before every `TensorSetBytes`. Unit tested in `ggml/validate_test.go` (F32 NaN/Inf, I32 pass-through, Q4_K block-scale NaN).
 
 **GGUF metadata reading**: `arch/model.go` uses pure-Go `gguf-parser-go` — no CGo. The `goGGUFReader` adapter provides the metadata-access portion of `ModelReader` (GetU32/F32/ArrInts/ArrBools/TensorDim) with type-checked KV access (guards against gguf-parser-go's panic-on-wrong-type behavior). Split GGUF files are rejected at parse time.
 
-**Safetensors parsing**: `arch/safetensors_index.go` and `arch/safetensors_reader.go` are pure Go — JSON index parsing, shard header reading, and BF16→F32 conversion are all done without CGo. The `stReaderAdapter` implements `ModelReader` using `os.ReadAt` on shard files.
+**Safetensors parsing**: `arch/safetensors_index.go` and `arch/model_reader_safetensors.go` are pure Go — JSON index parsing, shard header reading, and BF16→F16 conversion are all done without CGo. The `stModelReader` implements `ModelReader` using `os.ReadAt` on shard files. Tensor transforms (norm-shift, V-head reorder, etc.) live in `arch/model_reader_safetensors_xform.go`; the derived-metadata and derived-tensor handler registries live in `arch/model_reader_safetensors_derived.go`.
 
 **Verified ggml semantics** (do not change without re-verifying):
 - `ggml_mul_mat(A, B)`: contracts over `A→ne[0] == B→ne[0]`; result `[A→ne[1], B→ne[1], ...]`; GQA broadcasting when `B→ne[2] % A→ne[2] == 0`
@@ -561,7 +562,7 @@ bug. Keep these dumps symmetric — a difference in dump format between loaders
 hides exactly the class of bug they are there to surface.
 
 **Equivalence testing (acceptance gate, `make equiv-test`)**  
-`test_equiv.sh gguf-st` compares logprobs between the GGUF and safetensors
+`test_chat_equiv.sh gguf-st` compares logprobs between the GGUF and safetensors
 loaders for the same model, at the same sampler step, on the same prompt.
 Non-identical above GPU FP variance is a hard failure. This test is on the
 default Makefile testing path and is the authoritative gate for any change
@@ -578,11 +579,13 @@ See **Internal Logging** section in `AGENTS.md` — authoritative for format, in
 
 ## Visualization System
 
-Two SVG renderers share a unified palette (`Pal()` in `archdiagram/palette.go`).
-To change any color, update the palette map — both renderers reflect it. No inline hex strings.
+Four SVG renderers share a unified palette (`Pal()` in `archdiagram/palette.go`).
+To change any color, update the palette map — all renderers reflect it. No inline hex strings.
 
 - `RenderArchDiagram(def, outPath)` — `*.arch.svg` from `ArchDef`; invoked by `bench gen-arch-diagram`
 - `RenderLayersDiagram(def, mm, svgPath, subtitle, dims)` — per-layer tensor detail; invoked by `bench gen-arch-diagram`
+- `RenderVisionDiagram(def, w)` — `*.vision.svg` overview when `def.Vision != nil`; see "Vision / Multimodal Subsystem" section
+- `RenderVisionLayersDiagram(def, nLayers, w)` — `*.vision.layers.svg` exploded per-layer when `def.Example.VisionNLayers > 0`
 
 ---
 
@@ -628,46 +631,87 @@ Format is auto-detected: `*.gguf` → GGUF parser; `*.st/` → safetensors direc
 
 Both paths produce a `SafetensorsIndex` with `Tensors` map and `Shards` list.
 
-### STMap Resolution (`stmap.go`, `safetensors_reader.go`)
+### STMap Resolution (`stmap.go`, `model_reader_safetensors.go`)
 
 Safetensors tensor/param names differ from GGUF conventions. A per-architecture
 `.arch.stmap.toml` file provides the translation (see
-`models/arch/MODEL_ARCH_STMAP_TOML_DSL_SPEC.md`). The lookup chain:
+`models/arch/MODEL_ARCH_STMAP_TOML_DSL_SPEC.md` for the user-facing contract).
+The lookup chain:
 
 1. `config.json["architectures"][0]` → HF class (e.g. `"LlamaForCausalLM"`)
 2. `FindSTMapByHFClass(archDir, hfClass)` scans `*.arch.stmap.toml` files, returns the
    one with `architecture.hf_class` matching
 3. STMap provides:
-   - `[params]`: HF config.json key → GGUF metadata key mapping
+   - `[params]`: HF config.json key → GGUF metadata key mapping (1:1, scalar)
    - `[layer_prefix].hf`: per-layer prefix with `{N}` substitution
    - `[tensors]`: our short tensor name → HF short tensor name
    - `[tensors.global]`: our short global name → HF full tensor name
+   - `[gguf_metadata]`: literal GGUF metadata values for arch-level constants with no `config.json` source
+   - `[[derived_metadata]]`: GGUF metadata values computed at load time from one or more `config.json` keys (via the `derivedMetadataOps` registry in `model_reader_safetensors_derived.go`)
+   - `[[derived_tensors]]`: GGUF tensors synthesized at load time, no safetensors source (via the `derivedTensorOps` registry)
+   - `[[transforms]]`: per-tensor F32 transforms (scalar add, V-head reorder, etc.) applied after read, before final dtype cast
 
 Param resolution: HF config.json value is stored under the GGUF key name, so the
-existing `ResolveParams()` machinery works without changes. Note: safetensors models
-only provide scalar params from `config.json` — array types (`GetArrInts`, `GetArrBools`)
-are not available from that format and will always return `(nil, false)`.
+existing `ResolveParams()` machinery works without changes. Scalar params come
+through `[params]` directly; arrays and computed values come through
+`[[derived_metadata]]` (e.g. `string_array_eq` for Gemma 4's
+`layer_types` → `sliding_window_pattern` translation). `GetArrInts` /
+`GetArrBools` work for any derived metadata that produces an array.
 
 Tensor name resolution at load time:
 - Per-layer: `layer_prefix.hf` (with `{N}` resolved) + `tensors[our_short_name]` = full HF tensor key
 - Global: `tensors.global[our_short_name]` used directly
+- Derived: synthesized tensors live in a parallel `derivedTensors` map (no HF source), consulted before the HF-name lookup path in every reader method
 
-### Reader Construction (`safetensors_reader.go`)
+### Reader Construction (`model_reader_safetensors.go`)
 
-`NewSafetensorsReader(stDir, archDir)` builds an `stReaderAdapter` implementing
-`ModelReader`:
+`NewModelReaderSafetensors(archDef, stDir, archDir)` builds an `stModelReader`
+implementing `ModelReader`:
 
 1. Parse safetensors index → `SafetensorsIndex`
-2. Read `config.json`
+2. Read `config.json` (with `json.Number` preserved — see "Param coercion" below)
 3. Extract HF class → find matching stmap
-4. Build param value map from stmap + config.json
-5. Precompute `TensorSpec` for all tensors (dtype → ggml type mapping via `stDtypeToGGML`)
-6. Open all shard files for `ReadAt`-based random access
+4. Build param value map from stmap `[params]` + `config.json`
+5. Inject literal values from stmap `[gguf_metadata]`
+6. Apply `[[derived_metadata]]` handlers — runs each registered op against
+   `config.json` and writes the result into the param map under `spec.Target`.
+   Same param namespace as 1:1 and literal entries, so the `[param]` debug
+   dump shows everything in one sorted list (visual GGUF↔safetensors diffing
+   stays a single-flat-list operation)
+7. Build `tensorSpecs` from the safetensors index (dtype → ggml type mapping
+   via `stDtypeToGGML`)
+8. Apply `[[derived_tensors]]` handlers — runs each registered op against
+   `config.json` and produces F32 little-endian bytes stored in a
+   `derivedTensors` map keyed by GGUF tensor name. These appear in
+   `TensorCount` / `TensorNames` / `TensorSpec` / `ReadTensor` alongside
+   safetensors-sourced tensors (consulted first in each method); downstream
+   code is format-agnostic and cannot tell them apart
+9. Open all shard files for `ReadAt`-based random access
+10. Allocate the slow-path scratch ggml context (`AllocPermAllow`, chunked
+    working arena for any tensor that needs F32 conversion or transforms)
 
-**BF16 conversion**: ggml has no native BF16 type. At load time, BF16 data is expanded
-to F32 — the upper 16 bits of BF16 (sign + 8-bit exponent + 7-bit mantissa) are placed
-in the upper half of the F32 value with 16 zero bits appended as the lower half. This is
-a byte-level operation: read 2 bytes, write 4 bytes (bottom-up to avoid overwriting).
+**Derived ops registry**: handlers are registered by name in
+`model_reader_safetensors_derived.go` — `derivedMetadataOps` and
+`derivedTensorOps`. Adding a new op = adding an entry to the appropriate
+registry, mirroring the block builder pattern. The TOML side stays
+declarative; the actual computation is Go-side. Currently registered:
+- `derivedMetadataOps`: `string_array_eq`, `copy_param`
+- `derivedTensorOps`: `rope_freqs_proportional`
+
+**BF16 conversion**: bench currently stores BF16 source tensors as **F16** at load (the
+target type in `stDtypeToGGML`; the load fast-path is explicitly disabled for BF16,
+forcing the convert). The conversion goes BF16 → F32 (exact bit-expansion: the 16 BF16
+bits become the upper half of an F32, lower 16 zero) → F16 (round-to-nearest). F16
+preserves BF16's mantissa exactly (7 bits ⊂ F16's 10); the only loss is exponent range,
+and any BF16 magnitude outside F16 range becomes `inf`, caught loudly by
+`ggml.ValidateRowData` at load. Exceptions stored as F32 (not F16): rank-1 tensors (norms)
+and conv1d weights — see the type-promotion in `model_reader_safetensors.go`.
+
+ggml *does* have a native BF16 type (`GGML_TYPE_BF16 = 30`) and its Metal backend supports
+BF16 ops on Metal 3.1+ / `has_bfloat` GPUs (M3+ — confirmed `kernel_mul_mv_bf16_*` kernels
+and the `supports_op` BF16 gate). Storing BF16 natively (no conversion, exact, same VRAM as
+F16) is therefore viable; the F16 conversion is a current choice whose one observable
+property is that `.st` weights stay bit-identical to F16 GGUFs under `gguf-st` equiv (→ 0.0).
 
 ### Engine Integration (`engine.go`)
 
@@ -693,6 +737,181 @@ back to the resolved model param (`m.Params.GetInt("n_layers")`).
 The manager (`manager.go`) scans both `*.gguf` files and `*.st/` directories during
 `scan()` and `List()`, filtering by whether the resolved architecture has a matching
 `.arch.toml` file. `tryLoadOne()` checks GGUF first, then falls back to `.st/`.
+
+---
+
+## Vision / Multimodal Subsystem
+
+Multimodal models (Gemma 4, Qwen3.5-VL) carry a second encoder tower alongside
+the text decoder. The encoder runs as a separate forward graph per image, and its
+projected output embeddings are spliced into the decoder's input stream before the
+layer loop. All vision-specific files are under `internal/inference/arch/` and
+`internal/inference/`, with one entry-point in the `archdiagram/` package.
+
+### Source Map
+
+| File | Contents |
+|---|---|
+| `arch/vision.go` | `ResolveVisionWeights`, `BuildVisionTensors`, `ResolveVisionParams`, `ResolveVisionBuilders`; the encoder forward graph entry point `BuildVisionGraph` and its helpers: `buildPatchEmbed`, `buildPositionEmbed`, `buildProjector`, `splitFusedQKV`, `visionNormApply`, `visionPostNorm`, `mulMatClamped` |
+| `arch/vision_rope.go` | `VisionMRopePositions` — 4-channel M-RoPE position buffer for Qwen3-VL towers |
+| `arch/vision_splice.go` | `buildVisionSplice`, `visionDecoderSpans`, `VisionMaskSpans`, `RewriteTokenIDsForVision` — the image→embedding→SetRows splice seam and the decoder image-token causal mask |
+| `arch/vision_preproc.go` | `PreprocConfigFromArchDef`, `PreprocessImage`, `smartResize`, `resizeBilinearLlama`, `packPixelsF32` — image preprocessing: aspect-fit, PAD_CEIL, align-corners bilinear resize, patch position arrays |
+| `arch/vision_clamp.go` | `LoadVisionClampsFromReader`, `LinearClamp`, `VisionClamps` — Gemma 4 `Gemma4ClippableLinear` clamp scalars read through the `ModelReader` boundary |
+| `arch/model_reader_safetensors_derived.go` | `handleConv3DTemporalSplit` — dispatched separately by `buildDerivedTensors` in `model_reader_safetensors.go`; the only derived-tensor op that reads source shard data rather than just `config.json` |
+| `inference/vision_prefill.go` | `prepareVisionPrefill`, `expandImagePlaceholders` — preprocesses attached images, expands single-token `<|image|>` placeholders to N-token runs; produces the `VisionPrefill` the forward paths consume |
+| `archdiagram/vision_diagram.go` | `RenderVisionDiagram` — overview SVG |
+| `archdiagram/vision_layers_diagram.go` | `RenderVisionLayersDiagram` — fully-exploded per-layer SVG |
+| `src/cmd/gen_arch_diagram.go` | Wires vision SVG emission: when `def.Vision != nil`, emits `<name>.vision.svg`; when `def.Example.VisionNLayers > 0`, also emits `<name>.vision.layers.svg` |
+
+**TOML examples:** `models/arch/gemma4.arch.toml` and `qwen35.arch.toml`, `[vision]`
+/ `[projector]` sections. `models/arch/qwen35.arch.stmap.toml` carries the
+safetensors-side `[vision]` tensor mappings.
+
+### Data-Driven Two-Tower Purity (invariant #1)
+
+`BuildVisionGraph` serves two architecturally distinct vision towers from one
+procedural graph. Every fork is keyed on a data property — never on an
+architecture name. Key dispatch points:
+
+| Property | Gemma 4 | Qwen3.5-VL |
+|---|---|---|
+| `params.NormType` | `VisionNormRMS` (default) → weight-only `rmsNormApply` | `VisionNormLayerNorm` → `ggml_norm` + weight + bias (`layerNormApply`) |
+| `params.ProjectorType` | `ProjectorLinearPostNorm` — avg-pool + scale + unit-RMSNorm + single linear | `ProjectorMLP` — reshape-only merger + `w0` → GELU → `w1` with biases |
+| `ConfigRope` in block config | `axial2d` — NeoX RoPE on the two halves of each head's dim using `PosX`/`PosY` (`applyRope2D`) | `mrope_vision` — 4-channel M-RoPE via `GGML_ROPE_TYPE_VISION` using `InpPosVision` |
+| Second patch-embed kernel present | No — single Conv2D; reshape + transpose | Yes — two Conv2D summed + bias; merge-grouped permute/reshape |
+| `posEmbd.Ne(2) > 1` | Yes — axial table `[n_embd, max_per_axis, 2]`; independent X/Y GetRows, summed | No — learned grid `[n_embd, n_patches²]`; bilinearly interpolated to the patch grid via `ggml_interpolate` |
+| `ConfigQKVFused` | false | true — `splitFusedQKV` slices the fused `[n_embd, 3*n_embd]` weight + bias into contiguous View2D thirds before dispatch |
+
+The encoder layer loop in `BuildVisionGraph` dispatches into the **same** generic
+`BlockBuilder` / `FFNBuilder` implementations the decoder uses (`attention` with
+`rope=axial2d` or `rope=mrope_vision`; `geglu_quick` (quick-GELU) for Gemma; `mlp` for Qwen). No
+vision-specific builder exists. Adding a new ViT family is primarily a TOML +
+stmap operation: add `[vision]` / `[projector]` blocks to the arch and stmap
+files; update the dispatch forks only if the new tower introduces a genuinely new
+data-driven property.
+
+### Construction Across Two Formats (invariant #16)
+
+Vision weights arrive via two formats, both presenting the same canonical tensor
+names downstream:
+
+**GGUF mmproj sidecar**: `mmproj-<name>.gguf` contains the encoder + projector
+weights (GGUF namespace `v.*` / `mm.*`). The GGUF `ModelReader` merges the mmproj
+sidecar into the main model's tensor namespace at load time (`model_reader_gguf.go`).
+
+**Safetensors `.st/` path**: vision weights live in the same `.st/` directory as
+the decoder weights. The stmap's `[vision]` tensor-mapping section translates HF
+tensor names to the canonical short names that `ResolveVisionWeights` expects.
+`conv3d_temporal_split` is a special case: Qwen3-VL's HF repo stores a single
+rank-5 Conv3D patch-embed kernel `[oc, ic, kt, kh, kw]`; the mmproj GGUF splits
+it at conversion time into two rank-4 Conv2D kernels (`v.patch_embd.weight` /
+`v.patch_embd.weight.1`). For the safetensors path, `buildDerivedTensors` in
+`model_reader_safetensors.go` dispatches `handleConv3DTemporalSplit` (defined in
+`model_reader_safetensors_derived.go`) to perform that split at load time. This op
+reads directly from the shard file rather than from `config.json`, which is why it
+is dispatched separately from the config-only `derivedTensorOps` registry — the
+registry's handler signature only receives `config.json`, making it structurally
+incapable of reaching shard data.
+
+**Clamp scalars** (`vision_clamp.go`): Gemma 4's `Gemma4ClippableLinear` pairs
+every linear weight with four `<base>.input_min` / `input_max` / `output_min` /
+`output_max` scalar tensors. `LoadVisionClampsFromReader` discovers and reads them
+through the `ModelReader` boundary — the same canonical names exist in both the
+GGUF mmproj and the safetensors directory, so one function serves both formats.
+Clamps are consumed by `mulMatClamped` in the encoder layer loop and projector.
+
+### Preprocessing Pipeline (`arch/vision_preproc.go`)
+
+`PreprocessImage` follows the llama.cpp `mtmd_image_preprocessor_dyn_size`
+pipeline:
+
+1. **smartResize** — aspect-preserving scale to a target whose pixel count falls
+   in `[MinPixels, MaxPixels]` and whose dimensions are multiples of
+   `AlignSize = patch_size × n_merge`. Matches `calc_size_preserved_ratio` in
+   `tools/mtmd/mtmd-image.cpp`.
+2. **PAD_CEIL fit** — scale the source by `min(tgtW/srcW, tgtH/srcH)` (aspect-fit
+   into the target), center the result, and pad the border with black. This is
+   llama.cpp's default `img_tool::resize` behavior; using a stretch-to-fill resize
+   instead causes every patch to shift for any image whose aspect ratio doesn't
+   already match the aligned target (confirmed to produce 0.185 logprob
+   divergence on Qwen before the fix).
+3. **resizeBilinearLlama** — align-corners, 2-tap bilinear, no antialias (a literal
+   port of llama.cpp's `img_tool::resize_bilinear`). `golang.org/x/image/draw`'s
+   `BiLinear` is NOT used: it is half-pixel and antialiases on downscale, shifting
+   every resized pixel relative to the reference.
+4. **packPixelsF32** — channel-major F32 `[W, H, 3, 1]` in `[0, 1]`; the encoder
+   graph rescales to `[-1, 1]` via `ggml_scale_bias(inp_raw, 2.0, -1.0)`.
+
+Preprocessing parameters (`PatchSize`, `NMerge`, `ImageMinTokens`,
+`ImageMaxTokens`) come from `arch.toml`'s `[vision]` section via
+`PreprocConfigFromArchDef`. No per-architecture hard-coded values exist in Go.
+
+### Splice and Decoder Integration (`arch/vision_splice.go`, `inference/vision_prefill.go`)
+
+`prepareVisionPrefill` preprocesses each attached image and expands the tokenized
+prompt so each `<|image|>` placeholder becomes N copies, where N is
+`PreprocessedImage.NTokens(nMerge)`. This expansion is computed from actual
+preprocessed dimensions, not from the `n_image_tokens` field in the arch.toml
+(which is diagram-only).
+
+`buildVisionSplice` is called once per request during graph construction — before
+`runLayers`, not inside the decode loop. For each image it:
+
+1. Creates graph input tensors (`inpRaw`, `posX`/`posY` for axial towers,
+   `posMRope` for M-RoPE towers — only the pair the active tower's graph consumes).
+2. Calls `BuildVisionGraph` to build the encoder + projector sub-graph; checks
+   that the projector output token count matches the declared splice length (a
+   preprocess↔TOML drift guard).
+3. Chains a `ggml.SetRows` op to overwrite the image's placeholder rows in
+   `inpEmbd` with the projected embeddings.
+
+`fillVisionInputs` writes the actual pixel + position data after `sched.AllocGraph`
+backs the input tensors with memory.
+
+**Decoder image-token attention**: by default, image tokens in the decoder are
+causal (the surrounding text). `[vision].decoder_non_causal = true` (set by Gemma
+4, not Qwen3.5-VL) causes `visionDecoderSpans` to return `MaskSpan` entries for
+each image's position run, which `buildCausalMaskData` opens bidirectionally. This
+mirrors llama-mtmd's `mtmd_decode_use_non_causal`, which is true only for
+GEMMA3/GEMMA4V. The flag is data-driven; no arch-name branch.
+
+`visionImages` (the `[]VisionSpliceInput` slice) threads through the forward
+functions as nil for non-vision callers: `buildVisionSplice` short-circuits on
+`len(images) == 0` and returns the input embedding tensor unchanged.
+
+**Token ID rewrite**: `RewriteTokenIDsForVision` replaces all image placeholder
+positions with token ID 0 (the padding token) before the decoder embedding lookup
+so the `GetRows` and `perLayerEmbedInject` ops see a valid vocabulary index. Those
+rows are immediately overwritten by the `SetRows` splice.
+
+### Diagramming
+
+`RenderVisionDiagram` and `RenderVisionLayersDiagram` in `archdiagram/` emit an
+overview SVG and a fully-exploded per-layer SVG respectively. Both renderers read
+entirely from `def.Vision` and `def.Projector` — no architecture-name branches.
+Differences such as norm type, fused vs. separate QKV, dual-conv patch embed, and
+projector layer count are all data-driven from the TOML. They share the unified
+palette (`archdiagram/palette.go`) — invariant #7.
+
+`gen_arch_diagram.go` emits vision SVGs automatically when the parsed `ArchDef`
+has `def.Vision != nil`; the exploded per-layer diagram is emitted when
+`def.Example.VisionNLayers > 0`.
+
+### Equivalence Testing and Fidelity
+
+Vision correctness is gated by `test_vision_equiv.sh` (two modes: `llama` —
+bench GGUF vs. llama-server; `gguf-st` — bench safetensors vs. bench GGUF). See
+**`test_vision_equiv.sh`** in `AGENTS.md` for the full protocol, threshold
+rationale (`VISION_PASS_THRESH` default 0.0075), and the reference-build
+sensitivity explanation.
+
+For diagnosing suspected encoder or preprocessing divergence, the logprob gate
+is insufficient — an 18% projected-embedding error was shown to move logprobs
+less than 0.001. The correct tool is a **per-element checkpoint-diff**: run
+`bin/vision_capture` (bench) against `MTMD_DEBUG_GRAPH=1 llama-mtmd-cli`
+(brew llama.cpp) and compare per-stage tensor sums and edge values. The logprob
+gate catches gross regressions (wrong answer, preproc-stretch class of bug);
+checkpoint-diff catches algorithmic or norm-order errors.
 
 ---
 
@@ -772,7 +991,15 @@ default base64 encoding — matches the OpenAI/llama.cpp response format.
 
 ### Equivalence Testing
 
-`test_equiv.sh` sends identical prompts to bench and `llama-server` (Homebrew),
+`test_chat_equiv.sh` sends identical prompts to bench and `llama-server` (Homebrew),
 compares top-1 logprobs. All models match within GPU floating-point variance (~0.1%
 relative error on logprobs). Validates: tokenization, chat template rendering, forward
 pass correctness, and sampling.
+
+`test_chat_equiv.sh` invokes the harness via `bash test_inference.sh`,
+which is a thin launcher over `tools/test_inference.py` — a stdlib-only Python
+program that owns SSE streaming, payload construction, server lifecycle,
+loop-mode REPL, and the logprob fingerprint line that `test_chat_equiv.sh` greps
+for. Streaming is always on; bench's `stream_options.include_usage` final chunk
+carries the `usage` block that drives `parse_response`'s timing/throughput
+display.

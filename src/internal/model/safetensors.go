@@ -2,7 +2,6 @@ package model
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,29 +11,20 @@ import (
 )
 
 // ParseSafetensorsDir parses a safetensors model directory and returns
-// GGUFMetadata-compatible metadata. The safetensors index supplies the
-// tensor inventory; config.json (if present) supplies numeric model params
-// and the HuggingFace architecture class name used for stmap lookup.
+// GGUFMetadata-compatible metadata. The safetensors loader's shard
+// discovery supplies the tensor inventory; config.json (if present)
+// supplies numeric model params and the HuggingFace architecture class
+// name used for stmap lookup.
 //
 // Error semantics:
-//   - No index.json or model.safetensors → error (cannot list without it)
+//   - No discoverable shards (neither model.safetensors nor a complete
+//     model-N-of-M set) → error from arch.LoadSafetensorsIndex
 //   - No config.json → partial metadata (Architecture="unknown", numeric fields=0)
 //   - Corrupt config.json → log debug warning, continue with partial data
-//   - Corrupt index.json → error (let the index parser handle this)
 func ParseSafetensorsDir(stDir string, archDir string) (*GGUFMetadata, error) {
-	// Try index.json first (sharded models)
-	idxPath := filepath.Join(stDir, "model.safetensors.index.json")
-	if _, err := os.Stat(idxPath); err != nil {
-		// Fallback: single model.safetensors file
-		singlePath := filepath.Join(stDir, "model.safetensors")
-		if _, err := os.Stat(singlePath); err != nil {
-			return nil, fmt.Errorf("no safetensors index or model file in %s", stDir)
-		}
-	}
-
 	idx, err := arch.LoadSafetensorsIndex(stDir)
 	if err != nil {
-		return nil, fmt.Errorf("loading safetensors index: %w", err)
+		return nil, err
 	}
 
 	meta := &GGUFMetadata{

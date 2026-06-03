@@ -138,11 +138,11 @@
     <rect x="496" width="18" height="14" rx="3" fill="url(#ffn)" stroke="#EF6C00" stroke-width="0.8"/>
     <text x="520" y="12" font-size="11" fill="#555555">swiglu</text>
   </g>
-  <text x="480" y="78" text-anchor="middle" font-size="9" fill="#999999" font-family="monospace">@{name} = engine builtin, ${name} = GGUF-resolved param</text>
+  <text x="480" y="78" text-anchor="middle" font-size="9" fill="#666666" font-family="monospace">@{name} = engine builtin, ${name} = GGUF-resolved param</text>
   <g transform="translate(330, 110)">
     <rect width="300" height="40" rx="6" fill="url(#global)" stroke="#C62828" stroke-width="1.2" filter="url(#shadow)"/>
     <text x="150" y="17" text-anchor="middle" font-weight="600" fill="#b71c1c">Token Embedding</text>
-    <text x="150" y="32" text-anchor="middle" font-size="10" fill="#777777">token_embd.weight (tied to output)</text>
+    <text x="150" y="32" text-anchor="middle" font-size="10" fill="#4d4d4d">token_embd.weight (tied to output)</text>
   </g>
   <line x1="480" y1="150" x2="480" y2="170" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
   <rect x="30" y="170" width="900" height="441" rx="8" fill="none" stroke="#4E9650" stroke-width="1.5" stroke-dasharray="6,3" opacity="0.6"/>
@@ -150,7 +150,7 @@
   <g transform="translate(330, 213)">
     <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
-    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">attn_norm.weight</text>
+    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#4d4d4d">attn_norm.weight</text>
   </g>
   <line x1="480" y1="247" x2="480" y2="267" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
   <use href="#block_recurrent_ssm" transform="translate(190, 267)"/>
@@ -158,7 +158,7 @@
   <g transform="translate(330, 482)">
     <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
-    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">post_attention_norm.weight</text>
+    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#4d4d4d">post_attention_norm.weight</text>
   </g>
   <line x1="480" y1="516" x2="480" y2="536" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
   <use href="#block_swiglu" transform="translate(260, 536)"/>
@@ -168,7 +168,7 @@
   <g transform="translate(330, 664)">
     <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
-    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">attn_norm.weight</text>
+    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#4d4d4d">attn_norm.weight</text>
   </g>
   <line x1="480" y1="698" x2="480" y2="718" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
   <use href="#block_full_attention" transform="translate(170, 718)"/>
@@ -176,13 +176,13 @@
   <g transform="translate(330, 933)">
     <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
-    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">post_attention_norm.weight</text>
+    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#4d4d4d">post_attention_norm.weight</text>
   </g>
   <line x1="480" y1="967" x2="480" y2="987" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
   <use href="#block_swiglu" transform="translate(260, 987)"/>
   <text x="712" y="1016" font-size="11" fill="#555555" font-weight="600">+ residual</text>
   <line x1="480" y1="1062" x2="480" y2="1082" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
-  <text x="488" y="1078" font-size="10" fill="#999999">x repeats</text>
+  <text x="488" y="1078" font-size="10" fill="#666666">x repeats</text>
   <g transform="translate(30, 1082)">
     <rect width="900" height="50" rx="6" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="1" filter="url(#shadow)"/>
     <text x="450" y="19" text-anchor="middle" font-size="12" font-weight="600" fill="#333333">Layer Pattern (example: 32 layers, full attention every 4)</text>
@@ -225,13 +225,13 @@
   <g transform="translate(330, 1152)">
     <rect width="300" height="34" rx="5" fill="url(#norm)" stroke="#9C27B0" stroke-width="1" filter="url(#shadow)"/>
     <text x="150" y="14" text-anchor="middle" font-weight="600" fill="#6a1b9a">RMSNorm</text>
-    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#777777">output_norm.weight</text>
+    <text x="150" y="27" text-anchor="middle" font-size="10" fill="#4d4d4d">output_norm.weight</text>
   </g>
   <line x1="480" y1="1186" x2="480" y2="1206" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
   <g transform="translate(330, 1206)">
     <rect width="300" height="40" rx="6" fill="url(#global)" stroke="#C62828" stroke-width="1.2" filter="url(#shadow)"/>
     <text x="150" y="17" text-anchor="middle" font-weight="600" fill="#b71c1c">LM Head</text>
-    <text x="150" y="32" text-anchor="middle" font-size="10" fill="#777777">tied: reuses token_embd.weight</text>
+    <text x="150" y="32" text-anchor="middle" font-size="10" fill="#4d4d4d">tied: reuses token_embd.weight</text>
   </g>
   <line x1="480" y1="1246" x2="480" y2="1266" stroke="#555555" stroke-width="1.5" marker-end="url(#arrow)"/>
   <g transform="translate(380, 1266)">
@@ -241,5 +241,5 @@
   <text x="30" y="1328" font-size="11" fill="#666666"><tspan font-weight="600">Routing:</tspan> <tspan font-family="monospace" fill="#333333">(@{layer_idx} + 1) % ${full_attn_interval} != 0</tspan> -> true: recurrent_ssm / false: full_attention</text>
   <rect x="730" y="1308" width="200" height="38" rx="5" fill="#f5f5f5" stroke="#bdbdbd" stroke-width="0.8"/>
   <text x="738" y="1323" font-size="10" font-weight="600" fill="#666666">Tokens</text>
-  <text x="738" y="1336" font-size="9" fill="#999999" font-family="monospace">thinking: &lt;think&gt;...&lt;/think&gt;</text>
+  <text x="738" y="1336" font-size="9" fill="#666666" font-family="monospace">thinking: &lt;think&gt;...&lt;/think&gt;</text>
 </svg>

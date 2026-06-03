@@ -18,7 +18,10 @@ name = "qwen35moe"
 tied_embeddings = true
 
 [params]
-n_layers           = "qwen35moe.block_count"
+block_count          = "qwen35moe.block_count"
+# Qwen3-Next MoE ships an MTP head as extra block(s) past the transformer stack;
+# newer converters fold it into block_count. bench excludes it (no MTP path).
+nextn_predict_layers = "qwen35moe.nextn_predict_layers?"
 n_heads            = "qwen35moe.attention.head_count"
 n_kv_heads         = "qwen35moe.attention.head_count_kv"
 n_embd             = "qwen35moe.embedding_length"
@@ -42,12 +45,14 @@ n_expert_used      = "qwen35moe.expert_used_count"
 expert_weights_scale = "qwen35moe.expert_weights_scale?"
 
 [params.derived]
+n_layers      = "block_count - nextn_predict_layers"   # exclude MTP head(s) from the layer loop
 n_vocab       = "token_embd.ne[1]"
 head_v_dim    = "ssm_d_inner / ssm_dt_rank"
 conv_channels = "ssm_d_inner + 2 * ssm_n_group * ssm_d_state"
 
 [params.defaults]
-n_kv_heads = "n_heads"    # GGUF convention: 0 means same as n_heads (no GQA)
+n_kv_heads           = "n_heads"   # GGUF convention: 0 means same as n_heads (no GQA)
+nextn_predict_layers = "0"         # non-MTP models: no nextn head → n_layers == block_count
 
 [weights.global]
 token_embd  = "token_embd.weight"
@@ -84,7 +89,11 @@ builder = "full_attention_gated"
   [blocks.full_attention.config]
   q_has_gate    = true
   qk_norm       = "rms"
-  rope          = "multi"
+  # imrope: interleaved multi-section M-RoPE (GGML_ROPE_TYPE_IMROPE, Qwen3-VL).
+  # For text it reduces to the plain NEOX `multi` result; image spans get 2-D
+  # grid positions via the decoder get_rope_index analogue. Requires the
+  # [4*n_tokens] InpPos buffer (built in graph.go::buildDecoderPositions).
+  rope          = "imrope"
   output_gate   = "sigmoid"
 
   [blocks.full_attention.cache]

@@ -2,7 +2,7 @@
 <style>
   text { font-family: 'Courier New', monospace; }
   .title { font-size: 20px; font-weight: bold; fill: #333333; font-family: system-ui, -apple-system, sans-serif; }
-  .lbl   { font-size: 9px; fill: #888888; text-anchor: end; dominant-baseline: middle; }
+  .lbl   { font-size: 9px; fill: #595959; text-anchor: end; dominant-baseline: middle; }
   .tlbl  { font-size: 7px; fill: #000000; text-anchor: middle; dominant-baseline: middle; }
   .io    { font-size: 8px; font-weight: bold; fill: #888888; text-anchor: middle; dominant-baseline: middle; }
   .ltxt  { font-size: 8px; fill: #555555; dominant-baseline: middle; }

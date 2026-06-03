@@ -18,9 +18,9 @@ import (
 // Usage:
 //
 //	ST_VS_GGUF_MODEL=qwen35 \
-//	ST_VS_GGUF_ST_DIR=/Users/benn/projects/inference-lab-bench/models/Qwen3.5-9B.st \
-//	ST_VS_GGUF_GGUF=/Users/benn/projects/inference-lab-bench/models/Qwen3.5-9B.gguf.bin \
-//	ST_VS_GGUF_ARCH_DIR=/Users/benn/projects/inference-lab-bench/models/arch \
+//	ST_VS_GGUF_ST_DIR=/Users/benn/projects/go-inference-lab-bench/models/Qwen3.5-9B.st \
+//	ST_VS_GGUF_GGUF=/Users/benn/projects/go-inference-lab-bench/models/Qwen3.5-9B.gguf.bin \
+//	ST_VS_GGUF_ARCH_DIR=/Users/benn/projects/go-inference-lab-bench/models/arch \
 //	go test ./src/internal/inference/arch -run TestSafetensorsMatchesGGUF -v
 func TestSafetensorsMatchesGGUF(t *testing.T) {
 	archName := os.Getenv("ST_VS_GGUF_MODEL")
@@ -38,7 +38,7 @@ func TestSafetensorsMatchesGGUF(t *testing.T) {
 	}
 
 	// ----- safetensors reader -----
-	stReader, err := NewModelReaderSafetensors(archDef, stDir, archDir)
+	stReader, err := NewModelReaderSafetensors(archDef, stDir, archDir, MmprojEnabled)
 	if err != nil {
 		t.Fatalf("opening safetensors reader: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestSafetensorsMatchesGGUF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsing GGUF: %v", err)
 	}
-	ggufReader, err := NewModelReaderGGUF(archDef, ggufPath, gf)
+	ggufReader, err := NewModelReaderGGUF(archDef, ggufPath, gf, "")
 	if err != nil {
 		t.Fatalf("opening GGUF reader: %v", err)
 	}

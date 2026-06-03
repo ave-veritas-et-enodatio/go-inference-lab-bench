@@ -9,11 +9,28 @@ import (
 	"inference-lab-bench/internal/log"
 )
 
+// MaskSpan declares a contiguous range of absolute positions that
+// attend bidirectionally to each other, overriding the standard causal
+// rule within that range. Used by the prefill flow to give vision-token
+// spans non-causal attention while keeping text spans causal — mirrors
+// llama-mtmd's `mtmd_decode_use_non_causal` behavior (separate non-causal
+// decode batch for the image span) within a single combined prefill.
+type MaskSpan struct {
+	Start  int // first absolute position in the span (start of image's expanded run)
+	Length int // span size in tokens (= per-image NTokens after pooling)
+}
+
 // buildCausalMaskData generates the float32 mask data for causal attention.
 // Positions where key > query get -Inf. Returns all zeros if nonCausal.
 // If buf is non-nil and large enough (len >= nQuery*nKV), it is zeroed and reused;
 // otherwise a new slice is allocated. The returned slice may alias buf.
-func buildCausalMaskData(buf []float32, nQuery, nKV int64, startPos int, nonCausal bool) []float32 {
+//
+// `bidirectional` may be nil. Each span opens up bidirectional attention
+// within itself by zeroing the upper-triangular cells in the (span × span)
+// block — i.e. allowing query positions inside the span to attend to key
+// positions later in the same span. Necessary for vision-encoder output
+// embeddings, whose spatial relationships are non-sequential.
+func buildCausalMaskData(buf []float32, nQuery, nKV int64, startPos int, nonCausal bool, bidirectional []MaskSpan) []float32 {
 	need := int(nQuery * nKV)
 	var data []float32
 	if len(buf) >= need {
@@ -23,12 +40,45 @@ func buildCausalMaskData(buf []float32, nQuery, nKV int64, startPos int, nonCaus
 		data = make([]float32, need)
 	}
 	if !nonCausal {
-		for qi := int64(0); qi < nQuery; qi++ {
+		for qi := range nQuery {
 			absQI := int64(startPos) + qi
-			for kj := int64(0); kj < nKV; kj++ {
+			for kj := range nKV {
 				if kj > absQI {
 					data[qi*nKV+kj] = float32(math.Inf(-1))
 				}
+			}
+		}
+	}
+	// Re-open the causal-masked cells within each bidirectional span.
+	// Quadratic only over the span (≤ ~260 for Gemma 4), so this is a
+	// rounding error vs. the nQuery × nKV base loop.
+	for _, span := range bidirectional {
+		if span.Length <= 0 {
+			continue
+		}
+		sAbs := int64(span.Start)
+		eAbs := sAbs + int64(span.Length)
+		// Clamp the span's query range to this batch's query window.
+		sQ := sAbs - int64(startPos)
+		eQ := eAbs - int64(startPos)
+		if sQ < 0 {
+			sQ = 0
+		}
+		if eQ > nQuery {
+			eQ = nQuery
+		}
+		if sQ >= eQ {
+			continue
+		}
+		// Clamp the key range to nKV.
+		kEnd := eAbs
+		if kEnd > nKV {
+			kEnd = nKV
+		}
+		for qi := sQ; qi < eQ; qi++ {
+			row := qi * nKV
+			for kj := sAbs; kj < kEnd; kj++ {
+				data[row+kj] = 0
 			}
 		}
 	}
@@ -39,7 +89,17 @@ func buildCausalMaskData(buf []float32, nQuery, nKV int64, startPos int, nonCaus
 // Positions where key > query or key < query - window get -Inf.
 // If buf is non-nil and large enough (len >= nQuery*nKV), it is zeroed and reused;
 // otherwise a new slice is allocated. The returned slice may alias buf.
-func buildSWAMaskData(buf []float32, nQuery, nKV int64, startPos, window int) []float32 {
+//
+// `bidirectional` may be nil. Each span re-opens the *future* (causal-masked)
+// cells within itself — i.e. allows query positions inside the span to attend
+// to later key positions in the same span — while leaving the sliding-window
+// (far-past) masking intact. This mirrors llama-mtmd's image ubatch, decoded
+// with causal_attn=false: the future-mask (`p0 > p1`) is dropped, but the
+// STANDARD-SWA past-window mask (`p1 - p0 >= n_swa`) still applies (it never
+// masks future keys). For Gemma 4's ISWA pattern the SWA layers are the
+// majority, so without this the image patches lose their bidirectional
+// context on most layers — a systematic divergence from llama.
+func buildSWAMaskData(buf []float32, nQuery, nKV int64, startPos, window int, bidirectional []MaskSpan) []float32 {
 	need := int(nQuery * nKV)
 	var data []float32
 	if len(buf) >= need {
@@ -48,11 +108,48 @@ func buildSWAMaskData(buf []float32, nQuery, nKV int64, startPos, window int) []
 	} else {
 		data = make([]float32, need)
 	}
-	for qi := int64(0); qi < nQuery; qi++ {
+	for qi := range nQuery {
 		absQI := int64(startPos) + qi
-		for kj := int64(0); kj < nKV; kj++ {
+		for kj := range nKV {
 			if kj > absQI || kj < absQI-int64(window) {
 				data[qi*nKV+kj] = float32(math.Inf(-1))
+			}
+		}
+	}
+	// Re-open the future cells within each bidirectional span. Only cells
+	// with kj > absQI are touched, so the far-past window mask (kj <
+	// absQI-window) is preserved — matching llama's STANDARD SWA, which keeps
+	// all future keys regardless of distance.
+	for _, span := range bidirectional {
+		if span.Length <= 0 {
+			continue
+		}
+		sAbs := int64(span.Start)
+		eAbs := sAbs + int64(span.Length)
+		sQ := sAbs - int64(startPos)
+		eQ := eAbs - int64(startPos)
+		if sQ < 0 {
+			sQ = 0
+		}
+		if eQ > nQuery {
+			eQ = nQuery
+		}
+		if sQ >= eQ {
+			continue
+		}
+		kEnd := eAbs
+		if kEnd > nKV {
+			kEnd = nKV
+		}
+		for qi := sQ; qi < eQ; qi++ {
+			absQI := int64(startPos) + qi
+			row := qi * nKV
+			// Only future keys (kj > absQI) within the span; past cells keep
+			// their window masking.
+			for kj := absQI + 1; kj < kEnd; kj++ {
+				if kj >= sAbs {
+					data[row+kj] = 0
+				}
 			}
 		}
 	}
@@ -107,7 +204,7 @@ func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
 			x = ggml.Add(gctx, x, cur)
 		}
 
-		x = m.buildFFNBlock(gctx, x, lt, il, rmsEps)
+		x = m.buildFFNBlock(gctx, x, lt, il, rmsEps, inputs)
 
 		// Per-layer embedding injection (Gemma 4)
 		if !perLayerEmbd.IsNil() && !lt.Common[WeightPEInpGate].IsNil() {
@@ -125,14 +222,14 @@ func (m *GenericModel) runLayers(gctx *ggml.GraphContext, x ggml.Tensor,
 // buildFFNBlock applies norm, builds FFN, and adds residual.
 // Returns x unchanged when the layer has no FFN tensors (recurrent-only layer).
 func (m *GenericModel) buildFFNBlock(ctx *ggml.GraphContext, x ggml.Tensor,
-	lt *LayerTensors, il int, rmsEps float32) ggml.Tensor {
+	lt *LayerTensors, il int, rmsEps float32, inputs *GraphInputs) ggml.Tensor {
 	ffnInp := x
 	if anyNonNil(lt.FFN) {
 		ffnConfig := m.FFNConfigs[il]
 		// Self-normed builders manage their own pre/post norms internally
 		// (e.g. MoE with parallel shared+expert paths that need separate norms).
 		if configBoolOr(ffnConfig, ConfigSelfNormed, false) {
-			ffnOut := m.FFNBuilders[il].BuildFFN(ctx, x, lt.FFN, m.Params, ffnConfig)
+			ffnOut := m.FFNBuilders[il].BuildFFN(ctx, x, lt.FFN, m.Params, ffnConfig, inputs)
 			// Self-normed builders handle internal pre/post norms for each path,
 			// but the common post-FFN norm still wraps the combined output.
 			if !lt.Common[WeightFFNPostNorm].IsNil() {
@@ -141,7 +238,7 @@ func (m *GenericModel) buildFFNBlock(ctx *ggml.GraphContext, x ggml.Tensor,
 			return ggml.Add(ctx, ffnInp, ffnOut)
 		}
 		xn2 := rmsNormApply(ctx, x, lt.Common[WeightFFNNorm], rmsEps)
-		ffnOut := m.FFNBuilders[il].BuildFFN(ctx, xn2, lt.FFN, m.Params, ffnConfig)
+		ffnOut := m.FFNBuilders[il].BuildFFN(ctx, xn2, lt.FFN, m.Params, ffnConfig, inputs)
 		// Optional post-FFN norm
 		if !lt.Common[WeightFFNPostNorm].IsNil() {
 			ffnOut = rmsNormApply(ctx, ffnOut, lt.Common[WeightFFNPostNorm], rmsEps)
@@ -187,7 +284,7 @@ func (m *GenericModel) buildLogits(gctx *ggml.GraphContext, x ggml.Tensor,
 // Returns logits shaped [nVocab, nTokens] — all positions, all marked as output.
 // Used by diffusion generation which needs per-position logits over the full sequence.
 func (m *GenericModel) buildAllLogits(gctx *ggml.GraphContext, x ggml.Tensor,
-	nEmbd int, rmsEps float32) ggml.Tensor {
+	rmsEps float32) ggml.Tensor {
 	xn := rmsNormApply(gctx, x, m.Store.Global(WeightOutputNorm), rmsEps)
 	logits := ggml.MulMat(gctx, m.Store.Global(WeightOutput), xn)
 
@@ -220,6 +317,7 @@ type statelessCtx struct {
 	hasSWA    bool
 	swaWindow int
 	zeroFill  []ggml.Tensor
+	vision    *visionSpliceContext // nil unless the prefill carries images
 }
 
 func (sc *statelessCtx) Free() {
@@ -241,6 +339,7 @@ func (m *GenericModel) forwardStatelessCore(
 	tokenIDs []int32,
 	flashAttn bool,
 	caps *ForwardCaptures,
+	visionImages []VisionSpliceInput,
 ) (*statelessCtx, error) {
 	nLayers := m.Params.Ints[ParamNLayers]
 	nEmbd := m.Params.Ints[ParamNEmbd]
@@ -263,7 +362,9 @@ func (m *GenericModel) forwardStatelessCore(
 	// Inputs
 	inpTokens := ggml.NewTensor1D(gctx, ggml.TypeI32, nTokens)
 	ggml.SetInput(inpTokens)
-	inpPos := ggml.NewTensor1D(gctx, ggml.TypeI32, nTokens)
+	// IMROPE decoders (Qwen3-VL) require a [4·n_tokens] position buffer; all
+	// other archs use the 1-D [n_tokens] buffer. Keyed off arch config.
+	inpPos := ggml.NewTensor1D(gctx, ggml.TypeI32, m.decoderPositionCount(nTokens))
 	ggml.SetInput(inpPos)
 	inpMask := ggml.NewTensor2D(gctx, ggml.TypeF32, nTokens, nTokens)
 	ggml.SetInput(inpMask)
@@ -272,6 +373,30 @@ func (m *GenericModel) forwardStatelessCore(
 
 	if m.Def.Architecture.EmbedScale {
 		x = ggml.Scale(gctx, x, float32(math.Sqrt(float64(nEmbd))))
+	}
+	// Note: this needs gf, which is built below. Defer the named-capture
+	// until after gf exists — placed before the splice helper.
+
+	// Vision splice: replace placeholder rows in the (already text-scaled)
+	// input embedding stream with projected encoder output. Vision
+	// embeddings are NOT subject to EmbedScale — the projector matrix
+	// already produces decoder-scale embeddings (cf. llama-mtmd, which
+	// applies the projection post-encoder and splices the result raw).
+	// Need gf to attach BuildVisionGraph's internal BuildForwardExpand;
+	// build it now (descriptor-only graph context, so creation is cheap)
+	// even though the rest of the construction continues to populate it.
+	gf := ggml.NewGraph(gctx, maxGraphNodes)
+	var visionCtx *visionSpliceContext
+	if len(visionImages) > 0 {
+		var err error
+		caps.NamedTensor(gctx, gf, "decoder.inp_embd_pre_splice", x)
+		x, visionCtx, err = m.buildVisionSplice(gctx, gf, x, visionImages, caps)
+		if err != nil {
+			gctx.Free()
+			sched.Free()
+			return nil, err
+		}
+		caps.NamedTensor(gctx, gf, "decoder.inp_embd_post_splice", x)
 	}
 
 	swaWindow, hasSWA := m.Params.Ints[ParamSlidingWindow]
@@ -313,7 +438,9 @@ func (m *GenericModel) forwardStatelessCore(
 	}
 	x = m.runLayers(gctx, x, inputs, rmsEps, blkFn, perLayerEmbd)
 
-	gf := ggml.NewGraph(gctx, maxGraphNodes)
+	// gf was created above (before the vision splice) so BuildVisionGraph
+	// could attach its descriptors. Layer-loop outputs flow into the same
+	// graph via gf.BuildForwardExpand at the call-site.
 
 	log.Debug("stateless graph ctx: %d / %d bytes used", gctx.UsedMem(), ctxSize)
 
@@ -331,6 +458,7 @@ func (m *GenericModel) forwardStatelessCore(
 		hasSWA:    hasSWA,
 		swaWindow: swaWindow,
 		zeroFill:  zeroFill,
+		vision:    visionCtx,
 	}, nil
 }
 
@@ -339,13 +467,13 @@ func (m *GenericModel) forwardStatelessCore(
 // position p occupies allLogits[p*nVocab : (p+1)*nVocab].
 // No captures are collected — this is intended for diffusion generation.
 func (m *GenericModel) ForwardStatelessAllLogits(tokenIDs []int32, flashAttn bool) ([]float32, error) {
-	sc, err := m.forwardStatelessCore(tokenIDs, flashAttn, nil)
+	sc, err := m.forwardStatelessCore(tokenIDs, flashAttn, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer sc.Free()
 
-	logits := m.buildAllLogits(sc.gctx, sc.x, sc.nEmbd, sc.rmsEps)
+	logits := m.buildAllLogits(sc.gctx, sc.x, sc.rmsEps)
 	sc.gf.BuildForwardExpand(logits)
 
 	if !sc.sched.AllocGraph(sc.gf) {
@@ -363,17 +491,17 @@ func (m *GenericModel) ForwardStatelessAllLogits(tokenIDs []int32, flashAttn boo
 
 	ggml.TensorSet(sc.inpTokens, unsafe.Pointer(&tokenIDs[0]), 0, sc.inpTokens.Nbytes())
 
-	positions := make([]int32, sc.nTokens)
-	for i := range positions {
-		positions[i] = int32(i)
-	}
+	// Diffusion path: no vision input. Still honors IMROPE widening (text-only →
+	// all 4 blocks sequential) so the buffer matches the allocated tensor shape.
+	positions, _ := m.buildDecoderPositions(nil, sc.nTokens, 0)
 	ggml.TensorSet(sc.inputs.InpPos, unsafe.Pointer(&positions[0]), 0, sc.inputs.InpPos.Nbytes())
 
-	maskData := buildCausalMaskData(nil, sc.nTokens, sc.nTokens, 0, m.Def.Architecture.NonCausal)
+	// ForwardStatelessAllLogits is the diffusion path; no vision input.
+	maskData := buildCausalMaskData(nil, sc.nTokens, sc.nTokens, 0, m.Def.Architecture.NonCausal, nil)
 	ggml.TensorSet(sc.inputs.InpMask, unsafe.Pointer(&maskData[0]), 0, sc.inputs.InpMask.Nbytes())
 
 	if sc.hasSWA && sc.swaWindow > 0 {
-		swaMaskData := buildSWAMaskData(nil, sc.nTokens, sc.nTokens, 0, sc.swaWindow)
+		swaMaskData := buildSWAMaskData(nil, sc.nTokens, sc.nTokens, 0, sc.swaWindow, nil)
 		ggml.TensorSet(sc.inputs.InpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, sc.inputs.InpMaskSWA.Nbytes())
 	}
 
@@ -405,8 +533,10 @@ func readLogitsInto(buf []float32, logits ggml.Tensor) []float32 {
 // ForwardStateless runs a full-sequence forward pass without caching.
 // caps is optional: pass nil for normal inference, or a *ForwardCaptures to extract
 // intermediate tensors (e.g. attention weights) alongside the logits.
-func (m *GenericModel) ForwardStateless(tokenIDs []int32, caps *ForwardCaptures, flashAttn bool) ([]float32, error) {
-	sc, err := m.forwardStatelessCore(tokenIDs, flashAttn, caps)
+// visionImages may be nil; if non-empty, each entry's projected encoder
+// output is spliced into the input-embedding stream at its declared run.
+func (m *GenericModel) ForwardStateless(tokenIDs []int32, caps *ForwardCaptures, flashAttn bool, visionImages []VisionSpliceInput) ([]float32, error) {
+	sc, err := m.forwardStatelessCore(tokenIDs, flashAttn, caps, visionImages)
 	if err != nil {
 		return nil, err
 	}
@@ -437,21 +567,35 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32, caps *ForwardCaptures,
 		ggml.TensorSetBytes(t, zeros, 0)
 	}
 
-	// Set inputs
-	ggml.TensorSet(sc.inpTokens, unsafe.Pointer(&tokenIDs[0]), 0, sc.inpTokens.Nbytes())
+	// Set inputs. Rewrite vision-span IDs to the padding token so per-layer
+	// embedding GetRows pulls the padding-token row at image positions
+	// (matches gemma4.cpp:415-428). The text-embedding GetRows also sees
+	// zeros at vision positions, but those rows are overwritten by the
+	// vision splice's SetRows immediately afterward.
+	tokenIDsRewritten := RewriteTokenIDsForVision(tokenIDs, visionImages)
+	ggml.TensorSet(sc.inpTokens, unsafe.Pointer(&tokenIDsRewritten[0]), 0, sc.inpTokens.Nbytes())
 
-	positions := make([]int32, sc.nTokens)
-	for i := range positions {
-		positions[i] = int32(i)
-	}
+	// Position buffer: 1-D sequential for normal RoPE, or the [4·n_tokens] IMROPE
+	// buffer (with image-span 2-D positions) for Qwen3-VL. Data-driven on arch.
+	// Stateless is single-shot, so the counter starts at 0 and the end is unused.
+	positions, _ := m.buildDecoderPositions(visionImages, sc.nTokens, 0)
 	ggml.TensorSet(sc.inputs.InpPos, unsafe.Pointer(&positions[0]), 0, sc.inputs.InpPos.Nbytes())
 
-	maskData := buildCausalMaskData(nil, sc.nTokens, sc.nTokens, 0, m.Def.Architecture.NonCausal)
+	// Vision spans get bidirectional attention within themselves;
+	// rest of the sequence stays causal. Mirrors llama-mtmd's
+	// non-causal-during-image-decode behavior in one pass.
+	maskData := buildCausalMaskData(nil, sc.nTokens, sc.nTokens, 0, m.Def.Architecture.NonCausal, m.visionDecoderSpans(visionImages))
 	ggml.TensorSet(sc.inputs.InpMask, unsafe.Pointer(&maskData[0]), 0, sc.inputs.InpMask.Nbytes())
 
 	if sc.hasSWA && sc.swaWindow > 0 {
-		swaMaskData := buildSWAMaskData(nil, sc.nTokens, sc.nTokens, 0, sc.swaWindow)
+		swaMaskData := buildSWAMaskData(nil, sc.nTokens, sc.nTokens, 0, sc.swaWindow, m.visionDecoderSpans(visionImages))
 		ggml.TensorSet(sc.inputs.InpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, sc.inputs.InpMaskSWA.Nbytes())
+	}
+
+	// Fill per-image vision input tensors (inpRaw / posX / posY / row-index)
+	// after AllocGraph backs them with memory — same lifecycle as inpTokens.
+	if sc.vision != nil {
+		sc.vision.fillVisionInputs()
 	}
 
 	// Execute
@@ -475,6 +619,20 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32, caps *ForwardCaptures,
 		}
 	}
 
+	// Read named-tensor captures (Phase 8 numerical-equivalence workflow).
+	if caps != nil && caps.Flags&CaptureNamed != 0 && len(caps.namedTensorRefs) > 0 {
+		caps.NamedTensors = make(map[string][]float32, len(caps.namedTensorRefs))
+		for name, t := range caps.namedTensorRefs {
+			if t.IsNil() {
+				continue
+			}
+			n := t.Nbytes() / 4
+			data := make([]float32, n)
+			ggml.TensorGet(t, unsafe.Pointer(&data[0]), 0, t.Nbytes())
+			caps.NamedTensors[name] = data
+		}
+	}
+
 	return readLogits(logits, sc.nVocab), nil
 }
 
@@ -485,7 +643,12 @@ func (m *GenericModel) ForwardStateless(tokenIDs []int32, caps *ForwardCaptures,
 // so there is no single clean attention matrix to capture. Any research question
 // answerable through a stateless pass should use ForwardStateless instead.
 // Do not add capture support here without explicit research into cached-mode mechanics.
-func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, flashAttn bool) ([]float32, error) {
+//
+// visionImages may be nil. When non-empty, each entry's projected encoder
+// output is spliced into the input-embedding stream at its declared run.
+// Only the prefill call (seqPos == 0) ever carries images; per-token
+// decode calls always pass nil.
+func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, flashAttn bool, visionImages []VisionSpliceInput) ([]float32, error) {
 	nEmbd := m.Params.Ints[ParamNEmbd]
 	rmsEps := m.Params.Floats[ParamRMSEps]
 	nNew := int64(len(tokenIDs))
@@ -505,7 +668,9 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, flashAt
 	// Inputs (only new tokens)
 	inpTokens := ggml.NewTensor1D(gctx, ggml.TypeI32, nNew)
 	ggml.SetInput(inpTokens)
-	inpPos := ggml.NewTensor1D(gctx, ggml.TypeI32, nNew)
+	// IMROPE decoders (Qwen3-VL) require a [4·nNew] position buffer; all other
+	// archs use the 1-D [nNew] buffer. Applies to prefill and per-token decode.
+	inpPos := ggml.NewTensor1D(gctx, ggml.TypeI32, m.decoderPositionCount(nNew))
 	ggml.SetInput(inpPos)
 	inpMask := ggml.NewTensor2D(gctx, ggml.TypeF32, nKV, nNew)
 	ggml.SetInput(inpMask)
@@ -515,6 +680,22 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, flashAt
 	// Embedding scaling: multiply by sqrt(n_embd)
 	if m.Def.Architecture.EmbedScale {
 		x = ggml.Scale(gctx, x, float32(math.Sqrt(float64(nEmbd))))
+	}
+
+	// Vision splice (prefill only; decode calls always pass nil). See
+	// forwardStatelessCore for the equivalent comment — gf must exist
+	// before BuildVisionGraph runs.
+	gf := ggml.NewGraph(gctx, maxGraphNodes)
+	var visionCtx *visionSpliceContext
+	if len(visionImages) > 0 {
+		var err error
+		// ForwardCached path has no caps support (per the design note above);
+		// pass nil for the capture handle. Numerical-equiv work runs via
+		// ForwardStateless.
+		x, visionCtx, err = m.buildVisionSplice(gctx, gf, x, visionImages, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// SWA mask
@@ -540,9 +721,8 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, flashAt
 	// Per-layer embedding preparation
 	perLayerEmbd := m.buildPerLayerEmbedSetup(gctx, inpTokens, x, nNew, rmsEps)
 
-	// Build the graph before running layers so that BuildCached can emit in-graph
-	// cpy ops for KV and SSM state writebacks directly via gf.BuildForwardExpand.
-	gf := ggml.NewGraph(gctx, maxGraphNodes)
+	// gf was created above (before the vision splice). BuildCached emits
+	// in-graph cpy ops for KV/SSM writebacks against this same gf.
 
 	blkFn := func(gctx *ggml.GraphContext, cur ggml.Tensor,
 		weights map[string]ggml.Tensor, il int, config map[string]any,
@@ -560,21 +740,31 @@ func (m *GenericModel) ForwardCached(gc *GenericCache, tokenIDs []int32, flashAt
 		return nil, fmt.Errorf("failed to allocate graph")
 	}
 
-	// Set inputs
-	ggml.TensorSet(inpTokens, unsafe.Pointer(&tokenIDs[0]), 0, inpTokens.Nbytes())
+	// Set inputs. Vision-span token IDs get rewritten to the padding ID
+	// for the per-layer embedding lookup; see ForwardStateless for full
+	// rationale.
+	tokenIDsRewritten := RewriteTokenIDsForVision(tokenIDs, visionImages)
+	ggml.TensorSet(inpTokens, unsafe.Pointer(&tokenIDsRewritten[0]), 0, inpTokens.Nbytes())
 
-	positions := make([]int32, nNew)
-	for i := range positions {
-		positions[i] = int32(seqPos + int(i))
-	}
+	// Position buffer continues from gc.PosCtr (the running RoPE counter, == SeqPos
+	// except after an IMROPE image span). Persist the post-pass counter so the next
+	// decode token continues correctly. For non-imrope archs PosCtr stays == SeqPos.
+	positions, endCtr := m.buildDecoderPositions(visionImages, nNew, gc.PosCtr)
 	ggml.TensorSet(inpPos, unsafe.Pointer(&positions[0]), 0, inpPos.Nbytes())
+	gc.PosCtr = endCtr
 
-	maskData := buildCausalMaskData(gc.maskBuf, nNew, nKV, seqPos, m.Def.Architecture.NonCausal)
+	// Cached prefill: vision spans get bidirectional attention.
+	// Per-token decode (seqPos > 0, visionImages nil) needs no spans.
+	maskData := buildCausalMaskData(gc.maskBuf, nNew, nKV, seqPos, m.Def.Architecture.NonCausal, m.visionDecoderSpans(visionImages))
 	ggml.TensorSet(inpMask, unsafe.Pointer(&maskData[0]), 0, inpMask.Nbytes())
 
 	if hasSWA && swaWindow > 0 {
-		swaMaskData := buildSWAMaskData(gc.swaMaskBuf, nNew, nKV, seqPos, swaWindow)
+		swaMaskData := buildSWAMaskData(gc.swaMaskBuf, nNew, nKV, seqPos, swaWindow, m.visionDecoderSpans(visionImages))
 		ggml.TensorSet(inpMaskSWA, unsafe.Pointer(&swaMaskData[0]), 0, inpMaskSWA.Nbytes())
+	}
+
+	if visionCtx != nil {
+		visionCtx.fillVisionInputs()
 	}
 
 	status := sched.Compute(gf)

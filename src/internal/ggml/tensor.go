@@ -84,6 +84,7 @@ const (
 	TypeF32  = GGMLType(C.GGML_GO_TYPE_F32)
 	TypeF16  = GGMLType(C.GGML_GO_TYPE_F16)
 	TypeI32  = GGMLType(C.GGML_GO_TYPE_I32)
+	TypeI64  = GGMLType(C.GGML_GO_TYPE_I64)
 	TypeBF16 = GGMLType(C.GGML_GO_TYPE_BF16)
 	TypeQ4_0 = GGMLType(C.GGML_GO_TYPE_Q4_0)
 	TypeQ4_K = GGMLType(C.GGML_GO_TYPE_Q4_K)
@@ -102,6 +103,15 @@ func TensorType(t Tensor) GGMLType {
 // RoPE mode constants.
 const (
 	RopeTypeNeoX = int(C.GGML_GO_ROPE_TYPE_NEOX)
+	// RopeTypeVision is GGML_ROPE_TYPE_VISION (24), the multi-section M-RoPE
+	// variant used by vision towers (e.g. Qwen3-VL). Passed as the mode arg to
+	// RopeMulti, which threads it through to ggml_rope_multi unchanged.
+	RopeTypeVision = int(C.GGML_GO_ROPE_TYPE_VISION)
+	// RopeTypeImrope is GGML_ROPE_TYPE_IMROPE (40), the interleaved multi-section
+	// M-RoPE used by the Qwen3-VL *decoder* (sector%3 → {t,h,w} dim mapping). Like
+	// VISION it requires a [4·n_tokens] position buffer (layout [t|h|w|e]); plain
+	// NEOX reads only the first block. Passed as the mode arg to RopeMulti.
+	RopeTypeImrope = int(C.GGML_GO_ROPE_TYPE_IMROPE)
 )
 
 // Status constants.

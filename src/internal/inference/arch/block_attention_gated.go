@@ -17,7 +17,7 @@ func (b *FullAttentionGatedBuilder) Contract() BuilderContract {
 		ConfigSchema: map[string][]string{
 			ConfigQHasGate:  nil, // bool, any value
 			ConfigQKNorm:    {NormRMS, NormL2, ""},
-			ConfigRope:      {RopeMulti, RopeStandard, ""},
+			ConfigRope:      {RopeMulti, RopeImrope, RopeStandard, ""},
 			ConfigOutputGate: {GateSigmoid, ""},
 		},
 	}
@@ -61,15 +61,16 @@ func (b *FullAttentionGatedBuilder) BuildStateless(
 	nRot := params.Ints[ParamRoPENRot]
 	sections := ropeSections(params)
 	freqBase := params.Floats[ParamRoPEFreqBase]
-	q, k = applyRoPEMultiPair(ctx, q, k, inputs.InpPos, nRot, sections, freqBase)
+	q, k = applyRoPEMultiPair(ctx, q, k, inputs.InpPos, nRot, sections, freqBase, ropeMultiMode(config))
 
 	// Permute for attention
 	q = ggml.Permute(ctx, q, 0, 2, 1, 3)
 	k = ggml.Permute(ctx, k, 0, 2, 1, 3)
 	v = ggml.Permute(ctx, v, 0, 2, 1, 3)
 
-	// Scaled dot-product attention with GQA
-	cur = scaledDotProductAttention(ctx, q, k, v, inputs.InpMask, attentionScale(headDim), nHeads, nTokens, inputs.Captures, inputs.FlashAttn)
+	// Scaled dot-product attention with GQA. This builder is decoder-only and
+	// does not expose ConfigKQPrec; pass true to force F32 (today's behavior).
+	cur = scaledDotProductAttention(ctx, q, k, v, inputs.InpMask, attentionScale(headDim), nHeads, nTokens, inputs.Captures, inputs.FlashAttn, true)
 
 	// Gate + output projection
 	cur = ggml.Mul(ctx, cur, ggml.Sigmoid(ctx, gate))
@@ -104,9 +105,9 @@ func (b *FullAttentionGatedBuilder) BuildCached(
 	nRot := params.Ints[ParamRoPENRot]
 	sections := ropeSections(params)
 	freqBase := params.Floats[ParamRoPEFreqBase]
-	q, kNew = applyRoPEMultiPair(ctx, q, kNew, inputs.InpPos, nRot, sections, freqBase)
+	q, kNew = applyRoPEMultiPair(ctx, q, kNew, inputs.InpPos, nRot, sections, freqBase, ropeMultiMode(config))
 
-	// KV cache writeback (in-graph GPU copy)
+	// KV cache writeback (in-graph GPU copy).
 	writeCacheKV(ctx, gf, kNew, vNew, cache, seqPos, nKVHeads)
 
 	// For attention: prefill uses inline K/V, decode reads from cache
@@ -114,7 +115,8 @@ func (b *FullAttentionGatedBuilder) BuildCached(
 
 	q = ggml.Permute(ctx, q, 0, 2, 1, 3)
 
-	cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, inputs.InpMask, attentionScale(headDim), nHeads, nNew, inputs.Captures, inputs.FlashAttn)
+	// Decoder-only builder; ConfigKQPrec not exposed. Force F32 (today's behavior).
+	cur = scaledDotProductAttention(ctx, q, kAttn, vAttn, inputs.InpMask, attentionScale(headDim), nHeads, nNew, inputs.Captures, inputs.FlashAttn, true)
 	cur = ggml.Mul(ctx, cur, ggml.Sigmoid(ctx, gate))
 	cur = ggml.MulMat(ctx, weights[WeightAttnOutput], cur)
 	return cur

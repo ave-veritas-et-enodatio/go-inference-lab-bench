@@ -14,6 +14,13 @@ type GenericCache struct {
 	Model     *GenericModel
 	SeqPos    int
 	MaxSeqLen int
+	// PosCtr is the running RoPE position counter. It equals SeqPos for every
+	// arch EXCEPT an IMROPE decoder (Qwen3-VL) after an image span: there the
+	// M-RoPE counter advances by max(nx,ny) per image rather than the nx*ny
+	// tokens the image occupies, so PosCtr < SeqPos for the rest of the
+	// sequence. Decode tokens continue from PosCtr (the next sequential
+	// position), mirroring get_rope_index. Reset to 0 alongside SeqPos.
+	PosCtr    int
 	Layers    []LayerCache // one per model layer
 	cacheCtx  *ggml.GraphContext
 	cacheBuf  *ggml.Buffer
@@ -151,6 +158,7 @@ func (m *GenericModel) NewCache(maxSeqLen int) (*GenericCache, error) {
 // single backend call rather than iterating per tensor.
 func (gc *GenericCache) Clear() {
 	gc.SeqPos = 0
+	gc.PosCtr = 0
 	if gc.cacheBuf != nil {
 		gc.cacheBuf.Clear(0)
 	}

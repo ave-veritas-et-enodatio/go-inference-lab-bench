@@ -3,7 +3,7 @@
 # LLAMA.CPP USED FOR REFERENCE ONLY.
 
 # DO NOT MANUALLY EDIT vvv - use make update-dependencies
-LLAMA_VERSION := b8892
+LLAMA_VERSION := b9482
 LLAMA_REPO := https://github.com/ggerganov/llama.cpp.git
 
 LLAMA_DIR := llama.cpp
@@ -30,12 +30,14 @@ update-dependencies: llama-cpp
 	@rm -rf requirements/
 	@cp -r $(LLAMA_DIR)/requirements .
 	@git clean -fxd requirements/ > /dev/null
-	@rm -rf gguf/
-	@cp -r $(LLAMA_DIR)/gguf-py/gguf .
+	@rm -rf gguf/; cp -r $(LLAMA_DIR)/gguf-py/gguf .
+	@rm -rf conversion/; cp -r $(LLAMA_DIR)/conversion .
 	# update Makefile with the new version tag.
 	@( \
 		VTAG=$$(git -C $(LLAMA_DIR) describe --tag) && \
 		sed "s/^LLAMA_VERSION := $(LLAMA_VERSION)/LLAMA_VERSION := $$VTAG/" Makefile > Makefile.tmp && \
 		mv -f Makefile.tmp Makefile && \
-		echo "LLAMA_VERSION: $(LLAMA_VERSION) -> $$VTAG" \
+		echo "LLAMA_VERSION: $(LLAMA_VERSION) -> $$VTAG" && \
+		[[ $(LLAMA_VERSION) == $$VTAG ]] || { ./setup_venv.sh --clean && \
+		./hf_to_gguf.sh --help > /dev/null; } \
 	)

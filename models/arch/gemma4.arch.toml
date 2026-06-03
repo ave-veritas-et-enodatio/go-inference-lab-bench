@@ -167,9 +167,159 @@ builder = "moe"
 [tokens]
 think_open   = "<|channel>"
 think_close  = "<channel|>"
-extra_eos    = ["<end_of_turn>"]
+# Gemma 4's generation_config.json declares three EOS-class tokens (ids 1,
+# 106, 50). The GGUF format spec carries only the canonical EOS slot (token 1
+# = <eos>), so the other two need to be listed here as single-vocab-entry
+# stop strings. They are semantically distinct turn-yield signals:
+#   <turn|>           (id 106) — end-of-turn (chat hand-off)
+#   <|tool_response>  (id  50) — model emitted a tool_call and is yielding
+#                                until the orchestrator returns a result
+# Both are CONTROL / USER_DEFINED type tokens in the vocab so they tokenize
+# as single entries (no BPE-decomposition warning at load time).
+extra_eos    = ["<turn|>", "<|tool_response>"]
+
+# ===========================================================================
+# Vision tower (multimodal models only).
+#
+# The per-layer encoder runs through the same generic block/FFN builders as
+# the decoder (vision.go::BuildVisionGraph's §4 dispatch loop): the
+# [vision.blocks.*] / [vision.ffn] sections below select and configure them,
+# exactly as [blocks.*] / [ffn] do for the decoder. The tower's I/O — patch
+# embedding, 2D position embedding, pooler, and projector — stays procedural
+# in BuildVisionGraph and shares the existing ggml op wrappers (Conv2D,
+# RmsNorm, Pool2D, etc.); it mirrors llama.cpp's clip_graph_gemma4v::build().
+#
+# The vision tensors are loaded into the same WeightStore as the decoder
+# via the existing TensorNames()/uploadWeights pipeline (their GGUF
+# names — `v.blk.<N>.*`, `v.patch_embd.weight`, `v.position_embd.weight`,
+# `mm.input_projection.weight` — are disjoint from the decoder's
+# `blk.<N>.*` / global names). ResolveVisionWeights in vision.go
+# rebuilds the per-layer logical→GGUF name map at load time from the
+# templates below.
+#
+# Unimodal Gemma 4 variants (E2B for example) simply don't have a
+# `vision_config` in their config.json, so vision.* params won't
+# resolve, and BuildVisionGraph is never invoked.
+# ===========================================================================
+
+[vision]
+patch_size       = 16
+image_token      = "<|image|>"
+n_image_tokens   = 280   # vision_soft_tokens_per_image (max after pooling)
+
+# Architectural constants. These match upstream llama.cpp's
+# clip.cpp PROJECTOR_TYPE_GEMMA4V case (n_merge = pooling_kernel_size,
+# rope_theta from rope_parameters.rope_theta, image-token bounds from
+# set_limit_image_tokens(252, 280)). They aren't in the model file's
+# own metadata, but they're fixed per-arch — declaring them here is the
+# difference between data-driven configuration and model-specific Go.
+n_merge          = 3
+rope_theta       = 100.0
+image_min_tokens = 252
+image_max_tokens = 280
+
+# Gemma decodes the image ubatch with causal_attn=false (llama-mtmd
+# mtmd_decode_use_non_causal is true for GEMMA4V) → the decoder attends to each
+# image's soft-token span bidirectionally. Qwen3-VL and the default keep image
+# tokens causal, so this flag is Gemma-only.
+decoder_non_causal = true
+
+[vision.params]
+n_layers   = "vision.block_count"
+n_heads    = "vision.attention.head_count"
+n_embd     = "vision.embedding_length"
+n_ff       = "vision.feed_forward_length"
+head_dim   = "vision.attention.key_length?"  # optional: mmproj GGUFs omit it (clip.* namespace lacks key_length); ResolveVisionParams derives from n_embd/n_heads
+rms_eps    = "vision.attention.layer_norm_epsilon"
+patch_size = "vision.patch_size"
+
+[vision.weights.global]
+patch_embd    = "v.patch_embd.weight"
+position_embd = "v.position_embd.weight"
+
+[vision.layers]
+count  = "n_layers"
+prefix = "v.blk.@{layer_idx}."
+
+# Gemma's tower is uniform: every layer is the same encoder block.
+[vision.layers.routing]
+uniform = "encoder_layer"
+
+# Per-layer vision weights. These logical names are resolved to GGUF tensor
+# names (prefix + suffix) and stored in VisionTensors.Layers[il]; the §4
+# dispatch frame applies the norms (ln1/ln2/*_post_norm) directly and the
+# block/FFN builders read the rest via the weight remaps in
+# [vision.blocks.*.weights] / [vision.ffn.weights] below.
+[vision.layers.common_weights]
+ln1            = "ln1.weight"             # pre-attention norm (RmsNorm in Gemma 4)
+attn_post_norm = "attn_post_norm.weight"
+ln2            = "ln2.weight"             # pre-FFN norm
+ffn_post_norm  = "ffn_post_norm.weight"
+attn_q         = "attn_q.weight"
+attn_k         = "attn_k.weight"
+attn_v         = "attn_v.weight"
+attn_output    = "attn_out.weight"        # upstream GGUF mmproj convention (vs decoder's "attn_output")
+attn_q_norm    = "attn_q_norm.weight"     # per-head Q-norm (head_dim-wide)
+attn_k_norm    = "attn_k_norm.weight"
+ffn_gate       = "ffn_gate.weight"
+ffn_up         = "ffn_up.weight"
+ffn_down       = "ffn_down.weight"
+
+# Vision encoder block — generic `attention` builder, configured to reproduce
+# the old hand-coded Gemma-vision attention op-for-op:
+#   rope=axial2d   → 2D split RoPE (first half of head_dim by PosX, second by
+#                    PosY); theta comes from [vision].rope_theta via the
+#                    synthetic vision ResolvedParams (rope_freq_base).
+#   v_norm=rms     → raw RMS norm on V (no learned scale).
+#   qk_norm        → applied because attn_q_norm/attn_k_norm weights are present.
+#   kq_scale=1.0   → Gemma vision overrides the 1/sqrt(d_head) default.
+#   kq_prec=native → skip the forced-F32 KQ accumulation (clip-encoder parity).
+#   non_causal=true→ no mask (bidirectional patch attention).
+# The .weights map is builder-key → per-layer logical name (above), since the
+# tensors are already resolved into VisionTensors.Layers[il] by that name.
+[vision.blocks.encoder_layer]
+builder = "attention"
+
+  [vision.blocks.encoder_layer.weights]
+  attn_q      = "attn_q"
+  attn_k      = "attn_k"
+  attn_v      = "attn_v"
+  attn_output = "attn_output"
+  attn_q_norm = "attn_q_norm"
+  attn_k_norm = "attn_k_norm"
+
+  [vision.blocks.encoder_layer.config]
+  rope       = "axial2d"
+  v_norm     = "rms"
+  kq_scale   = 1.0
+  kq_prec    = "native"
+  non_causal = true
+
+# Vision FFN — generic geglu builder: gelu(gate·x) * (up·x) → down. The
+# builder reads gate/up/down; the remap pulls them from the ffn_* per-layer
+# logical names.
+[vision.ffn]
+# Quick-GELU (x*sigmoid(1.702x)), not tanh-GELU: the Gemma 4 mmproj sets
+# neither use_gelu nor use_silu, so llama.cpp's clip falls through to
+# FFN_GELU_QUICK (clip.cpp; dump shows `ffn_geglu_quick`). The text decoder's
+# [ffn] stays on plain "geglu" (tanh) — only the ViT encoder is quick-GELU.
+builder = "geglu_quick"
+
+  [vision.ffn.weights]
+  gate = "ffn_gate"
+  up   = "ffn_up"
+  down = "ffn_down"
+
+# Projector — single linear matmul + post-projection RmsNorm.
+# Output: [n_decoder_embd=2560, n_image_tokens=280].
+[projector]
+type = "linear_post_norm"
+
+[projector.weights]
+proj = "mm.input_projection.weight"
 
 # Diagram-only example values; no effect on inference.
 [example]
-n_layers       = 30
+n_layers        = 30
+vision_n_layers = 16   # gemma-4 vision_config.num_hidden_layers
 attn_pattern_false_every = 5

@@ -3,6 +3,7 @@ package inference
 import (
 	"errors"
 	"fmt"
+	"image"
 	"path/filepath"
 	"time"
 
@@ -13,6 +14,15 @@ import (
 	"inference-lab-bench/internal/model"
 	"inference-lab-bench/internal/ggml"
 )
+
+// ChatImage is a single decoded image attached to a chat request.
+// Images travel as a flat ordered list on GenerateParams.Images rather than
+// nested under ChatMessage — the splice code in arch/graph.go consumes them
+// in template-render order (first `<|image|>` placeholder → Images[0], etc.),
+// independent of which message they were attached to.
+type ChatImage struct {
+	Image image.Image // decoded pixels (preprocessing happens inside the engine)
+}
 
 // ErrComputeFailed is returned by Generate when the ggml Metal backend fails to
 // execute a graph. The underlying Metal context is permanently poisoned after
@@ -26,12 +36,13 @@ func IsComputeFailure(err error) bool {
 
 // Engine runs inference for a single loaded model.
 type Engine struct {
-	model     *arch.GenericModel
-	tokenizer *Tokenizer
-	nLayers   int
-	maxSeqLen int
-	flashAttn bool   // server default: use FA2 when head geometry allows
-	diagDir   string // directory for diagnostic output (resolved by caller)
+	model       *arch.GenericModel
+	tokenizer   *Tokenizer
+	nLayers     int
+	maxSeqLen   int
+	flashAttn   bool   // server default: use FA2 when head geometry allows
+	diagDir     string // directory for diagnostic output (resolved by caller)
+	weOpenThink bool   // true if the chat template injects think_open into the prompt under enable_thinking (computed once at load)
 }
 
 // NewEngine creates an inference engine for the given model.
@@ -67,7 +78,7 @@ func NewEngine(memStats ggml.MemoryStats, info *model.ModelInfo, archDir, diagDi
 			return nil, fmt.Errorf("building tokenizer: %w", err)
 		}
 
-		m, err = arch.NewGenericModelFromSafetensors(memStats, maxSeqLen, archDef, info.Path, archDir)
+		m, err = arch.NewGenericModelFromSafetensors(memStats, maxSeqLen, archDef, info.Path, archDir, info.MmprojEnabled)
 		if err != nil {
 			return nil, fmt.Errorf("creating model: %w", err)
 		}
@@ -85,7 +96,7 @@ func NewEngine(memStats ggml.MemoryStats, info *model.ModelInfo, archDir, diagDi
 		}
 
 		// DSL-driven model loading — reuse the already-parsed GGUF to avoid double-parsing.
-		m, err = arch.NewGenericModelFromGGUF(memStats, maxSeqLen, archDef, info.Path, archDir, f)
+		m, err = arch.NewGenericModelFromGGUF(memStats, maxSeqLen, archDef, info.Path, archDir, f, info.MmprojPath)
 		if err != nil {
 			return nil, fmt.Errorf("creating model: %w", err)
 		}
@@ -121,14 +132,73 @@ func NewEngine(memStats ggml.MemoryStats, info *model.ModelInfo, archDir, diagDi
 		log.Info("flash attention: enabled (head_dim=%d)", headDim)
 	}
 
+	weOpenThink := computeWeOpenThink(tok, m.Def.Tokens.ThinkOpen, m.Def.Tokens.ThinkClose, info.ID)
+
 	return &Engine{
-		model:     m,
-		tokenizer: tok,
-		nLayers:   nLayers,
-		maxSeqLen: maxSeqLen,
-		flashAttn: flashAttn,
-		diagDir:   diagDir,
+		model:       m,
+		tokenizer:   tok,
+		nLayers:     nLayers,
+		maxSeqLen:   maxSeqLen,
+		flashAttn:   flashAttn,
+		diagDir:     diagDir,
+		weOpenThink: weOpenThink,
 	}, nil
+}
+
+// computeWeOpenThink determines, once at load, whether the chat template — when
+// thinking is enabled — primes an OPEN think block in the prompt, so the
+// assistant response begins already inside it (WE open) rather than the model
+// emitting the open tag itself.
+//
+// It renders a fixed trivial probe prompt with enable_thinking=true and tests
+// (in token space, for robustness against exotic template construction) whether
+// that prompt ENDS INSIDE AN UNCLOSED think_open — i.e. a think_open token
+// appears with no think_close after it. Presence alone is insufficient: the
+// Qwen3 family is "always-thinking" — it injects a *closed* `<think></think>`
+// when thinking is disabled and an *open* `<think>` when enabled, so think_open
+// appears in both renders. Only the open-vs-closed distinction discriminates.
+//
+// Returns false when think_open is unconfigured, not a single vocab entry, or
+// the render fails — the safe default is "model opens" (content-default), which
+// never destroys an answer.
+func computeWeOpenThink(tok *Tokenizer, thinkOpen, thinkClose, name string) bool {
+	flag := false
+	if thinkOpen != "" {
+		if openID, ok := tok.TokenID(thinkOpen); ok {
+			closeID := int32(-1) // sentinel: think_close not a vocab token → never closes
+			if cid, ok := tok.TokenID(thinkClose); ok {
+				closeID = cid
+			}
+			// Fixed probe: a trivial user message that must NOT itself contain
+			// think_open, so user content can't pollute the result.
+			probe := []ChatMessage{{Role: "user", Content: "hi"}}
+			onIDs, err := tok.EncodeChat(probe, map[string]any{KwEnableThinking: true})
+			if err == nil {
+				flag = promptOpensThink(onIDs, openID, closeID)
+			} else {
+				log.Warn("[think] probe render failed for model=%s — defaulting who_opens=model", name)
+			}
+		}
+	}
+	log.Info("[think] model=%s think_open=%q who_opens=%s", name, thinkOpen,
+		map[bool]string{true: "engine", false: "model"}[flag])
+	return flag
+}
+
+// promptOpensThink reports whether a token sequence ends inside an unclosed
+// think_open block: a think_open token appears with no think_close after it.
+// closeID < 0 means think_close is not a vocab token (treated as "never closes").
+func promptOpensThink(ids []int32, openID, closeID int32) bool {
+	lastOpen, lastClose := -1, -1
+	for i, id := range ids {
+		switch id {
+		case openID:
+			lastOpen = i
+		case closeID:
+			lastClose = i
+		}
+	}
+	return lastOpen >= 0 && lastOpen > lastClose
 }
 
 // validateArchTokens checks each non-empty token string from the arch TOML
@@ -163,6 +233,13 @@ func (e *Engine) ThinkOpen() string { return e.model.Def.Tokens.ThinkOpen }
 
 // ThinkClose returns the TOML-defined think closing tag, or "".
 func (e *Engine) ThinkClose() string { return e.model.Def.Tokens.ThinkClose }
+
+// WeOpenThinkBlock reports whether the chat template injects think_open into
+// the prompt under the enable_thinking conditional (i.e. WE open the think
+// block, so the assistant response begins already inside it). Computed once at
+// load. When false, the model emits the open tag itself (content-default) — see
+// computeWeOpenThink. Used to seed the apiserver thinkFilter.
+func (e *Engine) WeOpenThinkBlock() bool { return e.weOpenThink }
 
 // Close frees all GPU resources.
 func (e *Engine) Close() {
@@ -208,6 +285,13 @@ type GenerateParams struct {
 	TopLogProbs        int              // number of top log-probabilities per token (0 = just the chosen token)
 	FlashAttention     *bool            // nil = use server default; true/false = per-request override
 	Diffusion          *DiffusionParams // nil = not diffusion (ignored for autoregressive models)
+
+	// Images is the flat ordered list of decoded images attached to this
+	// request, in template-render order. The Phase 7 splice in
+	// arch/graph.go consumes them 1:1 with the `<|image|>` placeholder
+	// token positions in the tokenized prompt. nil/empty for text-only
+	// requests; the encoder + projector + splice are bypassed in that case.
+	Images []ChatImage
 }
 
 // DefaultParams returns sensible defaults.
@@ -252,6 +336,43 @@ func (e *Engine) Generate(
 	if len(promptIDs) == 0 {
 		return nil, fmt.Errorf("empty prompt after encoding")
 	}
+
+	// Vision prefill: when images are attached, preprocess each, expand
+	// the `<|image|>` placeholders in the tokenized prompt into N copies
+	// (one per soft token after pooling), and capture the splice runs
+	// the forward path uses to overwrite those positions with projected
+	// encoder embeddings.
+	var visionSpliceInputs []arch.VisionSpliceInput
+	if len(params.Images) > 0 {
+		// v1 limitation: vision is only wired into the vanilla cached /
+		// stateless paths. Mixing with diffusion is rejected with a clean
+		// error rather than silently producing gibberish.
+		if e.IsDiffusion() {
+			return nil, fmt.Errorf("vision input + diffusion generation is not supported")
+		}
+		if e.model.Def.Vision == nil {
+			return nil, fmt.Errorf("request attached %d image(s) but model %q has no vision tower",
+				len(params.Images), e.model.Def.Architecture.Name)
+		}
+		placeholderID, ok := e.tokenizer.TokenID(e.model.Def.Vision.ImageToken)
+		if !ok {
+			return nil, fmt.Errorf("vision placeholder token %q not in vocabulary", e.model.Def.Vision.ImageToken)
+		}
+		prefill, err := prepareVisionPrefill(e.model.Def, promptIDs, placeholderID, params.Images)
+		if err != nil {
+			return nil, err
+		}
+		if prefill != nil {
+			promptIDs = prefill.ExpandedTokens
+			visionSpliceInputs = prefill.toArchSpliceInputs()
+			log.Info("vision prefill: %d image(s), expanded prompt %d → %d tokens",
+				len(params.Images), len(prefill.Runs), len(promptIDs))
+			for i, run := range prefill.Runs {
+				log.Info("  image[%d] span: [%d, %d) (%d tokens, bidirectional mask)",
+					i, run.Start, run.Start+run.Length, run.Length)
+			}
+		}
+	}
 	// The template handles enable_thinking natively — when disabled, it emits an
 	// empty think block (e.g. "<think>\n\n</think>\n\n") which is the correct
 	// prompt. No post-render stripping needed; this matches llama.cpp behavior.
@@ -287,9 +408,9 @@ func (e *Engine) Generate(
 		genErr = e.generateDiffusion(promptIDs, maxTokens, stopSet, params, onToken, metrics)
 	} else if params.Stateless {
 		log.Info("stateless inference (no KV cache), prompt=%d tokens", len(promptIDs))
-		genErr = e.generateStateless(promptIDs, maxTokens, stopSet, params, onToken, metrics)
+		genErr = e.generateStateless(promptIDs, maxTokens, stopSet, params, visionSpliceInputs, onToken, metrics)
 	} else {
-		genErr = e.generateCached(promptIDs, maxTokens, stopSet, params, onToken, metrics)
+		genErr = e.generateCached(promptIDs, maxTokens, stopSet, params, visionSpliceInputs, onToken, metrics)
 	}
 
 	metrics.TotalDuration = time.Since(start)
@@ -321,3 +442,4 @@ func (e *Engine) sample(logits []float32, params GenerateParams) (int32, error) 
 	}
 	return next, nil
 }
+

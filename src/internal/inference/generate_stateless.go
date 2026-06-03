@@ -3,11 +3,14 @@ package inference
 import (
 	"fmt"
 	"time"
+
+	"inference-lab-bench/internal/inference/arch"
 )
 
 func (e *Engine) generateStateless(
 	promptIDs []int32, maxTokens int, stopSet map[int32]bool,
 	params GenerateParams,
+	visionImages []arch.VisionSpliceInput,
 	onToken func(string) bool, metrics *InferenceMetrics,
 ) error {
 	tokenIDs := make([]int32, len(promptIDs))
@@ -16,7 +19,11 @@ func (e *Engine) generateStateless(
 	hitStop := false
 	for range maxTokens {
 		stepStart := time.Now()
-		logits, err := e.model.ForwardStateless(tokenIDs, nil, *params.FlashAttention)
+		// Stateless re-runs the full forward each token; the splice
+		// re-runs the vision encoder each iteration too. The placeholder
+		// position runs don't shift as new tokens are appended, so the
+		// same visionImages slice stays valid across iterations.
+		logits, err := e.model.ForwardStateless(tokenIDs, nil, *params.FlashAttention, visionImages)
 		if err != nil {
 			return fmt.Errorf("forward pass: %w", err)
 		}

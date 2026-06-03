@@ -20,6 +20,15 @@ type GenericModel struct {
 	FFNBuilders     []FFNBuilder     // per-layer FFN builder
 	FFNConfigs      []map[string]any // per-layer FFN config (from [ffn.config] / [ffn_alt.config])
 
+	// Vision tower (multimodal models only — nil for unimodal arch). All
+	// three fields are co-populated by the loader when ArchDef.Vision is
+	// non-nil. Tensors share the WeightStore with the decoder; the
+	// per-tower split is logical-name routing only.
+	VisionResolved *VisionResolved
+	VisionTensors  *VisionTensors
+	VisionParams   *VisionParams
+	VisionBuilders *VisionBuilders
+
 	// Canonical module map and supporting data for diagram rendering.
 	CanonicalModuleMap *ModuleMap
 	HeadDim            int // elements per attention head (for flash attention geometry check)
@@ -37,11 +46,13 @@ type GenericModel struct {
 // NewGenericModelFromGGUF loads a GGUF model using the named architecture definition.
 // archDir is the directory containing architecture definition TOML files.
 // If gf is non-nil it is used directly; otherwise the GGUF is parsed from modelPath.
-func NewGenericModelFromGGUF(memStats ggml.MemoryStats, maxSeqLen int, archDef *ArchDef, modelPath, archDir string, gf *ggufparser.GGUFFile) (*GenericModel, error) {
+// mmprojPath, when non-empty, attaches a paired vision/audio sidecar GGUF so
+// the model loads with multimodal support.
+func NewGenericModelFromGGUF(memStats ggml.MemoryStats, maxSeqLen int, archDef *ArchDef, modelPath, archDir string, gf *ggufparser.GGUFFile, mmprojPath string) (*GenericModel, error) {
 	if archDef == nil {
 		return nil, fmt.Errorf("valid ArchDef required")
 	}
-	reader, err := NewModelReaderGGUF(archDef, modelPath, gf)
+	reader, err := NewModelReaderGGUF(archDef, modelPath, gf, mmprojPath)
 	if err != nil {
 		return nil, err
 	}
@@ -52,11 +63,13 @@ func NewGenericModelFromGGUF(memStats ggml.MemoryStats, maxSeqLen int, archDef *
 // NewGenericModelFromSafetensors loads a safetensors model using the named architecture definition.
 // archDir is the directory containing architecture definition TOML and stmap files.
 // stDir is the directory containing the safetensors shards and config.json.
-func NewGenericModelFromSafetensors(memStats ggml.MemoryStats, maxSeqLen int, archDef *ArchDef, stDir, archDir string) (*GenericModel, error) {
+// enableMmproj is the --auto-mmproj gate, forwarded to the reader to
+// suppress vision-tower setup when false (see NewModelReaderSafetensors).
+func NewGenericModelFromSafetensors(memStats ggml.MemoryStats, maxSeqLen int, archDef *ArchDef, stDir, archDir string, enableMmproj bool) (*GenericModel, error) {
 	if archDef == nil {
 		return nil, fmt.Errorf("valid ArchDef required")
 	}
-	reader, err := NewModelReaderSafetensors(archDef, stDir, archDir)
+	reader, err := NewModelReaderSafetensors(archDef, stDir, archDir, enableMmproj)
 	if err != nil {
 		return nil, err
 	}
@@ -110,6 +123,14 @@ type genericModelBuilder struct {
 	weightCtx         *ggml.GraphContext
 	weightBuf         *ggml.Buffer
 	weightTensorIndex map[string]ggml.Tensor
+
+	// Vision tower state (multimodal only; nil for unimodal arch).
+	// Resolved in resolveArch alongside the decoder params/weights; bound
+	// to actual tensor handles in buildWeightStore from the same
+	// weightTensorIndex the decoder uses.
+	visionResolved *VisionResolved
+	visionParams   *VisionParams
+	visionTensors  *VisionTensors
 
 	// Built model — owns the store and compute resources from phase H onward.
 	store *WeightStore
@@ -224,6 +245,86 @@ func (b *genericModelBuilder) resolveArch() error {
 		}
 		return 0, 0, 0, false
 	}, b.headDim)
+
+	// Vision tower (multimodal models only). The arch.toml's [vision]
+	// block declares the *possibility* of a vision tower; the model
+	// file's own metadata says whether this specific load is multimodal.
+	// Drive setup from that metadata flag (`vision.has_encoder` — set
+	// by the stmap's [[derived_metadata]] from config.json's
+	// `vision_config` block on the safetensors path, or by the mmproj
+	// GGUF's `clip.has_vision_encoder` once mmproj loading lands).
+	//
+	// When the flag is set, *every* declared vision weight must actually
+	// be present in the model file — partial coverage is a corrupt
+	// upload or a stmap bug, and silently ignoring it would surface
+	// later as confusing inference errors. Loud load-time failure with
+	// a named missing tensor is the right pattern.
+	if b.def.Vision != nil && visionMetadataDeclared(b.reader) {
+		if err := validateVisionWeightsPresent(b.def, b.reader); err != nil {
+			return fmt.Errorf("vision metadata declares encoder but: %w", err)
+		}
+		vr, err := ResolveVisionWeights(b.def, params)
+		if err != nil {
+			return fmt.Errorf("resolving vision weights: %w", err)
+		}
+		vp, err := ResolveVisionParams(b.def, b.reader)
+		if err != nil {
+			return fmt.Errorf("resolving vision params: %w", err)
+		}
+		b.visionResolved = vr
+		b.visionParams = vp
+	}
+	return nil
+}
+
+// visionMetadataDeclared returns true when the loaded model file
+// declares a vision tower via its own metadata. The canonical signal
+// is the `vision.has_encoder` capability flag (populated for
+// safetensors via the stmap's `config_key_present` derived op on
+// `config.json.vision_config`; populated for mmproj GGUF via the
+// upstream `clip.has_vision_encoder` convention once mmproj loading
+// lands). Returns false when the flag isn't set or resolves to zero —
+// the model is unimodal regardless of what the arch.toml allows.
+func visionMetadataDeclared(reader ModelReader) bool {
+	v, ok := reader.GetU32(KeyVisionHasEncoder)
+	return ok && v != 0
+}
+
+// validateVisionWeightsPresent confirms every declared vision-tower
+// weight (per-layer common weights + globals + projector) exists in
+// the model reader's tensor index. Called only when
+// visionMetadataDeclared returns true — at that point a missing weight
+// is a real defect, not an "unimodal model" condition. Returns the
+// first missing tensor's name so the caller can fail loudly.
+func validateVisionWeightsPresent(def *ArchDef, reader ModelReader) error {
+	missing := func(name string) error {
+		return fmt.Errorf("required vision tensor %q not in model file", name)
+	}
+	// Globals.
+	for _, name := range def.Vision.Weights.Global {
+		if _, ok := reader.TensorSpec(name); !ok {
+			return missing(name)
+		}
+	}
+	// Projector globals (when declared).
+	if def.Projector != nil {
+		for _, name := range def.Projector.Weights {
+			if _, ok := reader.TensorSpec(name); !ok {
+				return missing(name)
+			}
+		}
+	}
+	// Per-layer common weights, checked at layer 0 only. (Per-layer
+	// uniformity is a structural assumption the encoder forward relies
+	// on; verifying layer 0 catches stmap and converter bugs without
+	// O(n_layers × n_weights) scanning.)
+	prefix := ExpandPrefix(def.Vision.Layers.Prefix, 0)
+	for _, suffix := range def.Vision.Layers.CommonWeights {
+		full := prefix + suffix
+		if _, ok := reader.TensorSpec(full); !ok {
+			return missing(full)
+		}
+	}
 	return nil
 }
 
@@ -405,6 +506,26 @@ func (b *genericModelBuilder) buildWeightStore() error {
 		}
 	}
 
+	// Vision tower: bind resolved vision weight names to the loaded
+	// tensor handles from the same weightTensorIndex the decoder uses.
+	// All vision tensors share the WeightStore's GPU buffer; the
+	// per-tower split is logical-name routing only. Any missing
+	// resolved name becomes NilTensor and is the caller's problem
+	// (BuildVisionGraph validates the must-haves up front).
+	if b.visionResolved != nil {
+		b.visionTensors = BuildVisionTensors(b.visionResolved, b.weightTensorIndex)
+
+		// Attach Gemma4ClippableLinear clamp scalars. Read through the
+		// ModelReader so a single loader serves both GGUF and safetensors
+		// (clamp scalars are exposed under canonical names by both readers).
+		clamps, err := LoadVisionClampsFromReader(b.reader, b.def, b.visionResolved)
+		if err != nil {
+			log.Warn("vision clamp load: %v", err)
+		} else if clamps != nil {
+			b.visionTensors.Clamps = clamps
+		}
+	}
+
 	return nil
 }
 
@@ -423,8 +544,23 @@ func (b *genericModelBuilder) assignBuilders() error {
 		HeadDim:            b.headDim,
 		TensorDims:         b.tensorDims,
 		ModelPath:          b.modelPath,
+		VisionResolved:     b.visionResolved,
+		VisionTensors:      b.visionTensors,
+		VisionParams:       b.visionParams,
 	}
 	b.m = m
+
+	// Vision tower builders (multimodal only). Mirrors the decoder block/FFN
+	// resolution above: pick the uniform vision block + FFN builders from
+	// [vision.blocks]/[vision.ffn] and capture their weight remaps. nil for
+	// unimodal archs (visionParams nil).
+	if b.visionParams != nil {
+		vb, err := ResolveVisionBuilders(b.def, b.visionParams)
+		if err != nil {
+			return fmt.Errorf("resolving vision builders: %w", err)
+		}
+		m.VisionBuilders = vb
+	}
 
 	m.LayerBlockNames = make([]string, nLayers)
 	m.BlockBuilders = make([]BlockBuilder, nLayers)
@@ -569,6 +705,24 @@ type tensorSpec struct {
 type goGGUFReader struct {
 	kvs         ggufparser.GGUFMetadataKVs
 	tensorSpecs map[string]tensorSpec
+}
+
+// getBool reads a GGUF boolean scalar. Lowercase because it's reader-
+// internal — callers reach it via the public GetU32 BOOL→U32 promotion
+// path (mmproj's `clip.has_vision_encoder` is BOOL but we expose it as
+// the U32 flag `vision.has_encoder`).
+func (r *goGGUFReader) getBool(key string) (bool, bool) {
+	kv, ok := r.kvs.Get(key)
+	if !ok {
+		return false, false
+	}
+	if kv.ValueType != ggufparser.GGUFMetadataValueTypeBool {
+		return false, false
+	}
+	if b, ok := kv.Value.(bool); ok {
+		return b, true
+	}
+	return false, false
 }
 
 func (r *goGGUFReader) GetU32(key string) (uint32, bool) {
