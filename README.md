@@ -84,9 +84,9 @@ curl -X POST localhost:11116/api/v1/chat/completions \
   -d '{"model":"default","messages":[{"role":"user","content":"Hi"}],"diffusion":{"steps":64,"block_length":64}}'
 
 # Control endpoints
-curl localhost:11116/ctl/?memstats   # memory statistics
-curl localhost:11116/ctl/?quit       # wait for in-flight inference then shut down
-curl localhost:11116/ctl/?quit&now   # immediate shutdown
+curl 'localhost:11116/ctl/?memstats'   # memory statistics
+curl 'localhost:11116/ctl/?quit'       # wait for in-flight inference then shut down
+curl 'localhost:11116/ctl/?quit&now'   # immediate shutdown
 ```
 
 Control endpoint: `/ctl/` (`?memstats` = memory stats; `?quit` = graceful shutdown; `?quit&now` = immediate).
