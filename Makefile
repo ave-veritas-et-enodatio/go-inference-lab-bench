@@ -7,31 +7,12 @@ GH_ROOT := $(shell dirname $$(git remote -v | awk '{print $$2; exit 0;}'))
 
 all: build
 
-# DO NOT MANUALLY EDIT vvv - use make update-dependencies
-AGENTS_VERSION := v0.6.17
-AGENTS_REPO := $(GH_ROOT)/agents.git
-AGENTS_DIR := .claude/agents
-AGENTS_MARKER := $(AGENTS_DIR)/.git/HEAD
-agents: $(AGENTS_MARKER)
-
-$(AGENTS_MARKER):
+AGENTS_REPO := https://github.com/ave-veritas-et-enodatio/adjagent.git
+AGENTS_DIR := .claude-temp/$(basename $(notdir $(AGENTS_REPO)))
+agents:
 	@mkdir -p $(dir $(AGENTS_DIR))
-	@[[ ! -f $(@) ]] || git -C $(dir $(AGENTS_DIR)) fetch --tags $(AGENTS_REPO)
-	@[[ -f $(@) ]] || git -C $(dir $(AGENTS_DIR)) clone $(AGENTS_REPO)
-	@git -c advice.detachedHead=false -C $(AGENTS_DIR) checkout $(AGENTS_VERSION)
-	@(cd $(dir $(AGENTS_DIR)); [[ -d commands/. ]] || ln -sv agents/commands .)
-
-update-agents-dependency: agents
-	# update to the latest tagged version
-	@git -C $(AGENTS_DIR) fetch --tags
-	@git -C $(AGENTS_DIR) tag --sort=committerdate  | tail -1 | xargs git -C $(AGENTS_DIR) -c advice.detachedHead=false checkout
-	# update Makefile with the new version tag.
-	@(\
-	  VTAG=$$(git -C $(AGENTS_DIR) describe --tag) && \
-		sed "s/^AGENTS_VERSION := $(AGENTS_VERSION)/AGENTS_VERSION := $$VTAG/" Makefile > Makefile.tmp && \
-		mv -f Makefile.tmp Makefile && \
-		echo "AGENTS_VERSION: $(AGENTS_VERSION) -> $$VTAG" \
-	)
+	@[[ -d "$(AGENTS_DIR)" ]] && git -C "$(AGENTS_DIR)" pull || git -C "$(dir $(AGENTS_DIR))" clone $(AGENTS_REPO)
+	just --justfile $(AGENTS_DIR)/justfile install "$(CURDIR)"
 
 build:
 	$(MAKE) -C src all
@@ -75,7 +56,7 @@ update-attributions:
 	      --allowedTools "Read,Edit,Write,Glob,Grep" \
 				--model sonnet
 
-update-dependencies: udpate-agents-dependency
+update-dependencies:
 	@$(MAKE) -C src $@
 
 test:
